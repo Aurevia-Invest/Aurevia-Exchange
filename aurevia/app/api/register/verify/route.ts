@@ -14,10 +14,8 @@ const schema=z.object({email:z.string().trim().email().max(254),code:z.string().
 
 export async function POST(request:Request){
 	let registrationAttemptId:string|undefined;
-	let submittedEmail:string|undefined;
 	try{
 		const body=await request.json();
-		if(body&&typeof body==='object'&&'email' in body&&typeof body.email==='string')submittedEmail=body.email.trim().toLowerCase();
 		const input=schema.parse(body);
 		const email=input.email.toLowerCase();
 		const ip=trustedProxyClientIp(request);
@@ -31,26 +29,39 @@ export async function POST(request:Request){
 		if(registrationAttempt&&registrationAttempt.email===email){
 			registrationAttemptId=registrationAttempt.id;
 			const now=new Date();
-			if(registrationAttempt.expiresAt<=now||(registrationAttempt.verification&&registrationAttempt.verification.expiresAt<=now)){
+			if(registrationAttempt.expiresAt<=now){
 				await db.registrationAttempt.deleteMany({where:{id:registrationAttempt.id}});
 				const response=NextResponse.json({error:'This registration session expired. Start registration again.'},{status:410});
 				clearRegistrationCookie(response);
 				return response;
 			}
 			const challenge=registrationAttempt.verification;
+			if(challenge&&challenge.expiresAt<=now){
+				await db.registrationVerification.deleteMany({where:{id:challenge.id,expiresAt:{lte:now}}});
+				return NextResponse.json({
+					code:'VERIFICATION_CODE_EXPIRED',
+					error:'This verification code expired. Request a new code to continue.',
+				},{status:410,headers:{'Cache-Control':'no-store'}});
+			}
 			if(!challenge||challenge.channel!==VerificationChannel.EMAIL)return NextResponse.json({error:'The code is invalid or no longer available.'},{status:400});
 			if(challenge.providerReference?.startsWith('AKEDLY:'))return NextResponse.json({error:'Complete verification in the secure Akedly widget instead.'},{status:409});
 			if(challenge.attempts>=verificationConfig.maxAttempts){
-				await db.registrationAttempt.deleteMany({where:{id:registrationAttempt.id}});
-				const response=NextResponse.json({error:'Too many attempts. Start registration again.'},{status:429});
-				clearRegistrationCookie(response);
-				return response;
+				await db.registrationVerification.deleteMany({where:{id:challenge.id,attempts:{gte:verificationConfig.maxAttempts}}});
+				return NextResponse.json({
+					code:'VERIFICATION_ATTEMPTS_EXHAUSTED',
+					error:'Too many incorrect codes. Request a new verification code to continue.',
+				},{status:429,headers:{'Cache-Control':'no-store'}});
 			}
 			if(!verificationCodeMatches(registrationAttempt.id,input.code,challenge.codeHash)){
-				await db.registrationAttempt.deleteMany({where:{id:registrationAttempt.id}});
-				const response=NextResponse.json({error:'The code is incorrect. Start registration again.'},{status:400});
-				clearRegistrationCookie(response);
-				return response;
+				const updated=await db.registrationVerification.updateMany({
+					where:{id:challenge.id,codeHash:challenge.codeHash,attempts:{lt:verificationConfig.maxAttempts},expiresAt:{gt:now}},
+					data:{attempts:{increment:1}},
+				});
+				if(updated.count!==1)return NextResponse.json({error:'The verification code changed. Request a new code and try again.'},{status:409});
+				return NextResponse.json({
+					code:'INVALID_VERIFICATION_CODE',
+					error:'That verification code is incorrect. Check the email and try again.',
+				},{status:400,headers:{'Cache-Control':'no-store'}});
 			}
 			await db.$transaction(async tx=>{
 				const consumed=await tx.registrationVerification.deleteMany({
@@ -93,14 +104,6 @@ export async function POST(request:Request){
 		return NextResponse.json({verified:true});
 	}catch(error){
 		if(error instanceof ZodError){
-			const token=registrationTokenFromRequest(request);
-			const attempt=token&&submittedEmail?await db.registrationAttempt.findUnique({where:{tokenHash:hashRegistrationToken(token)}}):null;
-			if(attempt&&attempt.email===submittedEmail){
-				await db.registrationAttempt.deleteMany({where:{id:attempt.id}});
-				const response=NextResponse.json({error:'The verification code is invalid. Start registration again.'},{status:400});
-				clearRegistrationCookie(response);
-				return response;
-			}
 			return NextResponse.json({error:'Enter the email address and six-digit verification code.'},{status:400});
 		}
 		if(error instanceof Error&&error.message==='REGISTRATION_PHONE_ALREADY_IN_USE'&&registrationAttemptId){

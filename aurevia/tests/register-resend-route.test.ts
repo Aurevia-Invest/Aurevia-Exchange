@@ -151,7 +151,7 @@ describe('registration verification resend',()=>{
 		expect(mocks.deliverCode).toHaveBeenCalledOnce();
 	});
 
-	it('replaces an expired Akedly challenge with the email-code challenge',async()=>{
+	it('deletes an expired Akedly challenge before creating an email-code challenge',async()=>{
 		mocks.akedlyConfigured.mockReturnValue(true);
 		mocks.startAkedly.mockRejectedValue(new Error('AKEDLY_PROVIDER_UNAVAILABLE'));
 		mocks.codeFindUnique.mockResolvedValue({
@@ -166,10 +166,10 @@ describe('registration verification resend',()=>{
 		const response=await POST(request());
 
 		expect(response.status).toBe(200);
-		expect(mocks.codeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-			where:{id:'previous-akedly-challenge',resendAfter:{lte:expect.any(Date)}},
-			data:expect.objectContaining({channel:'EMAIL',providerReference:null,codeHash:'hashed-value'}),
-		}));
+		expect(mocks.codeDeleteMany).toHaveBeenCalledWith({
+			where:{id:'previous-akedly-challenge',expiresAt:{lte:expect.any(Date)}},
+		});
+		expect(mocks.codeCreate).toHaveBeenCalledOnce();
 	});
 
 	it('resumes an active email-code challenge without exposing or resending its code',async()=>{
@@ -186,6 +186,38 @@ describe('registration verification resend',()=>{
 		expect(await response.json()).toMatchObject({method:'email-code'});
 		expect(mocks.deliverCode).not.toHaveBeenCalled();
 		expect(mocks.codeCreate).not.toHaveBeenCalled();
+		expect(mocks.rateLimit).not.toHaveBeenCalled();
+	});
+
+	it('does not charge resend limits when resuming an existing temporary code during its cooldown',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-1',
+			email:'new-registration@example.invalid',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:{resendAfter:new Date(Date.now()+30_000),expiresAt:new Date(Date.now()+60_000)},
+		});
+		mocks.registrationVerificationFindUnique.mockResolvedValue({
+			id:'verification-1',
+			channel:VerificationChannel.EMAIL,
+			providerReference:null,
+			expiresAt:new Date(Date.now()+60_000),
+			resendAfter:new Date(Date.now()+30_000),
+		});
+
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({method:'email-code'});
+		expect(mocks.deliverCode).not.toHaveBeenCalled();
+		expect(mocks.rateLimit).not.toHaveBeenCalled();
+	});
+
+	it('uses short server-side resend limits only when beginning an actual send',async()=>{
+		const response=await POST(request());
+
+		expect(response.status).toBe(200);
+		expect(mocks.rateLimit).toHaveBeenNthCalledWith(1,'akedly-register-ip:192.0.2.3',5,10*60_000);
+		expect(mocks.rateLimit).toHaveBeenNthCalledWith(2,`akedly-register-email:${user.email}`,3,10*60_000);
 	});
 
 	it('does not switch providers when an Akedly resend is still cooling down',async()=>{
@@ -332,6 +364,7 @@ describe('registration verification resend',()=>{
 		});
 		expect(response.headers.get('set-cookie')).toBeNull();
 		expect(mocks.userFindUnique).not.toHaveBeenCalled();
+		expect(mocks.rateLimit).toHaveBeenCalledWith('akedly-register-email:new-registration@example.invalid',3,10*60_000);
 	});
 
 	it('keeps the submitted code verifiable when delivery outcome is unknown',async()=>{

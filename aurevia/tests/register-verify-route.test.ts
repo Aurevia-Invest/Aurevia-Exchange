@@ -7,6 +7,8 @@ const mocks=vi.hoisted(()=>({
 	codeUpdateMany:vi.fn(),
 	registrationAttemptFindUnique:vi.fn(),
 	registrationAttemptDeleteMany:vi.fn(),
+	registrationVerificationUpdateMany:vi.fn(),
+	registrationVerificationDeleteMany:vi.fn(),
 	matches:vi.fn(),
 	transaction:vi.fn(),
 	txDeleteMany:vi.fn(),
@@ -40,6 +42,10 @@ vi.mock('@/lib/db',()=>({db:{
 		findUnique:mocks.registrationAttemptFindUnique,
 		deleteMany:mocks.registrationAttemptDeleteMany,
 	},
+	registrationVerification:{
+		updateMany:mocks.registrationVerificationUpdateMany,
+		deleteMany:mocks.registrationVerificationDeleteMany,
+	},
 	$transaction:mocks.transaction,
 }}));
 vi.mock('@/lib/verification-delivery',()=>({verificationCodeMatches:mocks.matches}));
@@ -59,6 +65,7 @@ const challenge={
 	codeHash:'secure-hash',
 	expiresAt:new Date(Date.now()+60_000),
 	attempts:0,
+	resendAfter:new Date(Date.now()+60_000),
 };
 const registrationToken='a'.repeat(43);
 const registration={
@@ -101,6 +108,8 @@ describe('registration email-code verification',()=>{
 		mocks.createNotification.mockResolvedValue({});
 		mocks.registrationAttemptFindUnique.mockResolvedValue({...registration});
 		mocks.registrationAttemptDeleteMany.mockResolvedValue({count:1});
+		mocks.registrationVerificationUpdateMany.mockResolvedValue({count:1});
+		mocks.registrationVerificationDeleteMany.mockResolvedValue({count:1});
 		mocks.txRegistrationVerificationDeleteMany.mockResolvedValue({count:1});
 		mocks.txRegistrationAttemptFindUnique.mockResolvedValue(registration);
 		mocks.txRegistrationAttemptDeleteMany.mockResolvedValue({count:1});
@@ -216,15 +225,56 @@ describe('registration email-code verification',()=>{
 		expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
 	});
 
-	it('deletes the temporary registration immediately after an incorrect code without creating an account',async()=>{
+	it('rejects an incorrect code without deleting the pending registration',async()=>{
 		mocks.matches.mockReturnValue(false);
 		const response=await POST(request('000000',true));
 
 		expect(response.status).toBe(400);
-		expect(mocks.registrationAttemptDeleteMany).toHaveBeenCalledWith({where:{id:registration.id}});
+		expect(await response.json()).toMatchObject({code:'INVALID_VERIFICATION_CODE'});
+		expect(mocks.registrationVerificationUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+			where:expect.objectContaining({id:registration.verification.id,attempts:{lt:5}}),
+			data:{attempts:{increment:1}},
+		}));
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
 		expect(mocks.txUserCreateMany).not.toHaveBeenCalled();
 		expect(mocks.initializePaperAccount).not.toHaveBeenCalled();
-		expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
+		expect(response.headers.get('set-cookie')).toBeNull();
+	});
+
+	it('allows a valid code to be verified while resend cooldown is active',async()=>{
+		const response=await POST(request('123456',true));
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({verified:true});
+		expect(mocks.txUserCreateMany).toHaveBeenCalledOnce();
+	});
+
+	it('expires only an expired temporary code and preserves the pending registration',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			...registration,
+			verification:{...registration.verification,expiresAt:new Date(Date.now()-1000)},
+		});
+
+		const response=await POST(request('123456',true));
+
+		expect(response.status).toBe(410);
+		expect(await response.json()).toMatchObject({code:'VERIFICATION_CODE_EXPIRED'});
+		expect(mocks.registrationVerificationDeleteMany).toHaveBeenCalledWith({
+			where:{id:registration.verification.id,expiresAt:{lte:expect.any(Date)}},
+		});
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+		expect(mocks.txUserCreateMany).not.toHaveBeenCalled();
+		expect(response.headers.get('set-cookie')).toBeNull();
+	});
+
+	it('does not create a second account when concurrent verification already consumed the code',async()=>{
+		mocks.txRegistrationVerificationDeleteMany.mockResolvedValue({count:0});
+
+		const response=await POST(request('123456',true));
+
+		expect(response.status).toBe(409);
+		expect(mocks.txUserCreateMany).not.toHaveBeenCalled();
+		expect(mocks.initializePaperAccount).not.toHaveBeenCalled();
 	});
 
 	it('deletes an expired temporary registration before any permanent account is created',async()=>{
@@ -252,12 +302,13 @@ describe('registration email-code verification',()=>{
 		expect(mocks.registrationAttemptDeleteMany).toHaveBeenCalledWith({where:{id:registration.id}});
 	});
 
-	it('invalidates the temporary session when a malformed verification code is submitted',async()=>{
+	it('rejects malformed input without deleting the pending registration',async()=>{
 		const response=await POST(request('not-a-code',true));
 
 		expect(response.status).toBe(400);
-		expect(mocks.registrationAttemptDeleteMany).toHaveBeenCalledWith({where:{id:registration.id}});
+		expect(mocks.registrationAttemptFindUnique).not.toHaveBeenCalled();
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
 		expect(mocks.txUserCreateMany).not.toHaveBeenCalled();
-		expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
+		expect(response.headers.get('set-cookie')).toBeNull();
 	});
 });

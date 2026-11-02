@@ -885,6 +885,33 @@ test('registration page refresh and Turnstile retries do not submit and render t
 	expect(registrationSubmissions).toBe(1);
 });
 
+test('mobile verification accepts an existing email code when resend is rate-limited',async({page})=>{
+	const email='pending-registration@example.invalid';
+	let verificationPayload:Record<string,unknown>|undefined;
+	await page.setViewportSize({width:320,height:800});
+	await page.route('**/api/register/resend',route=>route.fulfill({
+		status:429,
+		contentType:'application/json',
+		headers:{'Retry-After':'3480'},
+		body:JSON.stringify({error:'Please wait before requesting another verification code.',retryAfterSeconds:3480}),
+	}));
+	await page.route('**/api/register/verify',async route=>{
+		verificationPayload=route.request().postDataJSON() as Record<string,unknown>;
+		await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({verified:true})});
+	});
+
+	await page.goto(`/verify-email?email=${encodeURIComponent(email)}`);
+	await expect(page.getByRole('textbox',{name:'Email address'})).toHaveValue(email);
+	await expect(page.getByText(email,{exact:true})).toBeVisible();
+	await expect(page.locator('.auth-error')).toContainText('58 minute(s)');
+	await expect(page.getByLabel('Six-digit email verification code')).toBeVisible();
+	await expectNoHorizontalOverflow(page);
+	await page.getByLabel('Six-digit email verification code').fill('123456');
+	await page.getByRole('button',{name:'Verify email address'}).click();
+	await page.waitForURL('/login?verified=1');
+	expect(verificationPayload).toEqual({email,code:'123456'});
+});
+
 test('registration completes through email-code fallback when Akedly is disabled',async({page})=>{
 	const email=fixture('REGISTRATION_EMAIL');
 	const password=fixture('REGISTRATION_PASSWORD');

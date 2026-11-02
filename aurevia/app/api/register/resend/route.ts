@@ -13,6 +13,12 @@ import {clearRegistrationCookie,hashRegistrationToken,registrationTokenFromReque
 
 const schema=z.object({email:z.string().trim().email().max(254)});
 const genericResponse={message:'If the account is eligible, email verification can continue after the resend cooldown.'};
+const RESEND_RATE_LIMIT_WINDOW_MS=10*60_000;
+
+function rateLimitResend(ip:string|null,email:string){
+	if(ip)rateLimit(`akedly-register-ip:${ip}`,5,RESEND_RATE_LIMIT_WINDOW_MS);
+	rateLimit(`akedly-register-email:${email}`,3,RESEND_RATE_LIMIT_WINDOW_MS);
+}
 
 function cooldownResponse(message:string,resendAfter?:Date){
 	const retryAfterSeconds=Math.max(1,Math.ceil(((resendAfter?.getTime()||Date.now()+verificationConfig.resendCooldownSeconds*1000)-Date.now())/1000));
@@ -49,8 +55,6 @@ export async function POST(request:Request){
 		const {email:rawEmail}=schema.parse(await request.json());
 		const email=rawEmail.toLowerCase();
 		const ip=trustedProxyClientIp(request);
-		if(ip)rateLimit(`akedly-register-ip:${ip}`,5,60*60_000);
-		rateLimit(`akedly-register-email:${email}`,3,60*60_000);
 		const token=registrationTokenFromRequest(request);
 		const registrationAttempt=token?await db.registrationAttempt.findUnique({
 			where:{tokenHash:hashRegistrationToken(token)},
@@ -70,6 +74,24 @@ export async function POST(request:Request){
 					where:{registrationAttemptId:registrationAttempt.id,expiresAt:{lte:now}},
 				});
 			}
+			const existing=await db.registrationVerification.findUnique({where:{registrationAttemptId:registrationAttempt.id}});
+			if(existing&&existing.resendAfter>now){
+				if(existing.channel===VerificationChannel.EMAIL&&existing.expiresAt>now
+					&&(existing.providerReference===null||existing.providerReference==='EMAIL_STATUS_UNKNOWN')){
+					return NextResponse.json({
+						method:'email-code',
+						message:existing.providerReference==='EMAIL_STATUS_UNKNOWN'
+							?'We could not confirm delivery. If the code arrived, enter it here; otherwise request another code after the cooldown.'
+							:'A verification code was already requested. Check your email.',
+						resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000),
+					},{status:200,headers:{'Cache-Control':'no-store'}});
+				}
+				return cooldownResponse('Please wait before requesting another verification attempt.',existing.resendAfter);
+			}
+			if(!akedlyIsConfigured()&&!hasConfiguredVerificationProvider(VerificationChannel.EMAIL)){
+				return NextResponse.json({error:'Email verification is temporarily unavailable. Your registration is saved; please retry later.'},{status:503,headers:{'Cache-Control':'no-store'}});
+			}
+			rateLimitResend(ip,email);
 			if(akedlyIsConfigured()){
 				try{
 					const attempt=await startAkedlyRegistrationVerification(registrationAttempt.id,registrationAttempt.email);
@@ -99,20 +121,6 @@ export async function POST(request:Request){
 			}
 			if(!hasConfiguredVerificationProvider(VerificationChannel.EMAIL)){
 				return NextResponse.json({error:'Email verification is temporarily unavailable. Your registration is saved; please retry later.'},{status:503,headers:{'Cache-Control':'no-store'}});
-			}
-			const existing=await db.registrationVerification.findUnique({where:{registrationAttemptId:registrationAttempt.id}});
-			if(existing&&existing.resendAfter>now){
-				if(existing.channel===VerificationChannel.EMAIL&&existing.providerReference==='EMAIL_STATUS_UNKNOWN'&&existing.expiresAt>now){
-					return NextResponse.json({
-						method:'email-code',
-						message:'We could not confirm delivery. If the code arrived, enter it here; otherwise request another code after the cooldown.',
-						resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000),
-					},{status:200,headers:{'Cache-Control':'no-store'}});
-				}
-				if(existing.channel===VerificationChannel.EMAIL&&!existing.providerReference&&existing.expiresAt>now){
-					return NextResponse.json({method:'email-code',message:'A verification code was already requested. Check your email.',resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000)},{status:200});
-				}
-				return cooldownResponse('Please wait before requesting another verification attempt.',existing.resendAfter);
 			}
 			const code=generateVerificationCode();
 			const codeHash=hashVerificationCode(registrationAttempt.id,code);
@@ -191,6 +199,27 @@ export async function POST(request:Request){
 		}
 		const user=await db.user.findUnique({where:{email},select:{id:true,email:true,name:true,phone:true,emailVerifiedAt:true,requiresRegistrationVerification:true,role:true,status:true}});
 		if(!user||user.role!=='USER'||user.status!=='ACTIVE'||user.emailVerifiedAt||!user.requiresRegistrationVerification)return NextResponse.json(genericResponse,{status:202});
+		const now=new Date();
+		let existing=await db.verificationCode.findUnique({where:{userId:user.id}});
+		if(existing&&existing.expiresAt<=now){
+			await db.verificationCode.deleteMany({where:{id:existing.id,expiresAt:{lte:now}}});
+			existing=null;
+		}
+		if(existing&&existing.resendAfter>now){
+			if(existing.channel===VerificationChannel.EMAIL&&existing.expiresAt>now
+				&&(existing.providerReference===null||existing.providerReference==='EMAIL_STATUS_UNKNOWN')){
+				return NextResponse.json({
+					method:'email-code',
+					message:existing.providerReference==='EMAIL_STATUS_UNKNOWN'
+						?'We could not confirm delivery. If the code arrived, enter it here; otherwise request another code after the cooldown.'
+						:'A verification code was already requested. Check your email.',
+					resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000),
+				},{status:200,headers:{'Cache-Control':'no-store'}});
+			}
+			return cooldownResponse('Please wait before requesting another verification attempt.',existing.resendAfter);
+		}
+		if(!akedlyIsConfigured()&&!hasConfiguredVerificationProvider(VerificationChannel.EMAIL))return NextResponse.json({error:'Email verification is temporarily unavailable. Please try again later.'},{status:503});
+		rateLimitResend(ip,email);
 		let akedlyFallback=false;
 		if(akedlyIsConfigured()){
 			try{
@@ -216,21 +245,6 @@ export async function POST(request:Request){
 			}
 		}
 		if(!hasConfiguredVerificationProvider(VerificationChannel.EMAIL))return NextResponse.json({error:'Email verification is temporarily unavailable. Please try again later.'},{status:503});
-		const now=new Date();
-		const existing=await db.verificationCode.findUnique({where:{userId:user.id}});
-		if(existing&&existing.resendAfter>now){
-			if(existing.channel===VerificationChannel.EMAIL&&existing.providerReference==='EMAIL_STATUS_UNKNOWN'&&existing.expiresAt>now){
-				return NextResponse.json({
-					method:'email-code',
-					message:'We could not confirm delivery. If the code arrived, enter it here; otherwise request another code after the cooldown.',
-					resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000),
-				},{status:200,headers:{'Cache-Control':'no-store'}});
-			}
-			if(existing.channel===VerificationChannel.EMAIL&&!existing.providerReference&&existing.expiresAt>now){
-				return NextResponse.json({method:'email-code',message:'A verification code was already requested. Check your email.',resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000)},{status:200});
-			}
-			return cooldownResponse('Please wait before requesting another verification code.',existing.resendAfter);
-		}
 		const code=generateVerificationCode();
 		const codeHash=hashVerificationCode(user.id,code);
 		const reservation=hashVerificationCode(user.id,`reservation:${randomUUID()}`);

@@ -73,7 +73,7 @@ export default function VerifyEmailPage(){
 			}
 			if(!response.ok){
 				if(result.code==='EMAIL_DELIVERY_STATUS_UNKNOWN'){
-					setEmailCodeMode(true);
+					setEmailCodeMode(false);
 					const retryAfter=Number(response.headers.get('Retry-After')||result.retryAfterSeconds);
 					const retryMessage=Number.isFinite(retryAfter)&&retryAfter>0
 						?` You can request another code in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
@@ -124,10 +124,19 @@ export default function VerifyEmailPage(){
 					setEmailCodeMode(false);
 					setPhoneConflict(true);
 				}
-				if(typeof result.error==='string'&&result.error.includes('Start registration again')){
-					window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
-					setEmailCodeMode(false);
+				if(result.code==='VERIFICATION_CODE_EXPIRED'){
 					setCode('');
+					setMessage('This verification code expired. Request a new code to continue.');
+					return;
+				}
+				if(result.code==='INVALID_VERIFICATION_CODE'){
+					setError(result.error||'That verification code is incorrect. Check the email and try again.');
+					return;
+				}
+				if(result.code==='VERIFICATION_ATTEMPTS_EXHAUSTED'){
+					setCode('');
+					setError(result.error||'Too many incorrect codes. Request a new verification code to continue.');
+					return;
 				}
 				throw new Error(result.error||'Unable to verify this email address.');
 			}
@@ -223,17 +232,21 @@ export default function VerifyEmailPage(){
 	return <><Nav/><main className="auth-scene"><section className="auth-card auth-register-card" aria-labelledby="verify-email-title">
 		<div className="flex items-center gap-2 gold"><ShieldCheck size={20} aria-hidden="true"/><span className="text-sm font-semibold">Email verification</span></div>
 		<h1 id="verify-email-title" className="auth-heading mt-3">Verify your email address</h1>
-		<p className="mt-2 text-sm leading-6 muted">Your registration is temporary. No user or financial account is created until email verification succeeds. {emailCodeMode?'Enter the six-digit code sent to your email to continue.':'Complete the secure verification experience to continue.'} Email verification does not approve KYC or authorize financial activity.</p>
+		<p className="mt-2 text-sm leading-6 muted">Your registration is temporary. No user or financial account is created until email verification succeeds. {attempt?'Complete the secure verification below, or enter an email code if one was delivered.':'Enter the six-digit code sent to your email to continue.'} Email verification does not approve KYC or authorize financial activity.</p>
 		{existingAccount&&<p className="mt-3 text-sm leading-6 muted">We found an existing unverified account. Verification will not change its password; sign in afterward with the password originally set for that account.</p>}
 		<label className="auth-field-label mt-5">Email address<input className="auth-input" type="email" autoComplete="email" value={email} onChange={event=>{window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);setAttempt(null);setEmailCodeMode(false);setSessionRestoreFailed(false);setExistingAccount(false);setCode('');setEmail(event.target.value.trim().toLowerCase());setMessage('')}} required maxLength={254}/></label>
 		{attempt&&<div className="mt-5 overflow-hidden rounded-lg border border-white/10 bg-black/30">
 			<iframe className="block h-[700px] w-full max-w-full" src={attempt.iframeUrl} title="Akedly secure email verification" allow="clipboard-write; publickey-credentials-get *; publickey-credentials-create *"/>
 		</div>}
-		{emailCodeMode&&<div className="mt-5"><label className="auth-field-label">Six-digit email verification code<input className="auth-input" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={event=>setCode(event.target.value.replace(/\D/g,'').slice(0,6))}/></label><button className="auth-submit mt-3 w-full" type="button" disabled={busy||code.length!==6} onClick={()=>void verifyEmailCode()}>{busy?'Verifying…':'Verify email address'}</button></div>}
+		{email&&<div className="mt-5">
+			<p className="mb-3 text-sm muted">Verification code for <strong className="text-white">{email}</strong></p>
+			<label className="auth-field-label">Six-digit email verification code<input className="auth-input" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={event=>setCode(event.target.value.replace(/\D/g,'').slice(0,6))}/></label>
+			<button className="auth-submit mt-3 w-full" type="button" disabled={busy||code.length!==6||sessionRestoreFailed||phoneConflict} onClick={()=>void verifyEmailCode()}>{busy?'Verifying…':'Verify email address'}</button>
+		</div>}
 		{error&&<p className="auth-error mt-4" role="alert">{error}</p>}
 		{message&&<p className="mt-4 text-sm muted" role="status">{message}</p>}
 		{phoneConflict&&<p className="mt-4 text-center text-sm"><Link href="/register" className="auth-link">Restart registration</Link></p>}
-		<button className="auth-submit mt-5 w-full" type="button" disabled={busy||!email||phoneConflict} onClick={()=>void startVerification()}>{busy?'Starting verification…':attempt||emailCodeMode?'Request another verification code':'Start email verification'}</button>
+		<button className="auth-submit mt-5 w-full" type="button" disabled={busy||!email||phoneConflict||sessionRestoreFailed} onClick={()=>void startVerification()}>{busy?'Starting verification…':attempt||emailCodeMode?'Resend verification code':'Start email verification'}</button>
 		{!emailCodeMode&&!attempt&&<p className="mt-4 text-center text-sm muted"><Link href="/register" className="auth-link">Start a new registration</Link></p>}
 		<p className="auth-footer mt-5">Already verified? <Link href="/login" className="auth-link">Sign in</Link></p>
 	</section></main></>;

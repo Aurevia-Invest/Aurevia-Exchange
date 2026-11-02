@@ -10,7 +10,7 @@ import type {TranslationKey} from '@/lib/i18n';
 type VerificationStatus='PENDING'|'APPROVED'|'REJECTED'|'NEEDS_CHANGES';
 type VerificationForm={legalName:string;dob:string;address:string;idType:string;idNumber:string};
 type KycDocument={id:string;kind:string;filename:string;mimeType:string;size:number;status:string;uploadedAt:string;reviewedAt:string|null;reviewNote:string|null};
-type AkedlyPhoneAttempt={attemptId:string;iframeUrl:string;expiresAt:string};
+type AkedlyPhoneAttempt={attemptId:string;iframeUrl:string;expiresAt:string;termiiFallbackAvailable:boolean};
 const emptyForm:VerificationForm={legalName:'',dob:'',address:'',idType:'PASSPORT',idNumber:''};
 
 const statusCopy:Record<VerificationStatus,{label:TranslationKey;description:TranslationKey}>={
@@ -114,16 +114,21 @@ export default function Kyc(){
     finally{setSubmitting(false)}
   }
 
-  async function sendPhoneCode(){
+  async function sendPhoneCode(delivery:'automatic'|'termii'='automatic'){
     if(sendingPhoneCode||!phone.trim())return;
     setSendingPhoneCode(true);setError('');setPhoneMessage('');
     try{
-      const response=await fetch('/api/kyc/phone/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone:phone.trim()})});
+      const response=await fetch('/api/kyc/phone/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone:phone.trim(),delivery})});
       const result=await response.json();
       if(!response.ok)throw new Error(result.error||'Unable to send a phone verification code.');
       setPhoneVerified(false);setPhoneCode('');setPhoneMessage(result.message||'A verification code was sent to your phone.');
       if(result.provider==='akedly'&&typeof result.attemptId==='string'&&typeof result.iframeUrl==='string'&&typeof result.expiresAt==='string'){
-        setPhoneAttempt({attemptId:result.attemptId,iframeUrl:result.iframeUrl,expiresAt:result.expiresAt});
+        setPhoneAttempt({
+          attemptId:result.attemptId,
+          iframeUrl:result.iframeUrl,
+          expiresAt:result.expiresAt,
+          termiiFallbackAvailable:result.termiiFallbackAvailable===true,
+        });
       }else setPhoneAttempt(null);
     }catch(exception){setError(exception instanceof Error?exception.message:'Unable to send a phone verification code.')}
     finally{setSendingPhoneCode(false)}
@@ -181,6 +186,7 @@ export default function Kyc(){
           <label className="account-label">Six-digit verification code<input className="input" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={phoneCode} onChange={event=>setPhoneCode(event.target.value.replace(/\D/g,'').slice(0,6))}/></label>
           <button className="btn bg-gold text-black self-end" type="button" disabled={verifyingPhoneCode||loading||phoneCode.length!==6||phoneVerified} onClick={()=>void verifyPhoneCode()}>{verifyingPhoneCode?'Verifying…':phoneVerified?'Phone verified':'Verify phone'}</button>
         </div>}
+        {phoneAttempt?.termiiFallbackAvailable&&<button className="mt-3 text-link text-sm" type="button" disabled={sendingPhoneCode||loading} onClick={()=>void sendPhoneCode('termii')}>{sendingPhoneCode?'Requesting SMS code…':'Can’t use the widget? Send me an SMS code instead'}</button>}
         <p className="mt-3 text-xs muted" role="status">{phoneVerified?'Phone number verified. You can submit your KYC profile.':'Phone verification is required before KYC submission.'}</p>
         {phoneMessage&&<p className="mt-2 text-sm text-profit" role="status">{phoneMessage}</p>}
       </section>

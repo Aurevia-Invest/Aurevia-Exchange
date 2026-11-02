@@ -37,11 +37,11 @@ vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit}));
 
 import {POST} from '@/app/api/kyc/phone/send/route';
 
-function request(){
+function request(delivery?:'automatic'|'termii'){
 	return new Request('https://aurevia.test/api/kyc/phone/send',{
 		method:'POST',
 		headers:{'content-type':'application/json','x-forwarded-for':'192.0.2.6'},
-		body:JSON.stringify({phone:'+12125550123'}),
+		body:JSON.stringify({phone:'+12125550123',...(delivery?{delivery}:{})}),
 	});
 }
 
@@ -86,5 +86,32 @@ describe('phone verification provider fallback',()=>{
 
 		expect(response.status).toBe(429);
 		expect(mocks.sendTermii).not.toHaveBeenCalled();
+	});
+
+	it('offers a configured Termii SMS fallback when Akedly starts successfully',async()=>{
+		mocks.startAkedly.mockResolvedValue({
+			attemptId:'attempt-12345678',
+			iframeUrl:'https://auth.akedly.io/widget?attemptId=attempt-12345678',
+			expiresAt:new Date(Date.now()+5*60_000),
+		});
+
+		const response=await POST(request());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			provider:'akedly',
+			termiiFallbackAvailable:true,
+			resendAfterSeconds:expect.any(Number),
+		});
+		expect(mocks.sendTermii).not.toHaveBeenCalled();
+	});
+
+	it('sends a requested Termii code without starting another Akedly attempt',async()=>{
+		const response=await POST(request('termii'));
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({message:'A verification code was sent to your phone.'});
+		expect(mocks.startAkedly).not.toHaveBeenCalled();
+		expect(mocks.sendTermii).toHaveBeenCalledWith('+12125550123');
 	});
 });

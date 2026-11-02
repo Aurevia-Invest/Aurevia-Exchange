@@ -11,7 +11,10 @@ import {isValidE164} from '@/lib/registration-validation';
 import {akedlyIsConfigured} from '@/lib/akedly';
 import {startAkedlyVerification} from '@/lib/akedly-verification';
 
-const schema=z.object({phone:z.string().trim().max(16).refine(isValidE164,'Enter a valid phone number with its country code.')});
+const schema=z.object({
+	phone:z.string().trim().max(16).refine(isValidE164,'Enter a valid phone number with its country code.'),
+	delivery:z.enum(['automatic','termii']).optional(),
+});
 
 export async function POST(request:Request){
 	try{
@@ -25,7 +28,7 @@ export async function POST(request:Request){
 		if(current.accountMode!==AccountMode.REAL)return NextResponse.json({error:'Phone verification is available in REAL mode only.'},{status:403});
 		if(current.phone===input.phone&&current.phoneVerified)return NextResponse.json({error:'This phone number is already verified.'},{status:409});
 
-		if(akedlyIsConfigured()){
+		if(akedlyIsConfigured()&&input.delivery!=='termii'){
 			const existingChallenge=await db.verificationCode.findUnique({where:{userId:user.id},select:{resendAfter:true}});
 			if(existingChallenge&&existingChallenge.resendAfter>new Date())return NextResponse.json({error:'Please wait before requesting another verification attempt.'},{status:429});
 			try{
@@ -36,7 +39,13 @@ export async function POST(request:Request){
 			}
 			try{
 				const attempt=await startAkedlyVerification(user.id,VerificationChannel.SMS,{phoneNumber:input.phone});
-				return NextResponse.json({message:'Complete the secure phone verification widget.',provider:'akedly',...attempt},{status:200});
+				return NextResponse.json({
+					message:'Complete phone verification in the secure widget. If you cannot receive or complete it, request an SMS code instead.',
+					provider:'akedly',
+					termiiFallbackAvailable:hasConfiguredTermii(),
+					resendAfterSeconds:verificationConfig.resendCooldownSeconds,
+					...attempt,
+				},{status:200});
 			}catch(error){
 				if(error instanceof Error&&['AKEDLY_RESEND_COOLDOWN','AKEDLY_ATTEMPT_RESERVATION_LOST'].includes(error.message))throw error;
 				const providerFailure=error instanceof Error&&[

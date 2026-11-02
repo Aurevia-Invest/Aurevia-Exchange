@@ -19,7 +19,10 @@ describe('server-side registration Turnstile verification',()=>{
 		vi.stubGlobal('fetch',mocks.fetch);
 	});
 
-	afterEach(()=>vi.unstubAllGlobals());
+	afterEach(()=>{
+		vi.unstubAllGlobals();
+		vi.unstubAllEnvs();
+	});
 
 	it('accepts only a successful register action for the configured hostname',async()=>{
 		mocks.fetch.mockResolvedValue(new Response(JSON.stringify({
@@ -41,7 +44,7 @@ describe('server-side registration Turnstile verification',()=>{
 
 	it.each([
 		['invalid token', {success:false,action:'register',hostname:'aurevia.example'}],
-		['expired token', {success:false,action:'register',hostname:'aurevia.example','error-codes':['timeout-or-duplicate']}],
+		['expired or reused token', {success:false,action:'register',hostname:'aurevia.example','error-codes':['timeout-or-duplicate']}],
 		['wrong action', {success:true,action:'login',hostname:'aurevia.example'}],
 		['wrong hostname', {success:true,action:'register',hostname:'attacker.example'}],
 		['missing hostname', {success:true,action:'register'}],
@@ -63,10 +66,42 @@ describe('server-side registration Turnstile verification',()=>{
 		await expect(verifyRegistrationTurnstile('provider-token')).rejects.toThrow('TURNSTILE_PROVIDER_UNAVAILABLE');
 	});
 
-	it('requires both the public site key and private secret',async()=>{
+	it('accepts the Render hostname when a configured custom domain is primary',async()=>{
+		mocks.getServerConfiguration.mockReturnValue({
+			app:{url:'https://exchange.example'},
+			captcha:{turnstileSiteKey:'public-site-key',turnstileSecretKey:'private-secret-key'},
+		});
+		mocks.fetch.mockResolvedValue(new Response(JSON.stringify({
+			success:true,
+			action:'register',
+			hostname:'aurevia-exchange-6hfi.onrender.com',
+		}),{status:200}));
+
+		await expect(verifyRegistrationTurnstile('provider-token')).resolves.toBe(true);
+	});
+
+	it('accepts an explicitly configured custom domain when the Render URL is primary',async()=>{
+		vi.stubEnv('NEXT_PUBLIC_APP_URL','https://exchange.example');
+		mocks.getServerConfiguration.mockReturnValue({
+			app:{url:'https://aurevia-exchange-6hfi.onrender.com'},
+			captcha:{turnstileSiteKey:'public-site-key',turnstileSecretKey:'private-secret-key'},
+		});
+		mocks.fetch.mockResolvedValue(new Response(JSON.stringify({
+			success:true,
+			action:'register',
+			hostname:'exchange.example',
+		}),{status:200}));
+
+		await expect(verifyRegistrationTurnstile('provider-token')).resolves.toBe(true);
+	});
+
+	it.each([
+		['public site key', '', 'private-secret-key'],
+		['private secret', 'public-site-key', ''],
+	])('requires the configured %s',async(_name,siteKey,secretKey)=>{
 		mocks.getServerConfiguration.mockReturnValue({
 			app:{url:'https://aurevia.example'},
-			captcha:{turnstileSiteKey:'',turnstileSecretKey:'private-secret-key'},
+			captcha:{turnstileSiteKey:siteKey,turnstileSecretKey:secretKey},
 		});
 
 		await expect(verifyRegistrationTurnstile('provider-token')).rejects.toThrow('TURNSTILE_NOT_CONFIGURED');

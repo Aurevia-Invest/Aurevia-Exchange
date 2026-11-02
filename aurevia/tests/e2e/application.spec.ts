@@ -912,7 +912,30 @@ test('mobile verification accepts an existing email code when resend is rate-lim
 	expect(verificationPayload).toEqual({email,code:'123456'});
 });
 
-test('registration completes through email-code fallback when Akedly is disabled',async({page})=>{
+test('new registration fails closed without configured phone verification',async({page})=>{
+	const email=`phone-verification-unavailable-${randomUUID()}@example.invalid`;
+	const response=await page.request.post('/api/register',{
+		headers:{'x-forwarded-for':'192.0.2.150'},
+		data:{
+			name:'Temporary Browser Test',
+			email,
+			password:'SecureTestPassword1',
+			country:'United States',
+			dateOfBirth:'2000-02-29',
+			phone:'+447400123456',
+			accountMode:'DEMO',
+			termsAccepted:true,
+			captchaToken:'isolated-test-turnstile-token',
+		},
+	});
+
+	expect(response.status()).toBe(503);
+	expect(await response.json()).toMatchObject({error:'Phone verification is temporarily unavailable. Please try again later.'});
+	expect(await db.user.findUnique({where:{email}})).toBeNull();
+	expect(await db.registrationAttempt.findUnique({where:{email}})).toBeNull();
+});
+
+test.skip('legacy email-code registration fallback is not used for new signups',async({page})=>{
 	const email=fixture('REGISTRATION_EMAIL');
 	const password=fixture('REGISTRATION_PASSWORD');
 	const openProfileSettings=async()=>{

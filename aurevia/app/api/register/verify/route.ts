@@ -43,7 +43,7 @@ export async function POST(request:Request){
 					error:'This verification code expired. Request a new code to continue.',
 				},{status:410,headers:{'Cache-Control':'no-store'}});
 			}
-			if(!challenge||challenge.channel!==VerificationChannel.EMAIL)return NextResponse.json({error:'The code is invalid or no longer available.'},{status:400});
+			if(!challenge||challenge.channel!==VerificationChannel.EMAIL)return NextResponse.json({error:'Use the secure phone verification widget for this registration.'},{status:400});
 			if(challenge.providerReference?.startsWith('AKEDLY:'))return NextResponse.json({error:'Complete verification in the secure Akedly widget instead.'},{status:409});
 			if(challenge.attempts>=verificationConfig.maxAttempts){
 				await db.registrationVerification.deleteMany({where:{id:challenge.id,attempts:{gte:verificationConfig.maxAttempts}}});

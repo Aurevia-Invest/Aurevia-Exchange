@@ -21,19 +21,23 @@ if(parsed.protocol!=='https:'||parsed.origin!==appOrigin.origin||parsed.username
 }
 
 try{
-	const [pushResponse,cleanupResponse]=await Promise.all([
+	const kycEmailUrl=new URL('/api/cron/kyc-email-delivery',appOrigin);
+	const [pushResponse,cleanupResponse,kycEmailResponse]=await Promise.all([
 		fetch(parsed,{headers:{authorization:'Bearer '+pushSecret}}),
 		fetch(cleanupUrl,{headers:{authorization:'Bearer '+cleanupSecret}}),
+		fetch(kycEmailUrl,{headers:{authorization:'Bearer '+cleanupSecret}}),
 	]);
 	if(!pushResponse.ok)throw new Error(`PUSH_WORKER_HTTP_${pushResponse.status}`);
 	if(!cleanupResponse.ok)throw new Error(`REGISTRATION_CLEANUP_HTTP_${cleanupResponse.status}`);
-	const [pushResult,cleanupResult]=await Promise.all([pushResponse.json(),cleanupResponse.json()]);
+	if(!kycEmailResponse.ok)throw new Error(`KYC_EMAIL_WORKER_HTTP_${kycEmailResponse.status}`);
+	const [pushResult,cleanupResult,kycEmailResult]=await Promise.all([pushResponse.json(),cleanupResponse.json(),kycEmailResponse.json()]);
 	if(!cleanupResult||!Number.isInteger(cleanupResult.deletedAttempts)||cleanupResult.deletedAttempts<0){
 		throw new Error('REGISTRATION_CLEANUP_INVALID_RESPONSE');
 	}
 	console.log(JSON.stringify({
 		push:pushResult,
 		registrationCleanup:{deletedAttempts:cleanupResult.deletedAttempts},
+		kycEmailDelivery:kycEmailResult.result,
 	}));
 }catch(error){
 	console.error('Scheduled registration/push cleanup failed.',error instanceof Error?error.name:'UnknownError');

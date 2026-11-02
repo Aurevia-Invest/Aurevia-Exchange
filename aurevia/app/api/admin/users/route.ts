@@ -4,6 +4,7 @@ import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
+import {enqueueKycEmail,type KycEmailEvent} from '@/lib/kyc-email-outbox';
 import {getServerConfiguration} from '@/lib/config/env';
 import {AUREVIA_EXCHANGE_ID_PATTERN} from '@/lib/aurevia-exchange-id';
 
@@ -81,6 +82,13 @@ export async function PATCH(req:Request){
         const title=status==='APPROVED'?'Identity profile approved by administrator':status==='REJECTED'?'Identity profile rejected by administrator':status==='NEEDS_CHANGES'?'Additional identity information requested':'Identity profile review updated';
         const message=`An administrator marked your identity profile ${status.toLowerCase().replaceAll('_',' ')}. This is not an external identity-provider, AML/sanctions, or regulatory verification.${status==='APPROVED'?' This decision does not change your email-verification or account-access requirements.':''}${input.reviewNote?` Admin note: ${input.reviewNote}`:''}`;
         await createNotification(tx,{userId:user.id,type:NotificationType.KYC,title,message,dedupeKey:`kyc:${user.id}:${status}:${user.createdAt.toISOString()}:${new Date().toISOString()}`,actionUrl:'/kyc'});
+        const kycEmailEvent:Record<NonNullable<typeof input.kycStatus>,KycEmailEvent>={
+          PENDING:'PROFILE_STATUS_UPDATED',
+          APPROVED:'PROFILE_APPROVED',
+          REJECTED:'PROFILE_REJECTED',
+          NEEDS_CHANGES:'PROFILE_NEEDS_CHANGES',
+        };
+        await enqueueKycEmail(tx,user.id,kycEmailEvent[status],`kyc-email:${user.id}:profile:${status}:${new Date().toISOString()}`);
       }
       if(controlsChanged){
         const disabledActions=[!user.depositEnabled?'deposits':null,!user.withdrawalEnabled?'withdrawals':null,user.accountRestricted?'account access':null].filter(Boolean);

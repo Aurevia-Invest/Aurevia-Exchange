@@ -11,7 +11,6 @@ const mocks=vi.hoisted(()=>({
 	attemptUpdateMany:vi.fn(),
 	verificationDeleteMany:vi.fn(),
 	akedlyConfigured:vi.fn(),
-	emailProviderConfigured:vi.fn(),
 	verifyTurnstile:vi.fn(),
 	rateLimit:vi.fn(),
 	RateLimitError:class extends Error{
@@ -36,7 +35,6 @@ vi.mock('@/lib/db',()=>({db:{
 }}));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
 vi.mock('@/lib/akedly',()=>({akedlyIsConfigured:mocks.akedlyConfigured}));
-vi.mock('@/lib/verification-delivery',()=>({hasConfiguredVerificationProvider:mocks.emailProviderConfigured}));
 vi.mock('@/lib/turnstile',()=>({verifyRegistrationTurnstile:mocks.verifyTurnstile}));
 
 import {POST} from '@/app/api/register/route';
@@ -47,7 +45,7 @@ const payload={
 	name:'New User',
 	country:'United States',
 	dateOfBirth:'1990-01-01',
-	phone:'',
+	phone:'+12025550123',
 	accountMode:'DEMO',
 	termsAccepted:true,
 	captchaToken:'verified-turnstile-token',
@@ -64,8 +62,7 @@ function request(body:unknown=payload,forwardedFor='192.0.2.5'){
 describe('registration privacy boundary',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
-		mocks.akedlyConfigured.mockReturnValue(false);
-		mocks.emailProviderConfigured.mockReturnValue(true);
+		mocks.akedlyConfigured.mockReturnValue(true);
 		mocks.verifyTurnstile.mockResolvedValue(true);
 		mocks.userFindUnique.mockResolvedValue(null);
 		mocks.userFindFirst.mockResolvedValue(null);
@@ -79,7 +76,7 @@ describe('registration privacy boundary',()=>{
 
 	afterEach(()=>vi.unstubAllEnvs());
 
-	it('stores only a short-lived registration attempt until email verification',async()=>{
+	it('stores only a short-lived registration attempt until phone verification',async()=>{
 		const response=await POST(request());
 		const body=await response.json();
 
@@ -90,7 +87,7 @@ describe('registration privacy boundary',()=>{
 			data:expect.objectContaining({
 				email:payload.email,
 				passwordHash:expect.any(String),
-				phone:null,
+				phone:payload.phone,
 				expiresAt:expect.any(Date),
 				tokenHash:expect.any(String),
 			}),
@@ -155,11 +152,19 @@ describe('registration privacy boundary',()=>{
 		expect(mocks.attemptCreate).not.toHaveBeenCalled();
 	});
 
-	it('does not retain personal details if no email verification provider is configured',async()=>{
-		mocks.emailProviderConfigured.mockReturnValue(false);
+	it('does not retain personal details if Akedly phone verification is not configured',async()=>{
+		mocks.akedlyConfigured.mockReturnValue(false);
 		const response=await POST(request());
 
 		expect(response.status).toBe(503);
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+	});
+
+	it('rejects a missing phone number before creating a temporary registration',async()=>{
+		const {phone:_phone,...withoutPhone}=payload;
+		const response=await POST(request(withoutPhone));
+
+		expect(response.status).toBe(400);
 		expect(mocks.attemptCreate).not.toHaveBeenCalled();
 	});
 

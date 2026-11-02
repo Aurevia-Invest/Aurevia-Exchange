@@ -176,6 +176,12 @@ enum PushOutboxStatus {
   COMPLETED
 }
 
+enum KycEmailOutboxStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
 enum PushDeliveryStatus {
   PENDING
   PROCESSING
@@ -306,6 +312,7 @@ model User {
   pushPreference                   PushPreference?
   pushSubscriptions                PushSubscription[]
   pushOutbox                       PushOutbox[]
+  kycEmailOutbox                   KycEmailOutbox[]
   verificationCode                 VerificationCode?
   passwordResetTokens              PasswordResetToken[]
   clientStories                    ClientStory[]
@@ -479,6 +486,23 @@ model PushOutbox {
   lastErrorCode  String?
   createdAt      DateTime         @default(now())
   deliveries     PushDelivery[]
+
+  @@index([status, nextAttemptAt, createdAt])
+}
+
+model KycEmailOutbox {
+  id            String               @id @default(cuid())
+  userId        String
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event         String               @db.VarChar(32)
+  dedupeKey     String               @unique @db.VarChar(200)
+  status        KycEmailOutboxStatus @default(PENDING)
+  attempts      Int                  @default(0)
+  nextAttemptAt DateTime             @default(now())
+  lockedAt      DateTime?
+  sentAt        DateTime?
+  lastErrorCode String?              @db.VarChar(32)
+  createdAt     DateTime             @default(now())
 
   @@index([status, nextAttemptAt, createdAt])
 }

@@ -5,6 +5,7 @@ const mocks=vi.hoisted(()=>({
 	complete:vi.fn(),
 	reconcile:vi.fn(),
 	rateLimit:vi.fn(),
+	registrationFindFirst:vi.fn(),
 }));
 
 vi.mock('@/lib/akedly-verification',()=>({
@@ -12,6 +13,7 @@ vi.mock('@/lib/akedly-verification',()=>({
 	reconcileAkedlyAttempt:mocks.reconcile,
 }));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit}));
+vi.mock('@/lib/db',()=>({db:{registrationVerification:{findFirst:mocks.registrationFindFirst}}}));
 
 import {POST} from '@/app/api/webhooks/akedly/route';
 
@@ -54,6 +56,7 @@ describe('Akedly webhook route',()=>{
 		env();
 		mocks.complete.mockResolvedValue('verified');
 		mocks.reconcile.mockResolvedValue('verified');
+		mocks.registrationFindFirst.mockResolvedValue(null);
 		mocks.rateLimit.mockImplementation(()=>undefined);
 	});
 
@@ -88,6 +91,19 @@ describe('Akedly webhook route',()=>{
 
 		expect(response.status).toBe(200);
 		expect(mocks.reconcile).toHaveBeenCalledWith('attempt_1234567890');
+		expect(mocks.complete).not.toHaveBeenCalled();
+	});
+
+	it('defers unsigned temporary-registration results to the owner session',async()=>{
+		mocks.registrationFindFirst.mockResolvedValue({id:'registration-verification-1'});
+		const response=await POST(new Request('https://aurevia.test/api/webhooks/akedly',{
+			method:'POST',
+			headers:{'content-type':'application/json'},
+			body:JSON.stringify(result()),
+		}));
+
+		expect(response.status).toBe(200);
+		expect(mocks.reconcile).not.toHaveBeenCalled();
 		expect(mocks.complete).not.toHaveBeenCalled();
 	});
 

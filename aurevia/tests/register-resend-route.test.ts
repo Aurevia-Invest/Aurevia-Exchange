@@ -229,6 +229,49 @@ describe('registration verification resend',()=>{
 		expect(mocks.rateLimit).toHaveBeenNthCalledWith(2,`akedly-register-email:${user.email}`,3,10*60_000);
 	});
 
+	it('starts new registrations with the phone-only Akedly channel',async()=>{
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-phone',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:'+2348031234567',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({method:'akedly',channel:VerificationChannel.SMS});
+		expect(mocks.startAkedlyRegistration).toHaveBeenCalledWith(
+			'registration-phone',
+			VerificationChannel.SMS,
+			{phoneNumber:'+2348031234567'},
+		);
+		expect(mocks.deliverCode).not.toHaveBeenCalled();
+	});
+
+	it('does not fall back to email when new-registration phone verification fails',async()=>{
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new Error('AKEDLY_PROVIDER_UNAVAILABLE'));
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-phone',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:'+2348031234567',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(503);
+		expect(await response.json()).toMatchObject({error:expect.stringContaining('Phone verification')});
+		expect(mocks.deliverCode).not.toHaveBeenCalled();
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+	});
+
 	it('does not switch providers when an Akedly resend is still cooling down',async()=>{
 		mocks.akedlyConfigured.mockReturnValue(true);
 		mocks.startAkedly.mockRejectedValue(new Error('AKEDLY_RESEND_COOLDOWN'));

@@ -1,14 +1,13 @@
 import {NextResponse} from 'next/server';
 import {randomUUID} from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import {AccountMode,Prisma,VerificationChannel} from '@prisma/client';
+import {AccountMode,Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {db} from '@/lib/db';
 import {rateLimit,RateLimitError} from '@/lib/rate-limit';
 import {trustedProxyClientIp} from '@/lib/request-ip';
 import {isValidE164,parseDateOfBirth} from '@/lib/registration-validation';
 import {akedlyIsConfigured} from '@/lib/akedly';
-import {hasConfiguredVerificationProvider} from '@/lib/verification-delivery';
 import {createRegistrationToken,hashRegistrationToken,REGISTRATION_LIFETIME_MS,registrationTokenFromRequest,setRegistrationCookie} from '@/lib/registration-attempt';
 import {verifyRegistrationTurnstile} from '@/lib/turnstile';
 
@@ -20,7 +19,7 @@ const schema=z.object({
 	name:z.string().trim().min(2).max(120),
 	country:z.string().trim().min(2).max(80),
 	dateOfBirth:z.string().refine(value=>parseDateOfBirth(value)!==null,'Enter a valid date that is not in the future.'),
-	phone:z.string().trim().max(16).refine(value=>value===''||isValidE164(value),'Enter a valid phone number with its country code.').optional().or(z.literal('')),
+	phone:z.string().trim().min(1).max(16).refine(isValidE164,'Enter a valid phone number in international format.'),
 	accountMode:z.nativeEnum(AccountMode),
 	termsAccepted:z.literal(true),
 	captchaToken:z.string().trim().min(1).max(2048),
@@ -31,12 +30,16 @@ function registrationResponse(
 	token:string,
 	expiresAt:Date,
 	status:200|201,
-	authMethod:'akedly'|'email-code'=akedlyIsConfigured()?'akedly':'email-code',
+	authMethod?:'akedly'|'email-code',
 ){
 	const response=NextResponse.json({
-		message:'Complete email verification to create your account.',
+		message:authMethod==='akedly'
+			?'Complete phone verification to create your account.'
+			:authMethod==='email-code'
+				?'Continue the existing email verification to create your account.'
+				:'Continue verification to create your account.',
 		verificationRequired:true,
-		authMethod,
+		...(authMethod?{authMethod}:{}),
 		email,
 	},{status,headers:{'Cache-Control':'no-store'}});
 	setRegistrationCookie(response,token,expiresAt);
@@ -103,7 +106,6 @@ export async function POST(request:Request){
 
 		const dateOfBirth=parseDateOfBirth(input.dateOfBirth);
 		if(!dateOfBirth)return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
-		if(!akedlyIsConfigured()&&!hasConfiguredVerificationProvider(VerificationChannel.EMAIL))return NextResponse.json({error:'Email verification is temporarily unavailable. Please try again later.'},{status:503});
 		const existingUser=await db.user.findUnique({
 			where:{email},
 			select:{id:true,role:true,status:true,emailVerifiedAt:true,requiresRegistrationVerification:true},
@@ -111,7 +113,7 @@ export async function POST(request:Request){
 		if(existingUser){
 			if(existingUser.role==='USER'&&existingUser.status==='ACTIVE'&&!existingUser.emailVerifiedAt&&existingUser.requiresRegistrationVerification){
 				return NextResponse.json({
-					message:'An existing unverified account was found. Continue its email verification; your original password remains unchanged.',
+					message:'An existing unverified account was found. Continue its current verification; your original password remains unchanged.',
 					verificationRequired:true,
 					existingVerification:true,
 					email,
@@ -143,16 +145,15 @@ export async function POST(request:Request){
 			return await resumePendingAttempt(existingAttempt,input.password,request);
 		}
 
-		if(input.phone){
-			const [existingPhoneUser,existingPhoneAttempt]=await Promise.all([
-				db.user.findFirst({where:{phone:input.phone},select:{id:true}}),
-				db.registrationAttempt.findFirst({where:{phone:input.phone,email:{not:email},expiresAt:{gt:now}},select:{id:true}}),
-			]);
-			if(existingPhoneUser||existingPhoneAttempt)return NextResponse.json({
-				code:'PHONE_ALREADY_IN_USE',
-				error:'This phone number is already associated with another account or pending registration. Use a different number or leave the optional phone field blank.',
-			},{status:409,headers:{'Cache-Control':'no-store'}});
-		}
+		if(!akedlyIsConfigured())return NextResponse.json({error:'Phone verification is temporarily unavailable. Please try again later.'},{status:503});
+		const [existingPhoneUser,existingPhoneAttempt]=await Promise.all([
+			db.user.findFirst({where:{phone:input.phone},select:{id:true}}),
+			db.registrationAttempt.findFirst({where:{phone:input.phone,email:{not:email},expiresAt:{gt:now}},select:{id:true}}),
+		]);
+		if(existingPhoneUser||existingPhoneAttempt)return NextResponse.json({
+			code:'PHONE_ALREADY_IN_USE',
+			error:'This phone number is already associated with another account or pending registration. Use a different number.',
+		},{status:409,headers:{'Cache-Control':'no-store'}});
 
 		const passwordHash=await bcrypt.hash(input.password,12);
 		const token=createRegistrationToken();
@@ -163,7 +164,7 @@ export async function POST(request:Request){
 			passwordHash,
 			name:input.name,
 			country:input.country,
-			phone:input.phone||null,
+			phone:input.phone,
 			dateOfBirth,
 			accountMode:input.accountMode,
 			termsAcceptedAt:new Date(),
@@ -181,7 +182,7 @@ export async function POST(request:Request){
 	}catch(error){
 		if(error instanceof ZodError){
 			if(error.issues.some(issue=>issue.path[0]==='dateOfBirth'))return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
-			if(error.issues.some(issue=>issue.path[0]==='phone'))return NextResponse.json({error:'Enter a valid phone number with its country code.'},{status:400});
+			if(error.issues.some(issue=>issue.path[0]==='phone'))return NextResponse.json({error:'Enter a valid phone number in international format.'},{status:400});
 			if(error.issues.some(issue=>issue.path[0]==='captchaToken'))return NextResponse.json({error:'Complete the registration security check and try again.'},{status:400});
 			return NextResponse.json({error:'Check your name, email, country, password, and consent details.'},{status:400});
 		}

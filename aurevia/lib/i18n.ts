@@ -771,7 +771,7 @@ const base = {
   lastName: "Last name",
   countryResidence: "Country of residence",
   phoneNumber: "Phone number",
-  phoneOptional: "(optional unless phone verification is enabled)",
+  phoneOptional: "(required for signup verification)",
   contactInformation: "Contact information",
   fullName: "Full name",
   email: "Email address",

@@ -83,9 +83,11 @@ export async function createVerifiedRegistration(
 				name:attempt.name,
 				country:attempt.country,
 				phone:attempt.phone,
+				phoneVerified:channel===VerificationChannel.SMS,
+				phoneVerifiedAt:channel===VerificationChannel.SMS?now:null,
 				accountMode:attempt.accountMode,
 				termsAcceptedAt:attempt.termsAcceptedAt,
-				emailVerifiedAt:now,
+				emailVerifiedAt:channel===VerificationChannel.EMAIL?now:null,
 				verifiedChannel:channel,
 				requiresRegistrationVerification:false,
 				createdAt:now,
@@ -118,22 +120,24 @@ export async function createVerifiedRegistration(
 		userId:user.id,
 		type:NotificationType.ACCOUNT,
 		title:'Welcome to Aurevia Exchange',
-		message:'Your account was created after successful email verification. Identity review remains separate for eligible account services.',
+		message:`Your account was created after successful ${channel===VerificationChannel.SMS?'phone':'email'} verification. Identity review remains separate for eligible account services.`,
 		dedupeKey:`registration:${user.id}:created`,
 		actionUrl:'/dashboard',
 	});
 	await createNotification(tx,{
 		userId:user.id,
 		type:NotificationType.ACCOUNT,
-		title:'Email address verified',
-		message:'Your email address was verified through the configured provider.',
-		dedupeKey:`registration:${user.id}:verified:email`,
+		title:channel===VerificationChannel.SMS?'Phone number verified':'Email address verified',
+		message:channel===VerificationChannel.SMS
+			?'Your phone number was verified through Akedly.'
+			:'Your email address was verified through the configured provider.',
+		dedupeKey:`registration:${user.id}:verified:${channel.toLowerCase()}`,
 		actionUrl:'/dashboard',
 	});
 	await notifyActiveAdmins(tx,{
 		type:NotificationType.ACCOUNT,
 		title:'Verified account registration',
-		message:'A new account completed email verification.',
+		message:`A new account completed ${channel===VerificationChannel.SMS?'phone':'email'} verification.`,
 		dedupeKey:`registration:${user.id}:admin`,
 		relatedEntity:'USER',
 		relatedId:user.id,

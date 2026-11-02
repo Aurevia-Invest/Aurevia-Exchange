@@ -6,6 +6,7 @@ import {trustedProxyClientIp} from '@/lib/request-ip';
 import {getAkedlyVerificationState,reconcileAkedlyAttempt} from '@/lib/akedly-verification';
 import {VerificationChannel} from '@prisma/client';
 import {clearRegistrationCookie,hashRegistrationToken,registrationTokenFromRequest} from '@/lib/registration-attempt';
+import {establishRegistrationSession} from '@/lib/registration-session';
 
 const schema=z.object({
 	email:z.string().trim().email().max(254),
@@ -48,15 +49,21 @@ export async function POST(request:Request){
 				return response;
 			}
 			if(result==='verified'||result==='already'){
-				const response=NextResponse.json({verified:true},{headers:{'Cache-Control':'no-store'}});
+				const response=NextResponse.json({verified:true,authenticated:true},{headers:{'Cache-Control':'no-store'}});
+				await establishRegistrationSession(response,email);
 				clearRegistrationCookie(response);
 				return response;
 			}
 			return NextResponse.json({verified:false,expired:false},{headers:{'Cache-Control':'no-store'}});
 		}
-		const user=await db.user.findUnique({where:{email},select:{id:true,role:true,status:true,emailVerifiedAt:true,verifiedChannel:true}});
+		const user=await db.user.findUnique({where:{email},select:{id:true,role:true,status:true,emailVerifiedAt:true,verifiedChannel:true,phoneVerified:true}});
 		if(!user||user.role!=='USER'||user.status!=='ACTIVE')return NextResponse.json({error:'Verification attempt not found.'},{status:404});
 		if(user.emailVerifiedAt&&user.verifiedChannel===VerificationChannel.EMAIL){
+			const response=NextResponse.json({verified:true},{headers:{'Cache-Control':'no-store'}});
+			if(token)clearRegistrationCookie(response);
+			return response;
+		}
+		if(user.phoneVerified&&user.verifiedChannel===VerificationChannel.SMS){
 			const response=NextResponse.json({verified:true},{headers:{'Cache-Control':'no-store'}});
 			if(token)clearRegistrationCookie(response);
 			return response;

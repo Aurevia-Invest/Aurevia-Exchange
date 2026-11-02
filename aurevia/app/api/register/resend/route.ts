@@ -76,6 +76,7 @@ export async function POST(request:Request){
 				});
 			}
 			const existing=await db.registrationVerification.findUnique({where:{registrationAttemptId:registrationAttempt.id}});
+			const registrationChannel=existing?.channel??(registrationAttempt.phone?VerificationChannel.SMS:VerificationChannel.EMAIL);
 			if(existing&&existing.resendAfter>now){
 				if(existing.channel===VerificationChannel.EMAIL&&existing.expiresAt>now
 					&&(existing.providerReference===null||existing.providerReference==='EMAIL_STATUS_UNKNOWN')){
@@ -89,14 +90,28 @@ export async function POST(request:Request){
 				}
 				return cooldownResponse('Please wait before requesting another verification attempt.',existing.resendAfter);
 			}
-			if(!akedlyIsConfigured()&&!hasConfiguredVerificationProvider(VerificationChannel.EMAIL)){
+			if(registrationChannel===VerificationChannel.SMS&&!akedlyIsConfigured()){
+				return NextResponse.json({error:'Phone verification is temporarily unavailable. Your registration is saved; please retry later.'},{status:503,headers:{'Cache-Control':'no-store'}});
+			}
+			if(registrationChannel===VerificationChannel.EMAIL&&!akedlyIsConfigured()&&!hasConfiguredVerificationProvider(VerificationChannel.EMAIL)){
 				return NextResponse.json({error:'Email verification is temporarily unavailable. Your registration is saved; please retry later.'},{status:503,headers:{'Cache-Control':'no-store'}});
 			}
 			rateLimitResend(ip,email);
 			if(akedlyIsConfigured()){
 				try{
-					const attempt=await startAkedlyRegistrationVerification(registrationAttempt.id,registrationAttempt.email);
-					return NextResponse.json({method:'akedly',message:'Complete the secure email verification widget.',...attempt},{status:200,headers:{'Cache-Control':'no-store'}});
+					const contact=registrationChannel===VerificationChannel.SMS
+						?(registrationAttempt.phone?{phoneNumber:registrationAttempt.phone}:null)
+						:{email:registrationAttempt.email};
+					if(!contact)return NextResponse.json({error:'This registration requires a phone number. Start a new registration to continue.'},{status:409,headers:{'Cache-Control':'no-store'}});
+					const attempt=await startAkedlyRegistrationVerification(registrationAttempt.id,registrationChannel,contact);
+					return NextResponse.json({
+						method:'akedly',
+						channel:registrationChannel,
+						message:registrationChannel===VerificationChannel.SMS
+							?'Complete the secure phone verification widget.'
+							:'Complete the secure email verification widget.',
+						...attempt,
+					},{status:200,headers:{'Cache-Control':'no-store'}});
 				}catch(error){
 					if(error instanceof Error&&error.message==='AKEDLY_RESEND_COOLDOWN'){
 						return cooldownResponse('Please wait before requesting another verification attempt.',registrationAttempt.verification?.resendAfter);
@@ -108,6 +123,12 @@ export async function POST(request:Request){
 						'AKEDLY_INVALID_WIDGET_URL',
 					].includes(error.message);
 					if(!providerFailure)throw error;
+					if(registrationChannel===VerificationChannel.SMS){
+						console.warn('[registration-verification] Akedly phone initiation failed; legacy email delivery is not used for new registrations.',{
+							...akedlyFailureDiagnostic(error),
+						});
+						return NextResponse.json({error:'Phone verification could not be initiated. Your registration is saved; please retry later.'},{status:503,headers:{'Cache-Control':'no-store'}});
+					}
 					if(!hasConfiguredVerificationProvider(VerificationChannel.EMAIL)){
 						console.warn('[registration-verification] Akedly initiation failed and no email fallback is configured.',{
 							...akedlyFailureDiagnostic(error),

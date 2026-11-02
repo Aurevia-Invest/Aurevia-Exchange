@@ -6,8 +6,8 @@ import {useRouter} from 'next/navigation';
 import {ShieldCheck} from 'lucide-react';
 import Nav from '@/components/Nav';
 
-type Attempt={attemptId:string;iframeUrl:string;expiresAt:string};
-const ATTEMPT_STORAGE_KEY='aurevia-akedly-email-attempt';
+type Attempt={attemptId:string;iframeUrl:string;expiresAt:string;channel?:'EMAIL'|'SMS'};
+const ATTEMPT_STORAGE_KEY='aurevia-akedly-registration-attempt';
 
 function safeWidgetUrl(value:string){
 	try{return new URL(value).origin==='https://auth.akedly.io'}catch{return false}
@@ -16,6 +16,7 @@ function safeWidgetUrl(value:string){
 export default function VerifyEmailPage(){
 	const router=useRouter();
 	const [email,setEmail]=useState('');
+	const [phone,setPhone]=useState('');
 	const [existingAccount,setExistingAccount]=useState(false);
 	const [attempt,setAttempt]=useState<Attempt|null>(null);
 	const [emailCodeMode,setEmailCodeMode]=useState(false);
@@ -34,6 +35,10 @@ export default function VerifyEmailPage(){
 		const registrationToken=new URLSearchParams(window.location.hash.slice(1)).get('registrationToken');
 		if(!registrationToken){
 			setEmail(nextEmail);
+			void fetch(`/api/register/session?email=${encodeURIComponent(nextEmail)}`,{cache:'no-store'})
+				.then(response=>response.ok?response.json():null)
+				.then(result=>{if(typeof result?.phone==='string')setPhone(result.phone);})
+				.catch(()=>undefined);
 			return;
 		}
 		window.history.replaceState(null,'',`${window.location.pathname}${window.location.search}`);
@@ -43,6 +48,11 @@ export default function VerifyEmailPage(){
 			body:JSON.stringify({email:nextEmail,registrationToken}),
 		}).then(async response=>{
 			if(!response.ok)throw new Error('This registration session is invalid or expired.');
+			const session=await fetch(`/api/register/session?email=${encodeURIComponent(nextEmail)}`,{cache:'no-store'});
+			if(session.ok){
+				const details=await session.json();
+				if(typeof details.phone==='string')setPhone(details.phone);
+			}
 			setEmail(nextEmail);
 		}).catch(()=>{
 			setSessionRestoreFailed(true);
@@ -68,7 +78,7 @@ export default function VerifyEmailPage(){
 			}
 			if(result.verified){
 				window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
-				router.replace('/login?verified=1');
+				router.replace(result.authenticated?'/dashboard':'/login?verified=1');
 				return;
 			}
 			if(!response.ok){
@@ -85,26 +95,26 @@ export default function VerifyEmailPage(){
 				const retryMessage=response.status===429&&Number.isFinite(retryAfter)&&retryAfter>0
 					?` You can retry in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
 					:'';
-				throw new Error(`${result.error||'Unable to start email verification.'}${retryMessage}`);
+				throw new Error(`${result.error||'Unable to start registration verification.'}${retryMessage}`);
 			}
 			if(result.method==='email-code'){
 				window.sessionStorage.setItem(ATTEMPT_STORAGE_KEY,JSON.stringify({email,method:'email-code'}));
 				setAttempt(null);
 				setEmailCodeMode(true);
-				setMessage(result.message||'Enter the six-digit verification code sent to your email.');
+				setMessage(result.message||'Enter the six-digit code sent to your email.');
 				return;
 			}
 			if(typeof result.attemptId==='string'&&typeof result.iframeUrl==='string'&&safeWidgetUrl(result.iframeUrl)&&typeof result.expiresAt==='string'){
-				const nextAttempt:Attempt={attemptId:result.attemptId,iframeUrl:result.iframeUrl,expiresAt:result.expiresAt};
+				const nextAttempt:Attempt={attemptId:result.attemptId,iframeUrl:result.iframeUrl,expiresAt:result.expiresAt,channel:result.channel==='SMS'?'SMS':'EMAIL'};
 				window.sessionStorage.setItem(ATTEMPT_STORAGE_KEY,JSON.stringify({email,...nextAttempt}));
 				setAttempt(nextAttempt);
 				setEmailCodeMode(false);
-				setMessage('Complete the secure verification below. This attempt expires in five minutes.');
+				setMessage(`Complete secure ${nextAttempt.channel==='SMS'?'phone':'email'} verification below. This attempt expires in five minutes.`);
 				return;
 			}
-			setMessage(result.message||'If an eligible account exists, you can continue verification after the resend cooldown.');
+			setMessage(result.message||'If the registration is eligible, verification can continue after the resend cooldown.');
 		}catch(exception){
-			setError(exception instanceof Error?exception.message:'Unable to start email verification.');
+			setError(exception instanceof Error?exception.message:'Unable to start registration verification.');
 		}finally{
 			busyRef.current=false;
 			setBusy(false);
@@ -155,14 +165,14 @@ export default function VerifyEmailPage(){
 		try{
 			const saved=window.sessionStorage.getItem(ATTEMPT_STORAGE_KEY);
 			if(saved){
-				const stored=JSON.parse(saved) as {email?:unknown;method?:unknown;attemptId?:unknown;iframeUrl?:unknown;expiresAt?:unknown};
+				const stored=JSON.parse(saved) as {email?:unknown;method?:unknown;attemptId?:unknown;iframeUrl?:unknown;expiresAt?:unknown;channel?:unknown};
 				if(stored.email===email&&stored.method==='email-code'){
 					setEmailCodeMode(true);
-					setMessage('Enter the six-digit verification code sent to your email.');
+					setMessage('Enter the six-digit code sent to your email.');
 					return;
 				}
 				if(stored.email===email&&typeof stored.attemptId==='string'&&typeof stored.iframeUrl==='string'&&safeWidgetUrl(stored.iframeUrl)&&typeof stored.expiresAt==='string'&&Date.parse(stored.expiresAt)>Date.now()){
-					setAttempt({attemptId:stored.attemptId,iframeUrl:stored.iframeUrl,expiresAt:stored.expiresAt});
+					setAttempt({attemptId:stored.attemptId,iframeUrl:stored.iframeUrl,expiresAt:stored.expiresAt,channel:stored.channel==='SMS'?'SMS':'EMAIL'});
 					return;
 				}
 			}
@@ -183,7 +193,7 @@ export default function VerifyEmailPage(){
 					const result=await response.json();
 					if(result.verified){
 						window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
-						router.replace('/login?verified=1');
+						router.replace(result.authenticated?'/dashboard':'/login?verified=1');
 						return;
 					}
 					if(result.phoneConflict){
@@ -223,22 +233,25 @@ export default function VerifyEmailPage(){
 				const result=await response.json();
 				if(result.verified){
 					window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
-					router.replace('/login?verified=1');
+					router.replace(result.authenticated?'/dashboard':'/login?verified=1');
 				}
 			})
 			.catch(()=>setMessage('The provider redirect was received, but verification is not complete until Akedly confirms it.'));
 	},[attempt,email,router]);
 
+	const emailVerification=emailCodeMode||attempt?.channel==='EMAIL';
+
 	return <><Nav/><main className="auth-scene"><section className="auth-card auth-register-card" aria-labelledby="verify-email-title">
-		<div className="flex items-center gap-2 gold"><ShieldCheck size={20} aria-hidden="true"/><span className="text-sm font-semibold">Email verification</span></div>
-		<h1 id="verify-email-title" className="auth-heading mt-3">Verify your email address</h1>
-		<p className="mt-2 text-sm leading-6 muted">Your registration is temporary. No user or financial account is created until email verification succeeds. {attempt?'Complete the secure verification below, or enter an email code if one was delivered.':'Enter the six-digit code sent to your email to continue.'} Email verification does not approve KYC or authorize financial activity.</p>
+		<div className="flex items-center gap-2 gold"><ShieldCheck size={20} aria-hidden="true"/><span className="text-sm font-semibold">{emailVerification?'Email verification':'Phone verification'}</span></div>
+		<h1 id="verify-email-title" className="auth-heading mt-3">{emailVerification?'Verify your email address':'Verify your phone number'}</h1>
+		<p className="mt-2 text-sm leading-6 muted">Your registration is temporary. No user or financial account is created until registration verification succeeds. {attempt?`Complete the secure Akedly ${attempt.channel==='SMS'?'phone':'email'} verification below.`:emailCodeMode?'Enter the six-digit email code to continue.':'Start phone verification to receive a code through the configured Akedly pipeline.'} Email remains your account contact for KYC communications and password recovery. Verification does not approve KYC or authorize financial activity.</p>
 		{existingAccount&&<p className="mt-3 text-sm leading-6 muted">We found an existing unverified account. Verification will not change its password; sign in afterward with the password originally set for that account.</p>}
-		<label className="auth-field-label mt-5">Email address<input className="auth-input" type="email" autoComplete="email" value={email} onChange={event=>{window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);setAttempt(null);setEmailCodeMode(false);setSessionRestoreFailed(false);setExistingAccount(false);setCode('');setEmail(event.target.value.trim().toLowerCase());setMessage('')}} required maxLength={254}/></label>
+		<label className="auth-field-label mt-5">Email address<input className="auth-input" type="email" autoComplete="email" value={email} onChange={event=>{window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);setAttempt(null);setEmailCodeMode(false);setSessionRestoreFailed(false);setExistingAccount(false);setCode('');setPhone('');setEmail(event.target.value.trim().toLowerCase());setMessage('')}} required maxLength={254}/></label>
+		{phone&&<p className="mt-3 text-sm muted">Phone number for registration verification: <strong className="text-white">{phone}</strong></p>}
 		{attempt&&<div className="mt-5 overflow-hidden rounded-lg border border-white/10 bg-black/30">
-			<iframe className="block h-[700px] w-full max-w-full" src={attempt.iframeUrl} title="Akedly secure email verification" allow="clipboard-write; publickey-credentials-get *; publickey-credentials-create *"/>
+			<iframe className="block h-[700px] w-full max-w-full" src={attempt.iframeUrl} title={`Akedly secure ${attempt.channel==='SMS'?'phone':'email'} verification`} allow="clipboard-write; publickey-credentials-get *; publickey-credentials-create *"/>
 		</div>}
-		{email&&<div className="mt-5">
+		{email&&emailCodeMode&&<div className="mt-5">
 			<p className="mb-3 text-sm muted">Verification code for <strong className="text-white">{email}</strong></p>
 			<label className="auth-field-label">Six-digit email verification code<input className="auth-input" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={event=>setCode(event.target.value.replace(/\D/g,'').slice(0,6))}/></label>
 			<button className="auth-submit mt-3 w-full" type="button" disabled={busy||code.length!==6||sessionRestoreFailed||phoneConflict} onClick={()=>void verifyEmailCode()}>{busy?'Verifying…':'Verify email address'}</button>
@@ -246,7 +259,7 @@ export default function VerifyEmailPage(){
 		{error&&<p className="auth-error mt-4" role="alert">{error}</p>}
 		{message&&<p className="mt-4 text-sm muted" role="status">{message}</p>}
 		{phoneConflict&&<p className="mt-4 text-center text-sm"><Link href="/register" className="auth-link">Restart registration</Link></p>}
-		<button className="auth-submit mt-5 w-full" type="button" disabled={busy||!email||phoneConflict||sessionRestoreFailed} onClick={()=>void startVerification()}>{busy?'Starting verification…':attempt||emailCodeMode?'Resend verification code':'Start email verification'}</button>
+		<button className="auth-submit mt-5 w-full" type="button" disabled={busy||!email||phoneConflict||sessionRestoreFailed} onClick={()=>void startVerification()}>{busy?'Starting verification…':attempt||emailCodeMode?'Resend verification code':'Start phone verification'}</button>
 		{!emailCodeMode&&!attempt&&<p className="mt-4 text-center text-sm muted"><Link href="/register" className="auth-link">Start a new registration</Link></p>}
 		<p className="auth-footer mt-5">Already verified? <Link href="/login" className="auth-link">Sign in</Link></p>
 	</section></main></>;

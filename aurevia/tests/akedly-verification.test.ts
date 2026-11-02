@@ -9,6 +9,7 @@ const mocks=vi.hoisted(()=>({
 	userFindUnique:vi.fn(),
 	auditCreate:vi.fn(),
 	createNotification:vi.fn(),
+	createVerifiedRegistration:vi.fn(),
 }));
 
 vi.mock('@/lib/db',()=>({db:{
@@ -17,6 +18,7 @@ vi.mock('@/lib/db',()=>({db:{
 	$transaction:mocks.transaction,
 }}));
 vi.mock('@/lib/notifications',()=>({createNotification:mocks.createNotification}));
+vi.mock('@/lib/registration-attempt',()=>({createVerifiedRegistration:mocks.createVerifiedRegistration}));
 
 import {VerificationChannel} from '@prisma/client';
 import {completeAkedlyVerification} from '@/lib/akedly-verification';
@@ -31,12 +33,12 @@ const environment={
 	AKEDLY_WEBHOOK_SECRET:`whsec_${Buffer.from('test-webhook-secret').toString('base64')}`,
 };
 
-function providerResult(attemptId:string){
+function providerResult(attemptId:string,verificationAddress:Record<string,string>={email:'person@example.invalid'}){
 	const now=new Date().toISOString();
 	return {
 		status:'success',
 		widgetAttempt:{attemptId,widgetId:'test-widget',status:'verified',isTest:false,completedAt:now},
-		transaction:{status:'Successful',isTest:false,pipelineID:'test-pipeline',updateDate:now,verificationAddress:{email:'person@example.invalid'}},
+		transaction:{status:'Successful',isTest:false,pipelineID:'test-pipeline',updateDate:now,verificationAddress},
 	};
 }
 
@@ -76,6 +78,7 @@ describe('Akedly verification persistence',()=>{
 		});
 		mocks.auditCreate.mockResolvedValue({});
 		mocks.createNotification.mockResolvedValue({});
+		mocks.createVerifiedRegistration.mockResolvedValue({id:'new-user'});
 		const tx={
 			verificationCode:{findFirst:mocks.transactionFindFirst},
 			user:{updateMany:mocks.userUpdateMany,findUnique:mocks.userFindUnique},
@@ -109,5 +112,60 @@ describe('Akedly verification persistence',()=>{
 		expect(await completeAkedlyVerification(attemptId,expiredResult,'webhook')).toBe('ignored');
 		expect(mocks.userUpdateMany).not.toHaveBeenCalled();
 		expect(mocks.auditCreate).not.toHaveBeenCalled();
+	});
+
+	it('creates a registration only after Akedly confirms the bound phone number',async()=>{
+		const attemptId='attempt_1234567890';
+		const registrationChallenge={
+			id:'registration-challenge',
+			channel:VerificationChannel.SMS,
+			providerReference:`AKEDLY:${attemptId}`,
+			expiresAt:new Date(Date.now()+5*60_000),
+			registrationAttempt:{
+				id:'registration-1',
+				email:'person@example.invalid',
+				phone:'+2348031234567',
+				expiresAt:new Date(Date.now()+10*60_000),
+			},
+		};
+		const tx={
+			registrationVerification:{findFirst:vi.fn().mockResolvedValue({registrationAttemptId:'registration-1'})},
+			auditLog:{create:mocks.auditCreate},
+		};
+		mocks.registrationFindFirst.mockResolvedValue(registrationChallenge);
+		mocks.transaction.mockImplementationOnce(async(callback:(value:unknown)=>Promise<unknown>)=>callback(tx));
+
+		expect(await completeAkedlyVerification(
+			attemptId,
+			providerResult(attemptId,{phoneNumber:'+2348031234567'}),
+			'lookup',
+		)).toBe('verified');
+		expect(mocks.createVerifiedRegistration).toHaveBeenCalledWith(tx,'registration-1',VerificationChannel.SMS,expect.any(Date));
+		expect(mocks.auditCreate).toHaveBeenCalledWith(expect.objectContaining({
+			data:expect.objectContaining({action:'AKEDLY_PHONE_VERIFIED'}),
+		}));
+	});
+
+	it('does not create an account when Akedly confirms a different phone number',async()=>{
+		const attemptId='attempt_1234567890';
+		mocks.registrationFindFirst.mockResolvedValue({
+			id:'registration-challenge',
+			channel:VerificationChannel.SMS,
+			providerReference:`AKEDLY:${attemptId}`,
+			expiresAt:new Date(Date.now()+5*60_000),
+			registrationAttempt:{
+				id:'registration-1',
+				email:'person@example.invalid',
+				phone:'+2348031234567',
+				expiresAt:new Date(Date.now()+10*60_000),
+			},
+		});
+
+		expect(await completeAkedlyVerification(
+			attemptId,
+			providerResult(attemptId,{phoneNumber:'+2348039999999'}),
+			'webhook',
+		)).toBe('ignored');
+		expect(mocks.createVerifiedRegistration).not.toHaveBeenCalled();
 	});
 });

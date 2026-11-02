@@ -22,11 +22,20 @@ type RegistrationChallenge={
 	registrationAttempt:{
 		id:string;
 		email:string;
+		phone:string|null;
 		expiresAt:Date;
 	};
 };
 
-export async function startAkedlyRegistrationVerification(registrationAttemptId:string,email:string):Promise<AkedlyAttempt>{
+export async function startAkedlyRegistrationVerification(
+	registrationAttemptId:string,
+	channel:VerificationChannel,
+	contact:AkedlyContact,
+):Promise<AkedlyAttempt>{
+	if((channel===VerificationChannel.SMS&&contact.phoneNumber===undefined)
+		||(channel===VerificationChannel.EMAIL&&contact.email===undefined)){
+		throw new Error('AKEDLY_REGISTRATION_CHANNEL_MISMATCH');
+	}
 	const now=new Date();
 	const existing=await db.registrationVerification.findUnique({where:{registrationAttemptId}});
 	if(existing&&existing.resendAfter>now)throw new Error('AKEDLY_RESEND_COOLDOWN');
@@ -36,16 +45,16 @@ export async function startAkedlyRegistrationVerification(registrationAttemptId:
 	if(existing){
 		const reserved=await db.registrationVerification.updateMany({
 			where:{id:existing.id,resendAfter:{lte:now}},
-			data:{codeHash:reservation,channel:VerificationChannel.EMAIL,providerReference:'AKEDLY_PENDING',expiresAt,resendAfter,attempts:0},
+			data:{codeHash:reservation,channel,providerReference:'AKEDLY_PENDING',expiresAt,resendAfter,attempts:0},
 		});
 		if(reserved.count!==1)throw new Error('AKEDLY_RESEND_COOLDOWN');
 	}else{
 		await db.registrationVerification.create({
-			data:{registrationAttemptId,codeHash:reservation,channel:VerificationChannel.EMAIL,providerReference:'AKEDLY_PENDING',expiresAt,resendAfter},
+			data:{registrationAttemptId,codeHash:reservation,channel,providerReference:'AKEDLY_PENDING',expiresAt,resendAfter},
 		});
 	}
 	try{
-		const attempt=await createAkedlyAttempt({email});
+		const attempt=await createAkedlyAttempt(contact);
 		const saved=await db.registrationVerification.updateMany({
 			where:{registrationAttemptId,codeHash:reservation,providerReference:'AKEDLY_PENDING'},
 			data:{providerReference:`${ATTEMPT_PREFIX}${attempt.attemptId}`,expiresAt:attempt.expiresAt},
@@ -207,17 +216,22 @@ async function completeAkedlyRegistrationVerification(
 	attemptId:string,
 	source:'webhook'|'lookup',
 ){
-	if(!challenge||challenge.channel!==VerificationChannel.EMAIL)return 'ignored' as const;
+	if(!challenge||![VerificationChannel.EMAIL,VerificationChannel.SMS].includes(challenge.channel))return 'ignored' as const;
 	const attempt=challenge.registrationAttempt;
+	const contact=challenge.channel===VerificationChannel.EMAIL
+		?{email:attempt.email}
+		:attempt.phone?{phoneNumber:attempt.phone}:null;
+	if(!contact)return 'ignored' as const;
 	const now=new Date();
 	if(attempt.expiresAt<=now||challenge.expiresAt<=now){
 		await db.registrationAttempt.deleteMany({where:{id:attempt.id}});
 		return 'ignored' as const;
 	}
 	const confirmed=source==='webhook'
-		?isConfirmedAkedlyAttempt(result,attemptId,{email:attempt.email},challenge.expiresAt)
-		:isConfirmedAkedlyLookup(result,{email:attempt.email},challenge.expiresAt);
+		?isConfirmedAkedlyAttempt(result,attemptId,contact,challenge.expiresAt)
+		:isConfirmedAkedlyLookup(result,contact,challenge.expiresAt);
 	if(!confirmed)return 'ignored' as const;
+	if(source==='webhook')return 'pending' as const;
 
 	try{
 		return await db.$transaction(async tx=>{
@@ -231,9 +245,9 @@ async function completeAkedlyRegistrationVerification(
 				select:{registrationAttemptId:true},
 			});
 			if(!stillCurrent)return 'ignored' as const;
-			const user=await createVerifiedRegistration(tx,stillCurrent.registrationAttemptId,VerificationChannel.EMAIL,now);
+			const user=await createVerifiedRegistration(tx,stillCurrent.registrationAttemptId,challenge.channel,now);
 			await tx.auditLog.create({
-				data:{action:'AKEDLY_EMAIL_VERIFIED',entity:'USER',entityId:user.id,metadata:{provider:'akedly',attemptRef:hashAttemptReference(attemptId)}},
+				data:{action:challenge.channel===VerificationChannel.SMS?'AKEDLY_PHONE_VERIFIED':'AKEDLY_EMAIL_VERIFIED',entity:'USER',entityId:user.id,metadata:{provider:'akedly',attemptRef:hashAttemptReference(attemptId)}},
 			});
 			return 'verified' as const;
 		});

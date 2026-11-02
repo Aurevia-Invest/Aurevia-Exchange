@@ -5,6 +5,7 @@ import {rateLimit,RateLimitError} from '@/lib/rate-limit';
 import {trustedProxyClientIp} from '@/lib/request-ip';
 import {reconcileAkedlyAttempt} from '@/lib/akedly-verification';
 import {clearRegistrationCookie,hashRegistrationToken,registrationTokenFromRequest} from '@/lib/registration-attempt';
+import {establishRegistrationSession} from '@/lib/registration-session';
 
 const schema=z.object({
 	email:z.string().trim().email().max(254),
@@ -50,8 +51,12 @@ export async function POST(request:Request){
 				clearRegistrationCookie(response);
 				return response;
 			}
-			const response=NextResponse.json({verified:result==='verified'||result==='already'},{headers:{'Cache-Control':'no-store'}});
-			if(result==='verified'||result==='already')clearRegistrationCookie(response);
+			const verified=result==='verified'||result==='already';
+			const response=NextResponse.json({verified,authenticated:verified},{headers:{'Cache-Control':'no-store'}});
+			if(verified){
+				await establishRegistrationSession(response,email);
+				clearRegistrationCookie(response);
+			}
 			return response;
 		}
 		const user=await db.user.findUnique({where:{email},select:{id:true,role:true,status:true,emailVerifiedAt:true,verifiedChannel:true}});

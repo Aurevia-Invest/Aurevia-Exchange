@@ -4,6 +4,7 @@ import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
+import {enqueueKycEmail,type KycEmailEvent} from '@/lib/kyc-email-outbox';
 import {createPrivateSignedUrl,PrivateStorageError} from '@/lib/private-storage';
 
 const reviewSchema=z.object({status:z.nativeEnum(DocumentStatus).refine(status=>status!=='SUBMITTED','Invalid review status.'),reviewNote:z.string().trim().max(500).optional()});
@@ -40,6 +41,13 @@ export async function PATCH(request:Request,{params}:{params:Promise<{id:string}
    }
    await tx.auditLog.create({data:{actorId:admin.id,action:`KYC_DOCUMENT_${input.status}`,entity:'KYC_DOCUMENT',entityId:current.id,metadata:{userId:current.userId,kind:current.kind,reviewNote:input.reviewNote||null}}});
    await createNotification(tx,{userId:current.userId,type:NotificationType.KYC,title:input.status==='APPROVED'?'Identity document approved':input.status==='RESUBMISSION_REQUIRED'?'Identity document needs replacement':'Identity document reviewed',message:`Your ${current.kind.toLowerCase().replaceAll('_',' ')} was marked ${input.status.toLowerCase().replaceAll('_',' ')}.${input.reviewNote?` Admin note: ${input.reviewNote}`:''}`,dedupeKey:`kyc-document:${current.id}:${input.status}:${now.toISOString()}`,actionUrl:'/kyc'});
+   const documentEmailEvent:Record<'APPROVED'|'REJECTED'|'RESUBMISSION_REQUIRED'|'UNDER_REVIEW',KycEmailEvent>={
+    APPROVED:'DOCUMENT_APPROVED',
+    REJECTED:'DOCUMENT_REJECTED',
+    RESUBMISSION_REQUIRED:'DOCUMENT_NEEDS_CHANGES',
+    UNDER_REVIEW:'DOCUMENT_REVIEWED',
+   };
+   await enqueueKycEmail(tx,current.userId,documentEmailEvent[input.status],`kyc-email:document:${current.id}:${input.status}:${now.toISOString()}`);
    return document;
   });
   return NextResponse.json({id:reviewed.id,status:reviewed.status,reviewedAt:reviewed.reviewedAt},{headers:{'Cache-Control':'private, no-store'}});

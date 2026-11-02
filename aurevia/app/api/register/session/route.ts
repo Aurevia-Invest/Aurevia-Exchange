@@ -1,7 +1,8 @@
 import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
 import {db} from '@/lib/db';
-import {rateLimit} from '@/lib/rate-limit';
+import {rateLimit,RateLimitError} from '@/lib/rate-limit';
+import {trustedProxyClientIp} from '@/lib/request-ip';
 import {clearRegistrationCookie,hashRegistrationToken,setRegistrationCookie} from '@/lib/registration-attempt';
 
 const schema=z.object({
@@ -13,7 +14,8 @@ export async function POST(request:Request){
 	try{
 		const {email:rawEmail,registrationToken}=schema.parse(await request.json());
 		const email=rawEmail.toLowerCase();
-		rateLimit(`registration-session-ip:${request.headers.get('x-forwarded-for')||'unknown'}`,10,60_000);
+		const ip=trustedProxyClientIp(request);
+		if(ip)rateLimit(`registration-session-ip:${ip}`,10,60_000);
 		const attempt=await db.registrationAttempt.findUnique({
 			where:{tokenHash:hashRegistrationToken(registrationToken)},
 			include:{verification:true},
@@ -31,6 +33,10 @@ export async function POST(request:Request){
 		return response;
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'This registration session is invalid or expired.'},{status:400});
+		if(error instanceof RateLimitError)return NextResponse.json(
+			{error:'Please wait before restoring this registration session.',retryAfterSeconds:error.retryAfterSeconds},
+			{status:429,headers:{'Retry-After':String(error.retryAfterSeconds),'Cache-Control':'no-store'}},
+		);
 		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Please wait before restoring this registration session.'},{status:429});
 		console.error('Registration session restore failed.',{errorType:error instanceof Error?error.name:'UnknownError'});
 		return NextResponse.json({error:'Unable to restore this registration session.'},{status:503});

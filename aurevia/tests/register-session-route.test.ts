@@ -5,10 +5,17 @@ const mocks=vi.hoisted(()=>({
 	findUnique:vi.fn(),
 	deleteMany:vi.fn(),
 	rateLimit:vi.fn(),
+	RateLimitError:class extends Error{
+		readonly retryAfterSeconds:number;
+		constructor(retryAfterSeconds:number){
+			super('RATE_LIMITED');
+			this.retryAfterSeconds=retryAfterSeconds;
+		}
+	},
 }));
 
 vi.mock('@/lib/db',()=>({db:{registrationAttempt:{findUnique:mocks.findUnique,deleteMany:mocks.deleteMany}}}));
-vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit}));
+vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
 
 import {POST} from '@/app/api/register/session/route';
 

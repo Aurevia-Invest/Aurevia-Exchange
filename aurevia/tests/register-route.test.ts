@@ -8,13 +8,20 @@ const mocks=vi.hoisted(()=>({
 	emailProviderConfigured:vi.fn(),
 	verifyTurnstile:vi.fn(),
 	rateLimit:vi.fn(),
+	RateLimitError:class extends Error{
+		readonly retryAfterSeconds:number;
+		constructor(retryAfterSeconds:number){
+			super('RATE_LIMITED');
+			this.retryAfterSeconds=retryAfterSeconds;
+		}
+	},
 }));
 
 vi.mock('@/lib/db',()=>({db:{
 	user:{findUnique:mocks.userFindUnique},
 	registrationAttempt:{create:mocks.attemptCreate},
 }}));
-vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit}));
+vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
 vi.mock('@/lib/akedly',()=>({akedlyIsConfigured:mocks.akedlyConfigured}));
 vi.mock('@/lib/verification-delivery',()=>({hasConfiguredVerificationProvider:mocks.emailProviderConfigured}));
 vi.mock('@/lib/turnstile',()=>({verifyRegistrationTurnstile:mocks.verifyTurnstile}));
@@ -33,10 +40,10 @@ const payload={
 	captchaToken:'verified-turnstile-token',
 };
 
-function request(body:unknown=payload){
+function request(body:unknown=payload,forwardedFor='192.0.2.5'){
 	return new Request('https://aurevia.test/api/register',{
 		method:'POST',
-		headers:{'content-type':'application/json','x-forwarded-for':'192.0.2.5'},
+		headers:{'content-type':'application/json','x-forwarded-for':forwardedFor},
 		body:JSON.stringify(body),
 	});
 }
@@ -82,8 +89,37 @@ describe('registration privacy boundary',()=>{
 		const response=await POST(request());
 
 		expect(response.status).toBe(400);
+		expect(mocks.rateLimit.mock.calls).toEqual([
+			['register-captcha-ip:192.0.2.5',10,600_000],
+			['register-captcha-email:new-user@example.invalid',5,600_000],
+		]);
 		expect(mocks.attemptCreate).not.toHaveBeenCalled();
 		expect(mocks.userFindUnique).not.toHaveBeenCalled();
+	});
+
+	it('counts registration quotas only after server-side CAPTCHA succeeds',async()=>{
+		await POST(request());
+
+		expect(mocks.rateLimit.mock.calls).toEqual([
+			['register:192.0.2.5',5,3_600_000],
+			['register-email:new-user@example.invalid',3,3_600_000],
+		]);
+	});
+
+	it('uses the trusted proxy client address rather than the untrusted leading forwarded value',async()=>{
+		await POST(request(payload,'203.0.113.99, 198.51.100.24'));
+
+		expect(mocks.rateLimit).toHaveBeenCalledWith('register:198.51.100.24',5,3_600_000);
+	});
+
+	it('returns a Retry-After value when registration quota is exhausted',async()=>{
+		mocks.rateLimit.mockImplementationOnce(()=>{throw new mocks.RateLimitError(73)});
+		const response=await POST(request());
+
+		expect(response.status).toBe(429);
+		expect(response.headers.get('retry-after')).toBe('73');
+		expect(await response.json()).toMatchObject({retryAfterSeconds:73});
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
 	});
 
 	it('rejects a missing CAPTCHA token before checking accounts or storing registration data',async()=>{

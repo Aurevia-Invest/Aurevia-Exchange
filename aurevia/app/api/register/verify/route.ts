@@ -4,6 +4,7 @@ import {z,ZodError} from 'zod';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
+import {trustedProxyClientIp} from '@/lib/request-ip';
 import {verificationConfig} from '@/lib/config';
 import {verificationCodeMatches} from '@/lib/verification-delivery';
 import {clearRegistrationCookie,createVerifiedRegistration,hashRegistrationToken,registrationTokenFromRequest} from '@/lib/registration-attempt';
@@ -19,8 +20,8 @@ export async function POST(request:Request){
 		if(body&&typeof body==='object'&&'email' in body&&typeof body.email==='string')submittedEmail=body.email.trim().toLowerCase();
 		const input=schema.parse(body);
 		const email=input.email.toLowerCase();
-		const ip=request.headers.get('x-forwarded-for')||'unknown';
-		rateLimit(`verify-ip:${ip}`,15,15*60_000);
+		const ip=trustedProxyClientIp(request);
+		if(ip)rateLimit(`verify-ip:${ip}`,15,15*60_000);
 		rateLimit(`verify-email:${email}`,verificationConfig.maxAttempts*4,60*60_000);
 		const token=registrationTokenFromRequest(request);
 		const registrationAttempt=token?await db.registrationAttempt.findUnique({

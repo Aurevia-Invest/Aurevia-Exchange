@@ -1,10 +1,9 @@
 'use client';
 
-import {FormEvent,useEffect,useRef,useState} from 'react';
+import {FormEvent,useCallback,useEffect,useRef,useState} from 'react';
 import {useRouter} from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import Script from 'next/script';
 import {ArrowRight,ShieldCheck} from 'lucide-react';
 import type {CountryCode} from 'libphonenumber-js';
 import Nav from '@/components/Nav';
@@ -15,7 +14,17 @@ import {useLocale} from '@/lib/i18n-context';
 
 type AccountMode='DEMO'|'REAL';
 type RegistrationDetails={firstName:string;lastName:string;dateOfBirth:string;residenceCountry:string;phoneCountry:string;phoneNumber:string;email:string;password:string;confirmPassword:string;accountMode:AccountMode};
-type TurnstileOptions={sitekey:string;action:string;callback:(token:string)=>void;'expired-callback':()=>void;'error-callback':()=>void};
+type TurnstileStatus='loading'|'ready'|'verifying'|'verified'|'expired'|'failed';
+type TurnstileOptions={
+	sitekey:string;
+	action:string;
+	callback:(token:string)=>void;
+	'before-interactive-callback':()=>void;
+	'after-interactive-callback':()=>void;
+	'expired-callback':()=>void;
+	'timeout-callback':()=>void;
+	'error-callback':()=>void;
+};
 
 declare global {
 	interface Window {
@@ -25,6 +34,46 @@ declare global {
 			remove:(widgetId:string)=>void;
 		};
 	}
+}
+
+let turnstileScriptPromise:Promise<void>|null=null;
+const TURNSTILE_SCRIPT_URL='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+
+function loadTurnstileScript(){
+	if(window.turnstile)return Promise.resolve();
+	if(turnstileScriptPromise)return turnstileScriptPromise;
+	turnstileScriptPromise=new Promise<void>((resolve,reject)=>{
+		const existing=document.querySelector<HTMLScriptElement>('script[data-aurevia-turnstile]');
+		const script=existing||document.createElement('script');
+		let settled=false;
+		const finish=(error?:Error)=>{
+			if(settled)return;
+			settled=true;
+			clearTimeout(timeout);
+			script.removeEventListener('load',onLoad);
+			script.removeEventListener('error',onError);
+			if(error){
+				script.remove();
+				turnstileScriptPromise=null;
+				reject(error);
+			}else resolve();
+		};
+		const onLoad=()=>window.turnstile?finish():finish(new Error('Turnstile did not initialize.'));
+		const onError=()=>finish(new Error('Turnstile script failed to load.'));
+		const timeout=setTimeout(()=>finish(new Error('Turnstile script loading timed out.')),15_000);
+		script.addEventListener('load',onLoad,{once:true});
+		script.addEventListener('error',onError,{once:true});
+		if(!existing){
+			script.src=TURNSTILE_SCRIPT_URL;
+			script.async=true;
+			script.defer=true;
+			script.dataset.aureviaTurnstile='true';
+			document.head.appendChild(script);
+		}else if(window.turnstile){
+			finish();
+		}
+	});
+	return turnstileScriptPromise;
 }
 
 const initialDetails:RegistrationDetails={firstName:'',lastName:'',dateOfBirth:'',residenceCountry:'',phoneCountry:'US',phoneNumber:'',email:'',password:'',confirmPassword:'',accountMode:'DEMO'};
@@ -45,11 +94,45 @@ export default function RegistrationExperience(){
 	const [captchaLoaded,setCaptchaLoaded]=useState(false);
 	const [captchaUnavailable,setCaptchaUnavailable]=useState(false);
 	const [captchaConfigLoaded,setCaptchaConfigLoaded]=useState(false);
-	const [captchaWidgetId,setCaptchaWidgetId]=useState('');
+	const [captchaStatus,setCaptchaStatus]=useState<TurnstileStatus>('loading');
+	const [captchaRetry,setCaptchaRetry]=useState(0);
 	const [captchaSiteKey,setCaptchaSiteKey]=useState('');
 	const captchaContainer=useRef<HTMLDivElement>(null);
+	const captchaWidgetId=useRef<string|null>(null);
+	const captchaVerificationTimeout=useRef<ReturnType<typeof setTimeout>|null>(null);
+	const submissionInFlight=useRef(false);
 	const router=useRouter();
 	const residence=findCountry(details.residenceCountry);
+	const registrationFormValid=Boolean(
+		details.firstName.trim()
+		&&details.lastName.trim()
+		&&parseDateOfBirth(details.dateOfBirth)
+		&&residence
+		&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(details.email.trim())
+		&&details.password.length>=10
+		&&/[a-z]/.test(details.password)
+		&&/[A-Z]/.test(details.password)
+		&&/[0-9]/.test(details.password)
+		&&details.password===details.confirmPassword
+		&&(!details.phoneNumber.trim()||normalizePhoneE164(details.phoneNumber,details.phoneCountry as CountryCode))
+		&&termsAccepted,
+	);
+
+	const clearCaptchaVerificationTimeout=useCallback(()=>{
+		if(captchaVerificationTimeout.current){
+			clearTimeout(captchaVerificationTimeout.current);
+			captchaVerificationTimeout.current=null;
+		}
+	},[]);
+
+	const resetTurnstileAfterFailure=useCallback((status:'expired'|'failed',message:string)=>{
+		clearCaptchaVerificationTimeout();
+		setCaptchaToken('');
+		setCaptchaStatus(status);
+		setError(message);
+		const widgetId=captchaWidgetId.current;
+		if(widgetId)window.setTimeout(()=>window.turnstile?.reset(widgetId),0);
+	},[clearCaptchaVerificationTimeout]);
 
 	useEffect(()=>{
 		let cancelled=false;
@@ -73,7 +156,23 @@ export default function RegistrationExperience(){
 				if(!cancelled)setCaptchaConfigLoaded(true);
 			});
 		return ()=>{cancelled=true};
-	},[]);
+	},[captchaRetry]);
+
+	useEffect(()=>{
+		if(!captchaSiteKey||captchaUnavailable)return;
+		let active=true;
+		setCaptchaLoaded(false);
+		setCaptchaStatus('loading');
+		void loadTurnstileScript().then(()=>{
+			if(active)setCaptchaLoaded(true);
+		}).catch(()=>{
+			if(active){
+				setCaptchaUnavailable(true);
+				setCaptchaStatus('failed');
+			}
+		});
+		return()=>{active=false};
+	},[captchaSiteKey,captchaRetry,captchaUnavailable]);
 
 	useEffect(()=>{
 		if(!captchaLoaded||!captchaSiteKey||!captchaContainer.current||captchaUnavailable)return;
@@ -81,20 +180,70 @@ export default function RegistrationExperience(){
 			setCaptchaUnavailable(true);
 			return;
 		}
-		try{
-			const widgetId=window.turnstile.render(captchaContainer.current,{
-				sitekey:captchaSiteKey,
-				action:'register',
-				callback:token=>{setCaptchaToken(token);setError('')},
-				'expired-callback':()=>{setCaptchaToken('');setError('The security check expired. Please complete it again.')},
-				'error-callback':()=>{setCaptchaToken('');setError('The security check could not be completed. Refresh the page or try again later.')},
-			});
-			setCaptchaWidgetId(widgetId);
-			return ()=>window.turnstile?.remove(widgetId);
-		}catch{
-			setCaptchaUnavailable(true);
+		let active=true;
+		queueMicrotask(()=>{
+			if(!active||!captchaContainer.current||!window.turnstile||captchaWidgetId.current)return;
+			try{
+				const widgetId=window.turnstile.render(captchaContainer.current,{
+					sitekey:captchaSiteKey,
+					action:'register',
+					callback:token=>{
+						clearCaptchaVerificationTimeout();
+						setCaptchaToken(token);
+						setCaptchaStatus('verified');
+						setError('');
+					},
+					'before-interactive-callback':()=>{
+						clearCaptchaVerificationTimeout();
+						captchaVerificationTimeout.current=setTimeout(
+							()=>resetTurnstileAfterFailure('failed','Security verification took too long. Retry the security check.'),
+							90_000,
+						);
+						setCaptchaToken('');
+						setCaptchaStatus('verifying');
+					},
+					'after-interactive-callback':()=>{
+						clearCaptchaVerificationTimeout();
+						setCaptchaStatus('ready');
+					},
+					'expired-callback':()=>resetTurnstileAfterFailure('expired','The security check expired. Please retry it.'),
+					'timeout-callback':()=>resetTurnstileAfterFailure('failed','Security verification took too long. Retry the security check.'),
+					'error-callback':()=>resetTurnstileAfterFailure('failed','Security verification could not be completed. Retry the security check.'),
+				});
+				captchaWidgetId.current=widgetId;
+				setCaptchaStatus('ready');
+			}catch{
+				setCaptchaUnavailable(true);
+				setCaptchaStatus('failed');
+			}
+		});
+		return()=>{
+			active=false;
+			clearCaptchaVerificationTimeout();
+			const widgetId=captchaWidgetId.current;
+			if(widgetId){
+				window.turnstile?.remove(widgetId);
+				captchaWidgetId.current=null;
+			}
+		};
+	},[captchaLoaded,captchaSiteKey,captchaUnavailable,clearCaptchaVerificationTimeout,resetTurnstileAfterFailure]);
+
+	function retryCaptcha(){
+		clearCaptchaVerificationTimeout();
+		setCaptchaToken('');
+		setError('');
+		if(captchaUnavailable){
+			setCaptchaUnavailable(false);
+			setCaptchaConfigLoaded(false);
+			setCaptchaRetry(value=>value+1);
+			return;
 		}
-	},[captchaLoaded,captchaSiteKey,captchaUnavailable]);
+		const widgetId=captchaWidgetId.current;
+		if(widgetId&&window.turnstile){
+			window.turnstile.reset(widgetId);
+			setCaptchaStatus('ready');
+		}
+	}
 
 	function update<K extends keyof RegistrationDetails>(key:K,value:RegistrationDetails[K]){
 		setDetails(current=>({...current,[key]:value}));
@@ -102,7 +251,7 @@ export default function RegistrationExperience(){
 
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();
-		if(busy)return;
+		if(busy||submissionInFlight.current)return;
 		setError('');setCountryError('');setDateError('');setPhoneError('');setPasswordError('');
 		const date=parseDateOfBirth(details.dateOfBirth);
 		const phone=details.phoneNumber.trim()?normalizePhoneE164(details.phoneNumber,details.phoneCountry as CountryCode):'';
@@ -113,20 +262,29 @@ export default function RegistrationExperience(){
 		if(details.password!==details.confirmPassword){setPasswordError(translate('passwordMatch'));invalid=true;}
 		if(invalid||!residence)return;
 		if(!captchaToken){setError('Complete the registration security check before creating your account.');return;}
+		const submittedCaptchaToken=captchaToken;
+		submissionInFlight.current=true;
 		setBusy(true);
 		try{
-			const response=await fetch('/api/register',{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted,captchaToken})});
+			const response=await fetch('/api/register',{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted,captchaToken:submittedCaptchaToken})});
 			const result=await response.json().catch(()=>({}));
 			if(!response.ok){
-				setError(result.requestId?`${result.error||translate('registrationFailed')} (Reference: ${result.requestId})`:result.error||translate('registrationFailed'));return;
+				const retryAfter=Number(response.headers.get('Retry-After')||result.retryAfterSeconds);
+				const retryMessage=response.status===429&&Number.isFinite(retryAfter)&&retryAfter>0
+					?` You can retry in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
+					:'';
+				setError(`${result.requestId?`${result.error||translate('registrationFailed')} (Reference: ${result.requestId})`:result.error||translate('registrationFailed')}${retryMessage}`);return;
 			}
 			router.replace(`/verify-email?email=${encodeURIComponent(result.email||details.email)}`);
 			router.refresh();
 		}catch{setError(translate('unableRegistration'));}
 		finally{
+			submissionInFlight.current=false;
 			setBusy(false);
 			setCaptchaToken('');
-			if(captchaWidgetId)window.turnstile?.reset(captchaWidgetId);
+			const widgetId=captchaWidgetId.current;
+			if(widgetId)window.turnstile?.reset(widgetId);
+			if(captchaStatus==='verified')setCaptchaStatus('ready');
 		}
 	}
 
@@ -156,13 +314,13 @@ export default function RegistrationExperience(){
 					<p className="mt-3 text-xs leading-5 muted">Registration is free. Verify your email before signing in. New accounts start on <span className="tier-badge">Tier 1</span>; identity review remains separate for eligible account services.</p>
 					<label className="mt-4 flex min-h-11 items-start gap-2 text-xs leading-5 muted"><input className="mt-1" type="checkbox" checked={termsAccepted} onChange={event=>setTermsAccepted(event.target.checked)} required/><span>{translate('termsConsent')} <Link className="auth-link" href="/terms">{translate('terms')}</Link>, <Link className="auth-link" href="/privacy">{translate('privacyPolicy')}</Link>, {translate('riskDisclosure')}</span></label>
 				</fieldset>
-				{captchaSiteKey&&!captchaUnavailable&&<Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onReady={()=>setCaptchaLoaded(true)} onError={()=>setCaptchaUnavailable(true)}/>}
 				<div ref={captchaContainer} aria-label="Registration security check"/>
-				{!captchaConfigLoaded&&<p className="text-sm muted" role="status">Loading the secure registration check…</p>}
-				{captchaUnavailable&&<p className="text-sm text-loss" role="alert">We couldn’t load the security check. Refresh the page or try again later.</p>}
-				{captchaSiteKey&&!captchaUnavailable&&!captchaToken&&<p className="text-sm muted" role="status">Complete the security check to continue.</p>}
+				{!captchaConfigLoaded||captchaSiteKey&&!captchaLoaded&&!captchaUnavailable?<p className="text-sm muted" role="status">Loading the secure registration check…</p>:null}
+				{captchaUnavailable&&<div className="flex items-center gap-3"><p className="text-sm text-loss" role="alert">We couldn’t load the security check. Your form details are preserved; try loading it again.</p><button className="auth-link text-sm" type="button" onClick={retryCaptcha}>Retry</button></div>}
+				{captchaLoaded&&!captchaUnavailable&&<p className="text-sm muted" role="status">{captchaStatus==='verifying'?'Verifying the security check…':captchaStatus==='verified'?'Security verification successful.':captchaStatus==='expired'?'Security verification expired. Retry to continue.':captchaStatus==='failed'?'Security verification failed. Retry to continue.':'Complete the security check to continue.'}</p>}
+				{captchaLoaded&&!captchaUnavailable&&(captchaStatus==='expired'||captchaStatus==='failed')&&<button className="auth-link text-sm" type="button" onClick={retryCaptcha}>Retry security check</button>}
 				{error&&<p className="auth-error" role="alert">{error}</p>}
-				<button type="submit" disabled={busy||!captchaToken} aria-busy={busy} className="auth-submit flex w-full items-center justify-center gap-2">{busy?translate('creatingAccount'):translate('createAccountButton')}<ArrowRight size={16} aria-hidden="true"/></button>
+				<button type="submit" disabled={busy||!captchaToken||!registrationFormValid} aria-busy={busy} className="auth-submit flex w-full items-center justify-center gap-2">{busy?translate('creatingAccount'):translate('createAccountButton')}<ArrowRight size={16} aria-hidden="true"/></button>
 			</form>
 				<p className="auth-footer">{translate('alreadyRegistered')} <Link href="/login" className="auth-link">{translate('signIn')}</Link></p>
 		<div className="mt-5 flex items-center gap-2 border-t border-white/10 pt-4 text-xs muted"><ShieldCheck size={15} className="gold" aria-hidden="true"/>{translate('accountPrivate')}</div>

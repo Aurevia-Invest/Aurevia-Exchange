@@ -6,6 +6,7 @@ import {db} from '@/lib/db';
 import {akedlyIsConfigured} from '@/lib/akedly';
 import {startAkedlyRegistrationVerification,startAkedlyVerification} from '@/lib/akedly-verification';
 import {rateLimit} from '@/lib/rate-limit';
+import {trustedProxyClientIp} from '@/lib/request-ip';
 import {deliverVerificationCode,generateVerificationCode,hashVerificationCode,hasConfiguredVerificationProvider} from '@/lib/verification-delivery';
 import {verificationConfig} from '@/lib/config';
 import {clearRegistrationCookie,hashRegistrationToken,registrationTokenFromRequest} from '@/lib/registration-attempt';
@@ -17,8 +18,8 @@ export async function POST(request:Request){
 	try{
 		const {email:rawEmail}=schema.parse(await request.json());
 		const email=rawEmail.toLowerCase();
-		const ip=request.headers.get('x-forwarded-for')||'unknown';
-		rateLimit(`akedly-register-ip:${ip}`,5,60*60_000);
+		const ip=trustedProxyClientIp(request);
+		if(ip)rateLimit(`akedly-register-ip:${ip}`,5,60*60_000);
 		rateLimit(`akedly-register-email:${email}`,3,60*60_000);
 		const token=registrationTokenFromRequest(request);
 		const registrationAttempt=token?await db.registrationAttempt.findUnique({

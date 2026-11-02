@@ -4,12 +4,20 @@ const mocks=vi.hoisted(()=>({
 	findUnique:vi.fn(),
 	getState:vi.fn(),
 	requireUser:vi.fn(),
+	rateLimit:vi.fn(),
+	RateLimitError:class extends Error{
+		readonly retryAfterSeconds:number;
+		constructor(retryAfterSeconds:number){
+			super('RATE_LIMITED');
+			this.retryAfterSeconds=retryAfterSeconds;
+		}
+	},
 }));
 
 vi.mock('@/lib/db',()=>({db:{user:{findUnique:mocks.findUnique}}}));
 vi.mock('@/lib/akedly-verification',()=>({getAkedlyVerificationState:mocks.getState}));
 vi.mock('@/lib/auth',()=>({requireUser:mocks.requireUser}));
-vi.mock('@/lib/rate-limit',()=>({rateLimit:vi.fn()}));
+vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
 
 import {POST as registrationStatus} from '@/app/api/register/status/route';
 import {POST as phoneStatus} from '@/app/api/kyc/phone/status/route';

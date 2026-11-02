@@ -4,7 +4,8 @@ import bcrypt from 'bcryptjs';
 import {AccountMode,Prisma,VerificationChannel} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {db} from '@/lib/db';
-import {rateLimit} from '@/lib/rate-limit';
+import {rateLimit,RateLimitError} from '@/lib/rate-limit';
+import {trustedProxyClientIp} from '@/lib/request-ip';
 import {isValidE164,parseDateOfBirth} from '@/lib/registration-validation';
 import {akedlyIsConfigured} from '@/lib/akedly';
 import {hasConfiguredVerificationProvider} from '@/lib/verification-delivery';
@@ -26,10 +27,8 @@ const schema=z.object({
 export async function POST(request:Request){
 	const requestId=randomUUID();
 	try{
-		rateLimit(`register:${request.headers.get('x-forwarded-for')||'unknown'}`,5,3600000);
 		const input=schema.parse(await request.json());
 		const email=input.email.toLowerCase();
-		rateLimit(`register-email:${email}`,3,3600000);
 
 		let captchaValid=false;
 		try{
@@ -40,7 +39,15 @@ export async function POST(request:Request){
 			}
 			throw error;
 		}
-		if(!captchaValid)return NextResponse.json({error:'Complete the registration security check and try again.'},{status:400});
+		const clientIp=trustedProxyClientIp(request);
+		if(!captchaValid){
+			if(clientIp)rateLimit(`register-captcha-ip:${clientIp}`,10,10*60_000);
+			rateLimit(`register-captcha-email:${email}`,5,10*60_000);
+			return NextResponse.json({error:'Complete the registration security check and try again.'},{status:400});
+		}
+
+		if(clientIp)rateLimit(`register:${clientIp}`,5,60*60_000);
+		rateLimit(`register-email:${email}`,3,60*60_000);
 
 		const dateOfBirth=parseDateOfBirth(input.dateOfBirth);
 		if(!dateOfBirth)return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
@@ -81,7 +88,12 @@ export async function POST(request:Request){
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'){
 			return NextResponse.json({error:'Registration cannot be started for these details. If this is your email, sign in or use the existing verification session.'},{status:409});
 		}
-		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many registration attempts. Try again later.'},{status:429});
+		if(error instanceof RateLimitError){
+			return NextResponse.json(
+				{error:'Too many registration attempts. Try again later.',retryAfterSeconds:error.retryAfterSeconds},
+				{status:429,headers:{'Retry-After':String(error.retryAfterSeconds),'Cache-Control':'no-store'}},
+			);
+		}
 		const rawErrorCode=error&&typeof error==='object'&&'code' in error&&typeof error.code==='string'?error.code:'';
 		const errorCode=/^[A-Z0-9_]{2,32}$/.test(rawErrorCode)?rawErrorCode:undefined;
 		console.error('Registration request failed.',{requestId,errorName:error instanceof Error?error.name:'UnknownError',errorCode});

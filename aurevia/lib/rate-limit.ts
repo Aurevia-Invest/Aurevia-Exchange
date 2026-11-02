@@ -1,1 +1,24 @@
-const buckets=new Map<string,{count:number;reset:number}>();export function rateLimit(key:string,max=30,windowMs=60000){const now=Date.now();let b=buckets.get(key);if(!b||now>b.reset){b={count:0,reset:now+windowMs};buckets.set(key,b);}b.count++;if(b.count>max)throw new Error('RATE_LIMITED');}
+type Bucket={count:number;reset:number};
+
+const buckets=new Map<string,Bucket>();
+
+export class RateLimitError extends Error{
+	readonly retryAfterSeconds:number;
+
+	constructor(retryAfterSeconds:number){
+		super('RATE_LIMITED');
+		this.name='RateLimitError';
+		this.retryAfterSeconds=retryAfterSeconds;
+	}
+}
+
+export function rateLimit(key:string,max=30,windowMs=60_000){
+	const now=Date.now();
+	let bucket=buckets.get(key);
+	if(!bucket||now>=bucket.reset){
+		bucket={count:0,reset:now+windowMs};
+		buckets.set(key,bucket);
+	}
+	bucket.count++;
+	if(bucket.count>max)throw new RateLimitError(Math.max(1,Math.ceil((bucket.reset-now)/1000)));
+}

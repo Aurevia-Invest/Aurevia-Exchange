@@ -781,6 +781,110 @@ test('sign-in password visibility, recovery link, and account link are accessibl
 	await expectNoHorizontalOverflow(page);
 });
 
+test('registration security script can retry without losing form values',async({page})=>{
+	let scriptRequests=0;
+	await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',route=>{
+		scriptRequests++;
+		if(scriptRequests===1)return route.abort();
+		return route.fulfill({
+			status:200,
+			contentType:'application/javascript',
+			body:`window.turnstile={render:function(){return 'test-widget';},reset:function(){},remove:function(){}};`,
+		});
+	});
+	await page.setViewportSize({width:390,height:844});
+	await page.goto('/register');
+	await expect(page.locator('[role="alert"].text-loss')).toContainText('We couldn’t load the security check.');
+	await page.getByRole('button',{name:'Retry'}).click();
+	await expect(page.getByText('Complete the security check to continue.')).toBeVisible();
+	expect(scriptRequests).toBe(2);
+	await expectNoHorizontalOverflow(page);
+});
+
+test('registration page refresh and Turnstile retries do not submit and render the widget once',async({page})=>{
+	let registrationSubmissions=0;
+	await page.route('**/api/register',async route=>{
+		if(route.request().method()==='POST'){
+			registrationSubmissions++;
+			await route.fulfill({
+				status:429,
+				headers:{'Retry-After':'90'},
+				contentType:'application/json',
+				body:JSON.stringify({error:'Too many registration attempts. Try again later.',retryAfterSeconds:90}),
+			});
+			return;
+		}
+		await route.continue();
+	});
+	await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',route=>route.fulfill({
+		status:200,
+		contentType:'application/javascript',
+		body:`window.__aureviaTurnstileRenderCount=0;window.turnstile={render:function(_container,options){window.__aureviaTurnstileRenderCount++;window.__aureviaTurnstileOptions=options;return 'test-widget';},reset:function(){window.__aureviaTurnstileResetCount=(window.__aureviaTurnstileResetCount||0)+1;},remove:function(){}};`,
+	}));
+	await page.goto('/register');
+	await expect(page.getByText('Complete the security check to continue.')).toBeVisible();
+	const firstName=page.getByLabel('First name');
+	const renderCount=()=>page.evaluate(()=>(
+		window as Window & {__aureviaTurnstileRenderCount?:number}
+	).__aureviaTurnstileRenderCount);
+	expect(await renderCount()).toBe(1);
+	await page.reload();
+	await expect(page.getByText('Complete the security check to continue.')).toBeVisible();
+	expect(await renderCount()).toBe(1);
+	expect(registrationSubmissions).toBe(0);
+	await firstName.fill('Preserved');
+	await expect(firstName).toHaveValue('Preserved');
+
+	await page.evaluate(()=>{
+		const options=(window as Window & {__aureviaTurnstileOptions?:Record<string,(...args:string[])=>void>}).__aureviaTurnstileOptions;
+		options?.['before-interactive-callback']();
+	});
+	await expect(page.getByText('Verifying the security check…')).toBeVisible();
+	await page.evaluate(()=>{
+		const options=(window as Window & {__aureviaTurnstileOptions?:Record<string,(...args:string[])=>void>}).__aureviaTurnstileOptions;
+		options?.['error-callback']();
+	});
+	await expect(page.locator('.auth-error')).toContainText('Security verification could not be completed.');
+	await page.getByRole('button',{name:'Retry security check'}).click();
+	await expect(page.getByText('Complete the security check to continue.')).toBeVisible();
+	await expect(firstName).toHaveValue('Preserved');
+	await page.evaluate(()=>{
+		const options=(window as Window & {__aureviaTurnstileOptions?:Record<string,(...args:string[])=>void>}).__aureviaTurnstileOptions;
+		options?.['expired-callback']();
+	});
+	await expect(page.getByText('Security verification expired. Retry to continue.')).toBeVisible();
+	await page.getByRole('button',{name:'Retry security check'}).click();
+	await page.evaluate(()=>{
+		const options=(window as Window & {__aureviaTurnstileOptions?:Record<string,(...args:string[])=>void>}).__aureviaTurnstileOptions;
+		options?.callback('mock-cloudflare-token');
+	});
+	await expect(page.getByText('Security verification successful.')).toBeVisible();
+	await expect(page.getByRole('button',{name:'Create account'})).toBeDisabled();
+	await page.getByLabel('First name').fill('Mobile');
+	await page.getByLabel('Last name').fill('Retry Test');
+	await page.getByLabel('Date of birth').fill('1990-01-01');
+	const residencePicker=page.getByRole('button',{name:/country of residence/i});
+	await residencePicker.click();
+	const residenceDialog=page.getByRole('dialog',{name:'Select country of residence'});
+	await residenceDialog.getByRole('searchbox').fill('United States');
+	await residenceDialog.getByRole('option',{name:/United States.*US.*\+1/}).click();
+	await page.getByLabel('Email address').fill(`retry-${randomUUID()}@example.invalid`);
+	await page.getByLabel('Password',{exact:true}).fill('SecureTestPassword1');
+	await page.getByLabel('Confirm password').fill('SecureTestPassword1');
+	await page.getByRole('checkbox').check();
+	const createAccount=page.getByRole('button',{name:'Create account'});
+	await expect(createAccount).toBeEnabled();
+	await page.locator('form.register-form').evaluate((form:HTMLFormElement)=>{
+		form.requestSubmit();
+		form.requestSubmit();
+	});
+	await expect(page.locator('.auth-error')).toContainText('You can retry in 2 minute(s).');
+	await expect(page.getByLabel('Email address')).toHaveValue(/^retry-.*@example\.invalid$/);
+	await expect(createAccount).toBeDisabled();
+	expect(await renderCount()).toBe(1);
+	expect(registrationSubmissions).toBe(1);
+});
+
 test('registration completes through email-code fallback when Akedly is disabled',async({page})=>{
 	const email=fixture('REGISTRATION_EMAIL');
 	const password=fixture('REGISTRATION_PASSWORD');
@@ -791,7 +895,7 @@ test('registration completes through email-code fallback when Akedly is disabled
 	await page.setViewportSize({width:390,height:844});
 	await page.goto('/register');
 	await expect(page.getByRole('heading',{name:'Open an account'})).toBeVisible();
-	await expect(page.getByRole('button',{name:'Create account'})).toBeEnabled();
+	await expect(page.getByRole('button',{name:'Create account'})).toBeDisabled();
 	await expectNoHorizontalOverflow(page);
 	await expect(page.getByRole('radio',{name:/DEMO ACCOUNT/})).toBeVisible();
 	const realMode=page.getByRole('radio',{name:/REAL ACCOUNT/});
@@ -818,6 +922,7 @@ test('registration completes through email-code fallback when Akedly is disabled
 	await page.getByLabel('Password', {exact:true}).fill(password);
 	await page.getByLabel('Confirm password').fill(password);
 	await page.getByRole('checkbox').check();
+	await expect(page.getByRole('button',{name:'Create account'})).toBeEnabled();
 	const registrationRequest=page.waitForRequest(request=>request.url().endsWith('/api/register')&&request.method()==='POST');
 	const registrationResponse=page.waitForResponse(response=>response.url().endsWith('/api/register')&&response.request().method()==='POST');
 	await page.getByRole('button',{name:'Create account'}).click();
@@ -831,6 +936,10 @@ test('registration completes through email-code fallback when Akedly is disabled
 	expect(responseBody).toMatchObject({verificationRequired:true,authMethod:'email-code'});
 	await expect(page).toHaveURL(url=>url.pathname==='/verify-email'&&url.searchParams.get('email')===email);
 	expect(await db.user.findUnique({where:{email}})).toBeNull();
+	await expect.poll(async()=>{
+		const attempt=await db.registrationAttempt.findUnique({where:{email},select:{verification:{select:{channel:true}}}});
+		return attempt?.verification?.channel??null;
+	}).toBe('EMAIL');
 	expect(await db.registrationAttempt.findUniqueOrThrow({where:{email},select:{email:true,verification:{select:{channel:true}}}})).toEqual({email,verification:{channel:'EMAIL'}});
 	await expect.poll(async()=>await (await page.request.get(`${providerOrigin}/stats`)).json()).toMatchObject({email:1,sms:0});
 	const codeResponse=await page.request.get(`${providerOrigin}/test-code?email=${encodeURIComponent(email)}`);

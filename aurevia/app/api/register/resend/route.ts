@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {z,ZodError} from 'zod';
 import {Prisma,VerificationChannel} from '@prisma/client';
 import {db} from '@/lib/db';
-import {akedlyIsConfigured} from '@/lib/akedly';
+import {AkedlyProviderError,akedlyIsConfigured} from '@/lib/akedly';
 import {startAkedlyRegistrationVerification,startAkedlyVerification} from '@/lib/akedly-verification';
 import {rateLimit,RateLimitError} from '@/lib/rate-limit';
 import {trustedProxyClientIp} from '@/lib/request-ip';
@@ -22,6 +22,28 @@ function cooldownResponse(message:string,resendAfter?:Date){
 	);
 }
 
+function deliveryStatusUnknown(failure:{reason:string;httpStatus?:number}|undefined){
+	return failure?.reason==='timeout'
+		||failure?.reason==='network-error'
+		||(failure?.reason==='provider-rejected'&&(failure.httpStatus??0)>=500);
+}
+
+function deliveryStatusUnknownResponse(resendAfter:Date){
+	const retryAfterSeconds=Math.max(1,Math.ceil((resendAfter.getTime()-Date.now())/1000));
+	return NextResponse.json({
+		code:'EMAIL_DELIVERY_STATUS_UNKNOWN',
+		error:'We could not confirm whether the email provider accepted the request. Your registration is saved. If the code arrives, enter it here; otherwise retry after the cooldown.',
+		retryAfterSeconds,
+	},{status:503,headers:{'Retry-After':String(retryAfterSeconds),'Cache-Control':'no-store'}});
+}
+
+function akedlyFailureDiagnostic(error:unknown){
+	return {
+		category:error instanceof Error?error.message:'unknown',
+		...(error instanceof AkedlyProviderError&&error.httpStatus?{httpStatus:error.httpStatus}:{}),
+	};
+}
+
 export async function POST(request:Request){
 	try{
 		const {email:rawEmail}=schema.parse(await request.json());
@@ -36,6 +58,7 @@ export async function POST(request:Request){
 		}):null;
 		if(registrationAttempt&&registrationAttempt.email===email&&token){
 			const now=new Date();
+			let akedlyFallback=false;
 			if(registrationAttempt.expiresAt<=now){
 				await db.registrationAttempt.deleteMany({where:{id:registrationAttempt.id}});
 				const response=NextResponse.json({error:'This registration session expired. Start registration again.'},{status:410});
@@ -63,21 +86,29 @@ export async function POST(request:Request){
 					].includes(error.message);
 					if(!providerFailure)throw error;
 					if(!hasConfiguredVerificationProvider(VerificationChannel.EMAIL)){
-						await db.registrationAttempt.deleteMany({where:{id:registrationAttempt.id}});
-						const response=NextResponse.json({error:'Email verification is temporarily unavailable. Please try again later.'},{status:503});
-						clearRegistrationCookie(response);
-						return response;
+						console.warn('[registration-verification] Akedly initiation failed and no email fallback is configured.',{
+							...akedlyFailureDiagnostic(error),
+						});
+						return NextResponse.json({error:'Email verification could not be initiated. Your registration is saved; please retry later.'},{status:503,headers:{'Cache-Control':'no-store'}});
 					}
+					akedlyFallback=true;
+					console.warn('[registration-verification] Akedly initiation failed; using the configured email fallback.',{
+						...akedlyFailureDiagnostic(error),
+					});
 				}
 			}
 			if(!hasConfiguredVerificationProvider(VerificationChannel.EMAIL)){
-				await db.registrationAttempt.deleteMany({where:{id:registrationAttempt.id}});
-				const response=NextResponse.json({error:'Email verification is temporarily unavailable. Please try again later.'},{status:503});
-				clearRegistrationCookie(response);
-				return response;
+				return NextResponse.json({error:'Email verification is temporarily unavailable. Your registration is saved; please retry later.'},{status:503,headers:{'Cache-Control':'no-store'}});
 			}
 			const existing=await db.registrationVerification.findUnique({where:{registrationAttemptId:registrationAttempt.id}});
 			if(existing&&existing.resendAfter>now){
+				if(existing.channel===VerificationChannel.EMAIL&&existing.providerReference==='EMAIL_STATUS_UNKNOWN'&&existing.expiresAt>now){
+					return NextResponse.json({
+						method:'email-code',
+						message:'We could not confirm delivery. If the code arrived, enter it here; otherwise request another code after the cooldown.',
+						resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000),
+					},{status:200,headers:{'Cache-Control':'no-store'}});
+				}
 				if(existing.channel===VerificationChannel.EMAIL&&!existing.providerReference&&existing.expiresAt>now){
 					return NextResponse.json({method:'email-code',message:'A verification code was already requested. Check your email.',resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000)},{status:200});
 				}
@@ -99,31 +130,68 @@ export async function POST(request:Request){
 					data:{registrationAttemptId:registrationAttempt.id,codeHash:reservation,channel:VerificationChannel.EMAIL,expiresAt,resendAfter},
 				});
 			}
+			let deliveryFailure:{reason:string;httpStatus?:number}|undefined;
 			const delivered=await deliverVerificationCode(VerificationChannel.EMAIL,{
 				email:registrationAttempt.email,
 				name:registrationAttempt.name,
 				phone:registrationAttempt.phone,
-			},code,{registrationToken:token});
+			},code,{
+				registrationToken:token,
+				onFailure:failure=>{
+					deliveryFailure=failure;
+					console.warn('[registration-verification] Email delivery failed.',failure);
+				},
+			});
 			if(!delivered){
-				await db.registrationAttempt.deleteMany({where:{id:registrationAttempt.id}});
-				const response=NextResponse.json({error:'Email verification delivery failed. Start registration again later.'},{status:502});
-				clearRegistrationCookie(response);
-				return response;
+				if(deliveryStatusUnknown(deliveryFailure)){
+					const saved=await db.registrationVerification.updateMany({
+						where:{registrationAttemptId:registrationAttempt.id,codeHash:reservation},
+						data:{codeHash,channel:VerificationChannel.EMAIL,providerReference:'EMAIL_STATUS_UNKNOWN'},
+					});
+					if(saved.count!==1)return NextResponse.json({error:'The verification request changed. Please retry verification.'},{status:409,headers:{'Cache-Control':'no-store'}});
+					return deliveryStatusUnknownResponse(resendAfter);
+				}
+				if(existing){
+					await db.registrationVerification.updateMany({
+						where:{id:existing.id,codeHash:reservation},
+						data:{
+							codeHash:existing.codeHash,
+							channel:existing.channel,
+							providerReference:existing.providerReference,
+							expiresAt:existing.expiresAt,
+							resendAfter:existing.resendAfter,
+							attempts:existing.attempts,
+						},
+					});
+				}else{
+					await db.registrationVerification.deleteMany({
+						where:{registrationAttemptId:registrationAttempt.id,codeHash:reservation},
+					});
+				}
+				return NextResponse.json({
+					code:'EMAIL_DELIVERY_FAILED',
+					error:'Email verification could not be initiated. Your registration is saved; please retry shortly.',
+				},{status:502,headers:{'Cache-Control':'no-store'}});
 			}
 			const saved=await db.registrationVerification.updateMany({
 				where:{registrationAttemptId:registrationAttempt.id,codeHash:reservation},
 				data:{codeHash,channel:VerificationChannel.EMAIL,providerReference:null},
 			});
 			if(saved.count!==1){
-				await db.registrationAttempt.deleteMany({where:{id:registrationAttempt.id}});
-				const response=NextResponse.json({error:'The verification request changed. Start registration again.'},{status:409});
-				clearRegistrationCookie(response);
-				return response;
+				return NextResponse.json({error:'The verification request changed. Please retry verification.'},{status:409,headers:{'Cache-Control':'no-store'}});
 			}
-			return NextResponse.json({method:'email-code',message:'The email provider accepted the verification request. Delivery may take a short time.',resendAfterSeconds:verificationConfig.resendCooldownSeconds},{status:200,headers:{'Cache-Control':'no-store'}});
+			return NextResponse.json({
+				method:'email-code',
+				message:akedlyFallback
+					?'Akedly could not start this attempt. Your configured email provider accepted the verification request; delivery may take a short time.'
+					:'The email provider accepted the verification request. Delivery may take a short time.',
+				...(akedlyFallback?{fallbackFrom:'akedly'}:{}),
+				resendAfterSeconds:verificationConfig.resendCooldownSeconds,
+			},{status:200,headers:{'Cache-Control':'no-store'}});
 		}
 		const user=await db.user.findUnique({where:{email},select:{id:true,email:true,name:true,phone:true,emailVerifiedAt:true,requiresRegistrationVerification:true,role:true,status:true}});
 		if(!user||user.role!=='USER'||user.status!=='ACTIVE'||user.emailVerifiedAt||!user.requiresRegistrationVerification)return NextResponse.json(genericResponse,{status:202});
+		let akedlyFallback=false;
 		if(akedlyIsConfigured()){
 			try{
 				const attempt=await startAkedlyVerification(user.id,VerificationChannel.EMAIL,{email:user.email});
@@ -141,12 +209,23 @@ export async function POST(request:Request){
 					'AKEDLY_INVALID_WIDGET_URL',
 				].includes(error.message);
 				if(!providerFailure||!hasConfiguredVerificationProvider(VerificationChannel.EMAIL))throw error;
+				akedlyFallback=true;
+				console.warn('[registration-verification] Akedly initiation failed; using the configured email fallback.',{
+					...akedlyFailureDiagnostic(error),
+				});
 			}
 		}
 		if(!hasConfiguredVerificationProvider(VerificationChannel.EMAIL))return NextResponse.json({error:'Email verification is temporarily unavailable. Please try again later.'},{status:503});
 		const now=new Date();
 		const existing=await db.verificationCode.findUnique({where:{userId:user.id}});
 		if(existing&&existing.resendAfter>now){
+			if(existing.channel===VerificationChannel.EMAIL&&existing.providerReference==='EMAIL_STATUS_UNKNOWN'&&existing.expiresAt>now){
+				return NextResponse.json({
+					method:'email-code',
+					message:'We could not confirm delivery. If the code arrived, enter it here; otherwise request another code after the cooldown.',
+					resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000),
+				},{status:200,headers:{'Cache-Control':'no-store'}});
+			}
 			if(existing.channel===VerificationChannel.EMAIL&&!existing.providerReference&&existing.expiresAt>now){
 				return NextResponse.json({method:'email-code',message:'A verification code was already requested. Check your email.',resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000)},{status:200});
 			}
@@ -171,8 +250,22 @@ export async function POST(request:Request){
 				throw error;
 			}
 		}
-		const delivered=await deliverVerificationCode(VerificationChannel.EMAIL,user,code);
+		let deliveryFailure:{reason:string;httpStatus?:number}|undefined;
+		const delivered=await deliverVerificationCode(VerificationChannel.EMAIL,user,code,{
+			onFailure:failure=>{
+				deliveryFailure=failure;
+				console.warn('[registration-verification] Email delivery failed.',failure);
+			},
+		});
 		if(!delivered){
+			if(deliveryStatusUnknown(deliveryFailure)){
+				const saved=await db.verificationCode.updateMany({
+					where:{userId:user.id,codeHash:reservation},
+					data:{codeHash,channel:VerificationChannel.EMAIL,providerReference:'EMAIL_STATUS_UNKNOWN'},
+				});
+				if(saved.count!==1)return NextResponse.json({error:'The verification request changed. Please retry verification.'},{status:409});
+				return deliveryStatusUnknownResponse(resendAfter);
+			}
 			if(existing){
 				await db.verificationCode.updateMany({where:{id:existing.id,codeHash:reservation},data:{
 					codeHash:existing.codeHash,channel:existing.channel,providerReference:existing.providerReference,
@@ -185,7 +278,14 @@ export async function POST(request:Request){
 		}
 		const saved=await db.verificationCode.updateMany({where:{userId:user.id,codeHash:reservation},data:{codeHash,channel:VerificationChannel.EMAIL,providerReference:null}});
 		if(saved.count!==1)return NextResponse.json({error:'The verification request changed. Please request a new code.'},{status:409});
-		return NextResponse.json({method:'email-code',message:'The email provider accepted the verification request. Delivery may take a short time.',resendAfterSeconds:verificationConfig.resendCooldownSeconds},{status:200});
+		return NextResponse.json({
+			method:'email-code',
+			message:akedlyFallback
+				?'Akedly could not start this attempt. Your configured email provider accepted the verification request; delivery may take a short time.'
+				:'The email provider accepted the verification request. Delivery may take a short time.',
+			...(akedlyFallback?{fallbackFrom:'akedly'}:{}),
+			resendAfterSeconds:verificationConfig.resendCooldownSeconds,
+		},{status:200});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Enter a valid email address.'},{status:400});
 		if(error instanceof RateLimitError)return NextResponse.json(

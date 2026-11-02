@@ -6,6 +6,16 @@ const API_BASE_URL='https://api.akedly.io';
 const WIDGET_ORIGIN='https://auth.akedly.io';
 const MAX_WEBHOOK_BYTES=64*1024;
 
+export class AkedlyProviderError extends Error{
+	readonly httpStatus?:number;
+
+	constructor(category:string,httpStatus?:number){
+		super(category);
+		this.name='AkedlyProviderError';
+		this.httpStatus=httpStatus;
+	}
+}
+
 export type AkedlyContact=
 	|{email:string;phoneNumber?:never}
 	|{email?:never;phoneNumber:string};
@@ -63,7 +73,7 @@ export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyA
 		throw new Error('AKEDLY_PROVIDER_UNAVAILABLE');
 	}
 	const result=await response.json().catch(()=>null) as unknown;
-	if(!response.ok)throw new Error('AKEDLY_ATTEMPT_REJECTED');
+	if(!response.ok)throw new AkedlyProviderError('AKEDLY_ATTEMPT_REJECTED',response.status);
 	if(!isRecord(result)||result.status!=='success'||!isRecord(result.data))throw new Error('AKEDLY_INVALID_PROVIDER_RESPONSE');
 	const {attemptId,iframeUrl,expiresAt}=result.data;
 	if(typeof attemptId!=='string'||attemptId.length<8||attemptId.length>200)throw new Error('AKEDLY_INVALID_PROVIDER_RESPONSE');

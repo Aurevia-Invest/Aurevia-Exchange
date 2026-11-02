@@ -116,6 +116,15 @@ describe('Akedly V2 server integration',()=>{
 		await expect(createAkedlyAttempt({email:'person@example.invalid'})).rejects.toThrow('AKEDLY_INVALID_WIDGET_URL');
 	});
 
+	it('retains only the provider HTTP status for a rejected attempt',async()=>{
+		vi.stubGlobal('fetch',vi.fn(async()=>new Response('private provider response',{status:401})));
+
+		await expect(createAkedlyAttempt({email:'person@example.invalid'})).rejects.toMatchObject({
+			message:'AKEDLY_ATTEMPT_REJECTED',
+			httpStatus:401,
+		});
+	});
+
 	it('uses an authenticated server-side attempt status lookup',async()=>{
 		let requestHeaders:HeadersInit|undefined;
 		let requestBody:unknown;

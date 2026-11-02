@@ -4,7 +4,15 @@ import {verificationConfig} from './config';
 import {getServerConfiguration} from './config/env';
 
 type Contact={email:string;phone:string|null;name:string|null};
-type VerificationDeliveryOptions={registrationToken?:string};
+type VerificationDeliveryFailure={
+	provider:'resend'|'configured-email-api'|'none';
+	reason:'unsupported-channel'|'missing-email'|'invalid-registration-token'|'invalid-url'|'provider-not-configured'|'timeout'|'network-error'|'provider-rejected';
+	httpStatus?:number;
+};
+type VerificationDeliveryOptions={
+	registrationToken?:string;
+	onFailure?:(failure:VerificationDeliveryFailure)=>void;
+};
 
 function legacyProvider(channel:VerificationChannel){
 	const config=getServerConfiguration();
@@ -62,20 +70,30 @@ export function verificationCodeMatches(userId:string,code:string,hash:string){
 }
 
 export async function deliverVerificationCode(channel:VerificationChannel,contact:Contact,code:string,options:VerificationDeliveryOptions={}){
-	if(channel!==VerificationChannel.EMAIL)return false;
+	if(channel!==VerificationChannel.EMAIL){
+		options.onFailure?.({provider:'none',reason:'unsupported-channel'});
+		return false;
+	}
 	const config=getServerConfiguration().verification;
-	if(!contact.email)return false;
+	if(!contact.email){
+		options.onFailure?.({provider:'none',reason:'missing-email'});
+		return false;
+	}
 	const subject='Verify your Aurevia Exchange account';
 	let text:string;
 	try{
 		const verificationUrl=new URL('/verify-email',config.appUrl);
 		verificationUrl.searchParams.set('email',contact.email);
 		if(options.registrationToken){
-			if(!/^[A-Za-z0-9_-]{40,60}$/.test(options.registrationToken))return false;
+			if(!/^[A-Za-z0-9_-]{40,60}$/.test(options.registrationToken)){
+				options.onFailure?.({provider:'none',reason:'invalid-registration-token'});
+				return false;
+			}
 			verificationUrl.hash=new URLSearchParams({registrationToken:options.registrationToken}).toString();
 		}
 		text=`Your Aurevia Exchange verification code is ${code}. It expires in ${verificationConfig.expiresInMinutes} minutes. Enter it at ${verificationUrl.toString()}. If you did not request it, you can ignore this message.`;
 	}catch{
+		options.onFailure?.({provider:'none',reason:'invalid-url'});
 		return false;
 	}
 
@@ -87,18 +105,35 @@ export async function deliverVerificationCode(channel:VerificationChannel,contac
 				body:JSON.stringify({from:config.emailFrom,to:[contact.email],subject,text}),
 				signal:AbortSignal.timeout(8000),
 			});
+			if(!response.ok){
+				options.onFailure?.({provider:'resend',reason:'provider-rejected',httpStatus:response.status});
+			}
 			return response.ok;
-		}catch{
+		}catch(error){
+			options.onFailure?.({
+				provider:'resend',
+				reason:error instanceof Error&&error.name==='TimeoutError'?'timeout':'network-error',
+			});
 			return false;
 		}
 	}
 
 	const configured=legacyProvider(channel);
-	if(!configured)return false;
+	if(!configured){
+		options.onFailure?.({provider:'none',reason:'provider-not-configured'});
+		return false;
+	}
 	try{
 		const response=await fetch(configured.url,{method:'POST',headers:{authorization:`Bearer ${configured.key}`,'content-type':'application/json'},body:JSON.stringify({channel:channel.toLowerCase(),to:contact.email,name:contact.name,subject,text}),signal:AbortSignal.timeout(8000)});
+		if(!response.ok){
+			options.onFailure?.({provider:'configured-email-api',reason:'provider-rejected',httpStatus:response.status});
+		}
 		return response.ok;
-	}catch{
+	}catch(error){
+		options.onFailure?.({
+			provider:'configured-email-api',
+			reason:error instanceof Error&&error.name==='TimeoutError'?'timeout':'network-error',
+		});
 		return false;
 	}
 }

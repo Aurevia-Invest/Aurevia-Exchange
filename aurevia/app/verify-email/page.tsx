@@ -72,6 +72,15 @@ export default function VerifyEmailPage(){
 				return;
 			}
 			if(!response.ok){
+				if(result.code==='EMAIL_DELIVERY_STATUS_UNKNOWN'){
+					setEmailCodeMode(true);
+					const retryAfter=Number(response.headers.get('Retry-After')||result.retryAfterSeconds);
+					const retryMessage=Number.isFinite(retryAfter)&&retryAfter>0
+						?` You can request another code in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
+						:'';
+					setMessage(`${result.error||'Delivery status is uncertain. If the code arrives, enter it here; retrying will not send another code during the cooldown.'}${retryMessage}`);
+					return;
+				}
 				const retryAfter=Number(response.headers.get('Retry-After')||result.retryAfterSeconds);
 				const retryMessage=response.status===429&&Number.isFinite(retryAfter)&&retryAfter>0
 					?` You can retry in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`

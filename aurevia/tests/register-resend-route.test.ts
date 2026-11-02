@@ -45,7 +45,10 @@ vi.mock('@/lib/db',()=>({db:{
 		deleteMany:mocks.codeDeleteMany,
 	},
 }}));
-vi.mock('@/lib/akedly',()=>({akedlyIsConfigured:mocks.akedlyConfigured}));
+vi.mock('@/lib/akedly',()=>({
+	AkedlyProviderError:class extends Error{readonly httpStatus?:number},
+	akedlyIsConfigured:mocks.akedlyConfigured,
+}));
 vi.mock('@/lib/akedly-verification',()=>({
 	startAkedlyVerification:mocks.startAkedly,
 	startAkedlyRegistrationVerification:mocks.startAkedlyRegistration,
@@ -122,7 +125,7 @@ describe('registration verification resend',()=>{
 
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({method:'email-code'});
-		expect(mocks.deliverCode).toHaveBeenCalledWith('EMAIL',user,'123456');
+		expect(mocks.deliverCode).toHaveBeenCalledWith('EMAIL',user,'123456',expect.objectContaining({onFailure:expect.any(Function)}));
 		expect(mocks.codeCreate).toHaveBeenCalledOnce();
 		expect(mocks.startAkedly).not.toHaveBeenCalled();
 	});
@@ -281,12 +284,35 @@ describe('registration verification resend',()=>{
 			VerificationChannel.EMAIL,
 			expect.objectContaining({email:'new-registration@example.invalid'}),
 			'123456',
-			{registrationToken:'a'.repeat(43)},
+			expect.objectContaining({registrationToken:'a'.repeat(43),onFailure:expect.any(Function)}),
 		);
 		expect(mocks.userFindUnique).not.toHaveBeenCalled();
 	});
 
-	it('deletes the temporary registration if OTP delivery fails',async()=>{
+	it('makes the configured email fallback explicit when Akedly cannot start',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-1',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:null,
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new Error('AKEDLY_PROVIDER_UNAVAILABLE'));
+
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			method:'email-code',
+			fallbackFrom:'akedly',
+			message:expect.stringContaining('Akedly could not start'),
+		});
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+	});
+
+	it('preserves the temporary registration and clears the failed challenge reservation when delivery fails',async()=>{
 		mocks.registrationAttemptFindUnique.mockResolvedValue({
 			id:'registration-1',
 			email:'new-registration@example.invalid',
@@ -299,8 +325,70 @@ describe('registration verification resend',()=>{
 		const response=await POST(registrationRequest());
 
 		expect(response.status).toBe(502);
-		expect(mocks.registrationAttemptDeleteMany).toHaveBeenCalledWith({where:{id:'registration-1'}});
-		expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
+		expect(await response.json()).toMatchObject({code:'EMAIL_DELIVERY_FAILED'});
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+		expect(mocks.registrationVerificationDeleteMany).toHaveBeenCalledWith({
+			where:{registrationAttemptId:'registration-1',codeHash:'hashed-value'},
+		});
+		expect(response.headers.get('set-cookie')).toBeNull();
 		expect(mocks.userFindUnique).not.toHaveBeenCalled();
+	});
+
+	it('keeps the submitted code verifiable when delivery outcome is unknown',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-1',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:null,
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+		mocks.deliverCode.mockImplementation(async(
+			_channel:unknown,
+			_contact:unknown,
+			_code:unknown,
+			options:{onFailure?:(failure:{provider:string;reason:string;httpStatus?:number})=>void},
+		)=>{
+			options.onFailure?.({provider:'resend',reason:'timeout'});
+			return false;
+		});
+
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(503);
+		expect(await response.json()).toMatchObject({code:'EMAIL_DELIVERY_STATUS_UNKNOWN'});
+		expect(response.headers.get('Retry-After')).toBeTruthy();
+		expect(mocks.registrationVerificationUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+			where:{registrationAttemptId:'registration-1',codeHash:'hashed-value'},
+			data:expect.objectContaining({codeHash:'hashed-value',providerReference:'EMAIL_STATUS_UNKNOWN'}),
+		}));
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+	});
+
+	it('resumes an uncertain email delivery without sending a duplicate during cooldown',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-1',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:null,
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+		mocks.registrationVerificationFindUnique.mockResolvedValue({
+			id:'verification-1',
+			channel:VerificationChannel.EMAIL,
+			providerReference:'EMAIL_STATUS_UNKNOWN',
+			expiresAt:new Date(Date.now()+60_000),
+			resendAfter:new Date(Date.now()+30_000),
+		});
+
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			method:'email-code',
+			message:expect.stringContaining('could not confirm delivery'),
+		});
+		expect(mocks.deliverCode).not.toHaveBeenCalled();
 	});
 });

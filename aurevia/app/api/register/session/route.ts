@@ -22,11 +22,16 @@ export async function POST(request:Request){
 		});
 		if(!attempt||attempt.email!==email)return NextResponse.json({error:'This registration session is invalid or expired.'},{status:404});
 		const now=new Date();
-		if(attempt.expiresAt<=now||(attempt.verification&&attempt.verification.expiresAt<=now)){
+		if(attempt.expiresAt<=now){
 			await db.registrationAttempt.deleteMany({where:{id:attempt.id}});
 			const response=NextResponse.json({error:'This registration session is invalid or expired.'},{status:410});
 			clearRegistrationCookie(response);
 			return response;
+		}
+		if(attempt.verification&&attempt.verification.expiresAt<=now){
+			await db.registrationVerification.deleteMany({
+				where:{registrationAttemptId:attempt.id,expiresAt:{lte:now}},
+			});
 		}
 		const response=NextResponse.json({restored:true},{headers:{'Cache-Control':'no-store'}});
 		setRegistrationCookie(response,registrationToken,attempt.expiresAt);

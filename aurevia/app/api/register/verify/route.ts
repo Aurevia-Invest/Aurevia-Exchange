@@ -103,6 +103,15 @@ export async function POST(request:Request){
 			}
 			return NextResponse.json({error:'Enter the email address and six-digit verification code.'},{status:400});
 		}
+		if(error instanceof Error&&error.message==='REGISTRATION_PHONE_ALREADY_IN_USE'&&registrationAttemptId){
+			await db.registrationAttempt.deleteMany({where:{id:registrationAttemptId}});
+			const response=NextResponse.json({
+				code:'PHONE_ALREADY_IN_USE',
+				error:'This phone number is already associated with another account. Start a new registration without it or use a different number.',
+			},{status:409,headers:{'Cache-Control':'no-store'}});
+			clearRegistrationCookie(response);
+			return response;
+		}
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'&&registrationAttemptId){
 			await db.registrationAttempt.deleteMany({where:{id:registrationAttemptId}});
 			const response=NextResponse.json({error:'Registration could not be completed with these details. Start registration again.'},{status:409});
@@ -120,6 +129,12 @@ export async function POST(request:Request){
 			}
 			return NextResponse.json({error:'The code is invalid or no longer available.'},{status:409});
 		}
+		const rawErrorCode=error&&typeof error==='object'&&'code' in error&&typeof error.code==='string'?error.code:'';
+		const errorCode=/^[A-Z0-9_]{2,32}$/.test(rawErrorCode)?rawErrorCode:undefined;
+		console.error('Registration email verification failed.',{
+			errorName:error instanceof Error?error.name:'UnknownError',
+			errorCode,
+		});
 		return NextResponse.json({error:'Unable to verify this account right now.'},{status:500});
 	}
 }

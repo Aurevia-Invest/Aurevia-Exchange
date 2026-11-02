@@ -238,6 +238,10 @@ async function completeAkedlyRegistrationVerification(
 			return 'verified' as const;
 		});
 	}catch(error){
+		if(error instanceof Error&&error.message==='REGISTRATION_PHONE_ALREADY_IN_USE'){
+			await db.registrationAttempt.deleteMany({where:{id:attempt.id}});
+			return 'phone-conflict' as const;
+		}
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'){
 			await db.registrationAttempt.deleteMany({where:{id:attempt.id}});
 			return 'ignored' as const;

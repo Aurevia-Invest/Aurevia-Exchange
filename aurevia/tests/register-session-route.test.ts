@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 const mocks=vi.hoisted(()=>({
 	findUnique:vi.fn(),
 	deleteMany:vi.fn(),
+	verificationDeleteMany:vi.fn(),
 	rateLimit:vi.fn(),
 	RateLimitError:class extends Error{
 		readonly retryAfterSeconds:number;
@@ -14,7 +15,10 @@ const mocks=vi.hoisted(()=>({
 	},
 }));
 
-vi.mock('@/lib/db',()=>({db:{registrationAttempt:{findUnique:mocks.findUnique,deleteMany:mocks.deleteMany}}}));
+vi.mock('@/lib/db',()=>({db:{
+	registrationAttempt:{findUnique:mocks.findUnique,deleteMany:mocks.deleteMany},
+	registrationVerification:{deleteMany:mocks.verificationDeleteMany},
+}}));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
 
 import {POST} from '@/app/api/register/session/route';
@@ -40,6 +44,7 @@ describe('registration session restore',()=>{
 		vi.clearAllMocks();
 		mocks.findUnique.mockResolvedValue(attempt);
 		mocks.deleteMany.mockResolvedValue({count:1});
+		mocks.verificationDeleteMany.mockResolvedValue({count:1});
 	});
 
 	afterEach(()=>vi.unstubAllEnvs());
@@ -66,5 +71,17 @@ describe('registration session restore',()=>{
 		expect(response.status).toBe(410);
 		expect(mocks.deleteMany).toHaveBeenCalledWith({where:{id:attempt.id}});
 		expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
+	});
+
+	it('restores a still-valid registration after deleting only its expired provider challenge',async()=>{
+		mocks.findUnique.mockResolvedValue({...attempt,verification:{expiresAt:new Date(Date.now()-1000)}});
+		const response=await POST(request());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({restored:true});
+		expect(mocks.deleteMany).not.toHaveBeenCalled();
+		expect(mocks.verificationDeleteMany).toHaveBeenCalledWith({
+			where:{registrationAttemptId:attempt.id,expiresAt:{lte:expect.any(Date)}},
+		});
 	});
 });

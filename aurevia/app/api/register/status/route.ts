@@ -26,16 +26,27 @@ export async function POST(request:Request){
 		}):null;
 		if(registrationAttempt&&registrationAttempt.email===email){
 			const now=new Date();
-			if(registrationAttempt.expiresAt<=now||(registrationAttempt.verification&&registrationAttempt.verification.expiresAt<=now)){
+			if(registrationAttempt.expiresAt<=now){
 				await db.registrationAttempt.deleteMany({where:{id:registrationAttempt.id}});
-				const response=NextResponse.json({verified:false,expired:true},{headers:{'Cache-Control':'no-store'}});
+				const response=NextResponse.json({verified:false,expired:true,sessionExpired:true},{headers:{'Cache-Control':'no-store'}});
 				clearRegistrationCookie(response);
 				return response;
+			}
+			if(registrationAttempt.verification&&registrationAttempt.verification.expiresAt<=now){
+				await db.registrationVerification.deleteMany({
+					where:{registrationAttemptId:registrationAttempt.id,expiresAt:{lte:now}},
+				});
+				return NextResponse.json({verified:false,expired:true,sessionExpired:false},{headers:{'Cache-Control':'no-store'}});
 			}
 			if(registrationAttempt.verification?.providerReference!==`AKEDLY:${attemptId}`){
 				return NextResponse.json({error:'Verification attempt not found.'},{status:404});
 			}
 			const result=await reconcileAkedlyAttempt(attemptId);
+			if(result==='phone-conflict'){
+				const response=NextResponse.json({verified:false,phoneConflict:true},{headers:{'Cache-Control':'no-store'}});
+				clearRegistrationCookie(response);
+				return response;
+			}
 			if(result==='verified'||result==='already'){
 				const response=NextResponse.json({verified:true},{headers:{'Cache-Control':'no-store'}});
 				clearRegistrationCookie(response);

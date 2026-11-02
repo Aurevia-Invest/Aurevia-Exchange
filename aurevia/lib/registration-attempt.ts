@@ -58,6 +58,16 @@ export async function createVerifiedRegistration(
 ){
 	const attempt=await tx.registrationAttempt.findUnique({where:{id:registrationAttemptId}});
 	if(!attempt||attempt.expiresAt<=now)throw new Error('REGISTRATION_ATTEMPT_EXPIRED');
+	if(attempt.phone){
+		await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${attempt.phone})::bigint)`;
+		const existingPhoneUser=await tx.user.findFirst({where:{phone:attempt.phone},select:{id:true}});
+		if(existingPhoneUser)throw new Error('REGISTRATION_PHONE_ALREADY_IN_USE');
+		const otherPendingAttempt=await tx.registrationAttempt.findFirst({
+			where:{id:{not:registrationAttemptId},phone:attempt.phone,expiresAt:{gt:now}},
+			select:{id:true},
+		});
+		if(otherPendingAttempt)throw new Error('REGISTRATION_PHONE_ALREADY_IN_USE');
+	}
 	const claimed=await tx.registrationAttempt.deleteMany({
 		where:{id:registrationAttemptId,expiresAt:{gt:now}},
 	});

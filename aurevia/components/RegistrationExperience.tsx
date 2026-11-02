@@ -15,6 +15,7 @@ import {useLocale} from '@/lib/i18n-context';
 type AccountMode='DEMO'|'REAL';
 type RegistrationDetails={firstName:string;lastName:string;dateOfBirth:string;residenceCountry:string;phoneCountry:string;phoneNumber:string;email:string;password:string;confirmPassword:string;accountMode:AccountMode};
 type TurnstileStatus='loading'|'ready'|'verifying'|'verified'|'expired'|'failed';
+type ExistingAccountIssue='account'|'unavailable'|'pending'|'phone';
 type TurnstileOptions={
 	sitekey:string;
 	action:string;
@@ -85,6 +86,7 @@ export default function RegistrationExperience(){
 	const [details,setDetails]=useState(initialDetails);
 	const [termsAccepted,setTermsAccepted]=useState(false);
 	const [error,setError]=useState('');
+	const [existingAccountIssue,setExistingAccountIssue]=useState<ExistingAccountIssue|null>(null);
 	const [countryError,setCountryError]=useState('');
 	const [dateError,setDateError]=useState('');
 	const [phoneError,setPhoneError]=useState('');
@@ -252,7 +254,7 @@ export default function RegistrationExperience(){
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();
 		if(busy||submissionInFlight.current)return;
-		setError('');setCountryError('');setDateError('');setPhoneError('');setPasswordError('');
+		setError('');setExistingAccountIssue(null);setCountryError('');setDateError('');setPhoneError('');setPasswordError('');
 		const date=parseDateOfBirth(details.dateOfBirth);
 		const phone=details.phoneNumber.trim()?normalizePhoneE164(details.phoneNumber,details.phoneCountry as CountryCode):'';
 		let invalid=false;
@@ -269,13 +271,19 @@ export default function RegistrationExperience(){
 			const response=await fetch('/api/register',{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted,captchaToken:submittedCaptchaToken})});
 			const result=await response.json().catch(()=>({}));
 			if(!response.ok){
+				if(result.code==='ACCOUNT_ALREADY_VERIFIED'||result.code==='ACCOUNT_ALREADY_EXISTS')setExistingAccountIssue('account');
+				else if(result.code==='ACCOUNT_UNAVAILABLE')setExistingAccountIssue('unavailable');
+				else if(result.code==='REGISTRATION_IN_PROGRESS')setExistingAccountIssue('pending');
+				else if(result.code==='PHONE_ALREADY_IN_USE')setExistingAccountIssue('phone');
 				const retryAfter=Number(response.headers.get('Retry-After')||result.retryAfterSeconds);
 				const retryMessage=response.status===429&&Number.isFinite(retryAfter)&&retryAfter>0
 					?` You can retry in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
 					:'';
 				setError(`${result.requestId?`${result.error||translate('registrationFailed')} (Reference: ${result.requestId})`:result.error||translate('registrationFailed')}${retryMessage}`);return;
 			}
-			router.replace(`/verify-email?email=${encodeURIComponent(result.email||details.email)}`);
+			const verificationParams=new URLSearchParams({email:result.email||details.email});
+			if(result.existingVerification)verificationParams.set('existing','1');
+			router.replace(`/verify-email?${verificationParams.toString()}`);
 			router.refresh();
 		}catch{setError(translate('unableRegistration'));}
 		finally{
@@ -320,6 +328,10 @@ export default function RegistrationExperience(){
 				{captchaLoaded&&!captchaUnavailable&&<p className="text-sm muted" role="status">{captchaStatus==='verifying'?'Verifying the security check…':captchaStatus==='verified'?'Security verification successful.':captchaStatus==='expired'?'Security verification expired. Retry to continue.':captchaStatus==='failed'?'Security verification failed. Retry to continue.':'Complete the security check to continue.'}</p>}
 				{captchaLoaded&&!captchaUnavailable&&(captchaStatus==='expired'||captchaStatus==='failed')&&<button className="auth-link text-sm" type="button" onClick={retryCaptcha}>Retry security check</button>}
 				{error&&<p className="auth-error" role="alert">{error}</p>}
+				{existingAccountIssue==='account'&&<p className="text-sm leading-6 muted">Already have an account? <Link href="/login" className="auth-link">Sign in</Link> or <Link href="/forgot-password" className="auth-link">reset your password</Link>.</p>}
+				{existingAccountIssue==='unavailable'&&<p className="text-sm leading-6 muted">This account was not changed or reactivated. <Link href="/support" className="auth-link">Contact support</Link> for account-specific help.</p>}
+				{existingAccountIssue==='pending'&&<p className="text-sm leading-6 muted">Your existing registration details were not changed. Retry with the original registration password or use the verification link sent to your email.</p>}
+				{existingAccountIssue==='phone'&&<p className="text-sm leading-6 muted">Phone is optional. Remove it or use a number not associated with another account.</p>}
 				<button type="submit" disabled={busy||!captchaToken||!registrationFormValid} aria-busy={busy} className="auth-submit flex w-full items-center justify-center gap-2">{busy?translate('creatingAccount'):translate('createAccountButton')}<ArrowRight size={16} aria-hidden="true"/></button>
 			</form>
 				<p className="auth-footer">{translate('alreadyRegistered')} <Link href="/login" className="auth-link">{translate('signIn')}</Link></p>

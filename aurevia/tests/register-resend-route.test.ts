@@ -14,11 +14,19 @@ const mocks=vi.hoisted(()=>({
 	codeDeleteMany:vi.fn(),
 	akedlyConfigured:vi.fn(),
 	startAkedly:vi.fn(),
+	startAkedlyRegistration:vi.fn(),
 	hasEmailProvider:vi.fn(),
 	deliverCode:vi.fn(),
 	generateCode:vi.fn(),
 	hashCode:vi.fn(),
 	rateLimit:vi.fn(),
+	RateLimitError:class extends Error{
+		readonly retryAfterSeconds:number;
+		constructor(retryAfterSeconds:number){
+			super('RATE_LIMITED');
+			this.retryAfterSeconds=retryAfterSeconds;
+		}
+	},
 }));
 
 vi.mock('@/lib/db',()=>({db:{
@@ -38,14 +46,17 @@ vi.mock('@/lib/db',()=>({db:{
 	},
 }}));
 vi.mock('@/lib/akedly',()=>({akedlyIsConfigured:mocks.akedlyConfigured}));
-vi.mock('@/lib/akedly-verification',()=>({startAkedlyVerification:mocks.startAkedly}));
+vi.mock('@/lib/akedly-verification',()=>({
+	startAkedlyVerification:mocks.startAkedly,
+	startAkedlyRegistrationVerification:mocks.startAkedlyRegistration,
+}));
 vi.mock('@/lib/verification-delivery',()=>({
 	hasConfiguredVerificationProvider:mocks.hasEmailProvider,
 	deliverVerificationCode:mocks.deliverCode,
 	generateVerificationCode:mocks.generateCode,
 	hashVerificationCode:mocks.hashCode,
 }));
-vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit}));
+vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
 
 import {POST} from '@/app/api/register/resend/route';
 import {VerificationChannel} from '@prisma/client';
@@ -97,6 +108,7 @@ describe('registration verification resend',()=>{
 		mocks.codeDeleteMany.mockResolvedValue({count:1});
 		mocks.akedlyConfigured.mockReturnValue(false);
 		mocks.startAkedly.mockResolvedValue({attemptId:'attempt_1234567890',iframeUrl:'https://auth.akedly.io/widget',expiresAt:new Date(Date.now()+60_000)});
+		mocks.startAkedlyRegistration.mockResolvedValue({attemptId:'attempt_1234567890',iframeUrl:'https://auth.akedly.io/widget',expiresAt:new Date(Date.now()+60_000)});
 		mocks.hasEmailProvider.mockReturnValue(true);
 		mocks.deliverCode.mockResolvedValue(true);
 		mocks.generateCode.mockReturnValue('123456');
@@ -180,6 +192,46 @@ describe('registration verification resend',()=>{
 
 		expect(response.status).toBe(429);
 		expect(mocks.deliverCode).not.toHaveBeenCalled();
+	});
+
+	it('returns an accurate retry duration when a temporary Akedly attempt is cooling down',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-1',
+			email:'new-registration@example.invalid',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:{resendAfter:new Date(Date.now()+25_000),expiresAt:new Date(Date.now()+60_000)},
+		});
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new Error('AKEDLY_RESEND_COOLDOWN'));
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(429);
+		expect(Number(response.headers.get('Retry-After'))).toBeGreaterThan(0);
+		expect(await response.json()).toMatchObject({retryAfterSeconds:expect.any(Number)});
+	});
+
+	it('replaces only an expired temporary challenge and retains the registration attempt',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-1',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:null,
+			expiresAt:new Date(Date.now()+60_000),
+			verification:{
+				id:'expired-verification',
+				expiresAt:new Date(Date.now()-1000),
+				resendAfter:new Date(Date.now()-1000),
+			},
+		});
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({method:'email-code'});
+		expect(mocks.registrationVerificationDeleteMany).toHaveBeenCalledWith({
+			where:{registrationAttemptId:'registration-1',expiresAt:{lte:expect.any(Date)}},
+		});
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+		expect(mocks.registrationVerificationCreate).toHaveBeenCalledOnce();
 	});
 
 	it('does not send a code or start Akedly when no delivery provider is configured',async()=>{

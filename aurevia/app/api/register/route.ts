@@ -9,8 +9,10 @@ import {trustedProxyClientIp} from '@/lib/request-ip';
 import {isValidE164,parseDateOfBirth} from '@/lib/registration-validation';
 import {akedlyIsConfigured} from '@/lib/akedly';
 import {hasConfiguredVerificationProvider} from '@/lib/verification-delivery';
-import {createRegistrationToken,hashRegistrationToken,REGISTRATION_LIFETIME_MS,setRegistrationCookie} from '@/lib/registration-attempt';
+import {createRegistrationToken,hashRegistrationToken,REGISTRATION_LIFETIME_MS,registrationTokenFromRequest,setRegistrationCookie} from '@/lib/registration-attempt';
 import {verifyRegistrationTurnstile} from '@/lib/turnstile';
+
+type PendingRegistrationAttempt=Prisma.RegistrationAttemptGetPayload<{include:{verification:true}}>;
 
 const schema=z.object({
 	email:z.string().trim().email().max(254),
@@ -23,6 +25,56 @@ const schema=z.object({
 	termsAccepted:z.literal(true),
 	captchaToken:z.string().trim().min(1).max(2048),
 });
+
+function registrationResponse(
+	email:string,
+	token:string,
+	expiresAt:Date,
+	status:200|201,
+	authMethod:'akedly'|'email-code'=akedlyIsConfigured()?'akedly':'email-code',
+){
+	const response=NextResponse.json({
+		message:'Complete email verification to create your account.',
+		verificationRequired:true,
+		authMethod,
+		email,
+	},{status,headers:{'Cache-Control':'no-store'}});
+	setRegistrationCookie(response,token,expiresAt);
+	return response;
+}
+
+async function resumePendingAttempt(attempt:PendingRegistrationAttempt,password:string,request:Request){
+	const currentToken=registrationTokenFromRequest(request);
+	const ownsSession=currentToken!==null&&hashRegistrationToken(currentToken)===attempt.tokenHash;
+	if(!ownsSession&&!await bcrypt.compare(password,attempt.passwordHash)){
+		return NextResponse.json({
+			code:'REGISTRATION_IN_PROGRESS',
+			error:'A registration is already in progress for this email. Enter the original registration password or use the verification link sent to your email.',
+		},{status:409,headers:{'Cache-Control':'no-store'}});
+	}
+
+	const now=new Date();
+	if(attempt.verification&&attempt.verification.expiresAt<=now){
+		await db.registrationVerification.deleteMany({
+			where:{registrationAttemptId:attempt.id,expiresAt:{lte:now}},
+		});
+	}
+
+	const token=ownsSession?currentToken:createRegistrationToken();
+	if(!ownsSession){
+		const rotated=await db.registrationAttempt.updateMany({
+			where:{id:attempt.id,tokenHash:attempt.tokenHash,expiresAt:{gt:now}},
+			data:{tokenHash:hashRegistrationToken(token)},
+		});
+		if(rotated.count!==1)return NextResponse.json({
+			code:'REGISTRATION_IN_PROGRESS',
+			error:'This registration session changed. Retry with your registration details.',
+		},{status:409,headers:{'Cache-Control':'no-store'}});
+	}
+	const authMethod=attempt.verification?.providerReference?.startsWith('AKEDLY:')?'akedly'
+	:attempt.verification?.channel==='EMAIL'?'email-code':undefined;
+	return registrationResponse(attempt.email,token,attempt.expiresAt,200,authMethod);
+}
 
 export async function POST(request:Request){
 	const requestId=randomUUID();
@@ -52,13 +104,61 @@ export async function POST(request:Request){
 		const dateOfBirth=parseDateOfBirth(input.dateOfBirth);
 		if(!dateOfBirth)return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
 		if(!akedlyIsConfigured()&&!hasConfiguredVerificationProvider(VerificationChannel.EMAIL))return NextResponse.json({error:'Email verification is temporarily unavailable. Please try again later.'},{status:503});
-		const existingUser=await db.user.findUnique({where:{email},select:{id:true}});
-		if(existingUser)return NextResponse.json({error:'Registration cannot be started for these details. If this is your email, sign in or use the existing verification session.'},{status:409});
+		const existingUser=await db.user.findUnique({
+			where:{email},
+			select:{id:true,role:true,status:true,emailVerifiedAt:true,requiresRegistrationVerification:true},
+		});
+		if(existingUser){
+			if(existingUser.role==='USER'&&existingUser.status==='ACTIVE'&&!existingUser.emailVerifiedAt&&existingUser.requiresRegistrationVerification){
+				return NextResponse.json({
+					message:'An existing unverified account was found. Continue its email verification; your original password remains unchanged.',
+					verificationRequired:true,
+					existingVerification:true,
+					email,
+				},{status:200,headers:{'Cache-Control':'no-store'}});
+			}
+			if(existingUser.status==='FROZEN'||existingUser.status==='SUSPENDED'||existingUser.status==='CLOSED'||existingUser.status==='DELETED'){
+				return NextResponse.json({
+					code:'ACCOUNT_UNAVAILABLE',
+					error:'An account with this email cannot be registered again. Contact support for help with the existing account.',
+				},{status:409,headers:{'Cache-Control':'no-store'}});
+			}
+			return NextResponse.json(existingUser.emailVerifiedAt?{
+				code:'ACCOUNT_ALREADY_VERIFIED',
+				error:'An account already uses this email. Sign in or reset its password to recover access.',
+			}:{
+				code:'ACCOUNT_ALREADY_EXISTS',
+				error:'An account already uses this email. Sign in with its existing password or reset it to recover access.',
+			},{status:409,headers:{'Cache-Control':'no-store'}});
+		}
+
+		const now=new Date();
+		const existingAttempt=await db.registrationAttempt.findUnique({
+			where:{email},
+			include:{verification:true},
+		});
+		if(existingAttempt&&existingAttempt.expiresAt<=now){
+			await db.registrationAttempt.deleteMany({where:{id:existingAttempt.id,expiresAt:{lte:now}}});
+		}else if(existingAttempt){
+			return await resumePendingAttempt(existingAttempt,input.password,request);
+		}
+
+		if(input.phone){
+			const [existingPhoneUser,existingPhoneAttempt]=await Promise.all([
+				db.user.findFirst({where:{phone:input.phone},select:{id:true}}),
+				db.registrationAttempt.findFirst({where:{phone:input.phone,email:{not:email},expiresAt:{gt:now}},select:{id:true}}),
+			]);
+			if(existingPhoneUser||existingPhoneAttempt)return NextResponse.json({
+				code:'PHONE_ALREADY_IN_USE',
+				error:'This phone number is already associated with another account or pending registration. Use a different number or leave the optional phone field blank.',
+			},{status:409,headers:{'Cache-Control':'no-store'}});
+		}
 
 		const passwordHash=await bcrypt.hash(input.password,12);
 		const token=createRegistrationToken();
-		const expiresAt=new Date(Date.now()+REGISTRATION_LIFETIME_MS);
-		const attempt=await db.registrationAttempt.create({data:{
+		const expiresAt=new Date(now.getTime()+REGISTRATION_LIFETIME_MS);
+		try{
+			await db.registrationAttempt.create({data:{
 			email,
 			passwordHash,
 			name:input.name,
@@ -69,15 +169,15 @@ export async function POST(request:Request){
 			termsAcceptedAt:new Date(),
 			tokenHash:hashRegistrationToken(token),
 			expiresAt,
-		},select:{email:true}});
-		const response=NextResponse.json({
-			message:'Complete email verification to create your account.',
-			verificationRequired:true,
-			authMethod:akedlyIsConfigured()?'akedly':'email-code',
-			email:attempt.email,
-		},{status:201,headers:{'Cache-Control':'no-store'}});
-		setRegistrationCookie(response,token,expiresAt);
-		return response;
+			}});
+		}catch(error){
+			if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'){
+				const racedAttempt=await db.registrationAttempt.findUnique({where:{email},include:{verification:true}});
+				if(racedAttempt&&racedAttempt.expiresAt>new Date())return await resumePendingAttempt(racedAttempt,input.password,request);
+			}
+			throw error;
+		}
+		return registrationResponse(email,token,expiresAt,201);
 	}catch(error){
 		if(error instanceof ZodError){
 			if(error.issues.some(issue=>issue.path[0]==='dateOfBirth'))return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
@@ -86,7 +186,10 @@ export async function POST(request:Request){
 			return NextResponse.json({error:'Check your name, email, country, password, and consent details.'},{status:400});
 		}
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'){
-			return NextResponse.json({error:'Registration cannot be started for these details. If this is your email, sign in or use the existing verification session.'},{status:409});
+			return NextResponse.json({
+				code:'REGISTRATION_IN_PROGRESS',
+				error:'A registration is already in progress for these details. Continue its existing verification session or retry shortly.',
+			},{status:409,headers:{'Cache-Control':'no-store'}});
 		}
 		if(error instanceof RateLimitError){
 			return NextResponse.json(

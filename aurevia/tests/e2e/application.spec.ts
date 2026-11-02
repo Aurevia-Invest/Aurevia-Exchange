@@ -953,7 +953,11 @@ test('registration completes through email-code fallback when Akedly is disabled
 	await page.goto(`${appOrigin}/verify-email?email=${encodeURIComponent(email)}`);
 	await expect(page.getByLabel('Six-digit email verification code')).toBeVisible();
 	await page.getByLabel('Six-digit email verification code').fill(code);
+	const verificationResponse=page.waitForResponse(response=>response.url().endsWith('/api/register/verify')&&response.request().method()==='POST');
 	await page.getByRole('button',{name:'Verify email address'}).click();
+	const verifiedResponse=await verificationResponse;
+	const verificationBody=await verifiedResponse.json();
+	expect(verifiedResponse.status(),JSON.stringify(verificationBody)).toBe(200);
 	await page.waitForURL('/login?verified=1');
 	const verifiedUser=await db.user.findUniqueOrThrow({where:{email},select:{requiresRegistrationVerification:true,emailVerifiedAt:true,aureviaExchangeId:true}});
 	expect(verifiedUser).toMatchObject({requiresRegistrationVerification:false,emailVerifiedAt:expect.any(Date)});

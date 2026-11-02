@@ -3,7 +3,13 @@ import {Prisma} from '@prisma/client';
 
 const mocks=vi.hoisted(()=>({
 	userFindUnique:vi.fn(),
+	userFindFirst:vi.fn(),
 	attemptCreate:vi.fn(),
+	attemptFindUnique:vi.fn(),
+	attemptFindFirst:vi.fn(),
+	attemptDeleteMany:vi.fn(),
+	attemptUpdateMany:vi.fn(),
+	verificationDeleteMany:vi.fn(),
 	akedlyConfigured:vi.fn(),
 	emailProviderConfigured:vi.fn(),
 	verifyTurnstile:vi.fn(),
@@ -18,8 +24,15 @@ const mocks=vi.hoisted(()=>({
 }));
 
 vi.mock('@/lib/db',()=>({db:{
-	user:{findUnique:mocks.userFindUnique},
-	registrationAttempt:{create:mocks.attemptCreate},
+	user:{findUnique:mocks.userFindUnique,findFirst:mocks.userFindFirst},
+	registrationAttempt:{
+		create:mocks.attemptCreate,
+		findUnique:mocks.attemptFindUnique,
+		findFirst:mocks.attemptFindFirst,
+		deleteMany:mocks.attemptDeleteMany,
+		updateMany:mocks.attemptUpdateMany,
+	},
+	registrationVerification:{deleteMany:mocks.verificationDeleteMany},
 }}));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
 vi.mock('@/lib/akedly',()=>({akedlyIsConfigured:mocks.akedlyConfigured}));
@@ -55,7 +68,13 @@ describe('registration privacy boundary',()=>{
 		mocks.emailProviderConfigured.mockReturnValue(true);
 		mocks.verifyTurnstile.mockResolvedValue(true);
 		mocks.userFindUnique.mockResolvedValue(null);
+		mocks.userFindFirst.mockResolvedValue(null);
 		mocks.attemptCreate.mockImplementation(async({data}:{data:Record<string,unknown>})=>({email:data.email}));
+		mocks.attemptFindUnique.mockResolvedValue(null);
+		mocks.attemptFindFirst.mockResolvedValue(null);
+		mocks.attemptDeleteMany.mockResolvedValue({count:1});
+		mocks.attemptUpdateMany.mockResolvedValue({count:1});
+		mocks.verificationDeleteMany.mockResolvedValue({count:1});
 	});
 
 	afterEach(()=>vi.unstubAllEnvs());
@@ -78,7 +97,10 @@ describe('registration privacy boundary',()=>{
 		}));
 		expect(mocks.attemptCreate.mock.calls[0][0].data).not.toHaveProperty('aureviaExchangeId');
 		expect(mocks.attemptCreate.mock.calls[0][0].data.passwordHash).not.toBe(payload.password);
-		expect(mocks.userFindUnique).toHaveBeenCalledWith({where:{email:payload.email},select:{id:true}});
+		expect(mocks.userFindUnique).toHaveBeenCalledWith({
+			where:{email:payload.email},
+			select:{id:true,role:true,status:true,emailVerifiedAt:true,requiresRegistrationVerification:true},
+		});
 		expect(response.headers.get('set-cookie')).toContain('HttpOnly');
 		expect(response.headers.get('set-cookie')).toContain('SameSite=lax');
 		expect(response.headers.get('cache-control')).toBe('no-store');
@@ -149,28 +171,142 @@ describe('registration privacy boundary',()=>{
 		expect(mocks.attemptCreate).not.toHaveBeenCalled();
 	});
 
-	it('does not create another pending attempt for duplicate details',async()=>{
+	it('recovers a concurrent pending-attempt collision when the submitted password matches',async()=>{
+		const {hash}=await import('bcryptjs');
+		const passwordHash=await hash(payload.password,4);
 		mocks.attemptCreate.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('unique constraint',{
 			code:'P2002',
 			clientVersion:'test',
 		}));
+		mocks.attemptFindUnique
+			.mockResolvedValueOnce(null)
+			.mockResolvedValueOnce({
+				id:'pending-registration',
+				email:payload.email,
+				passwordHash,
+				tokenHash:'old-token-hash',
+				expiresAt:new Date(Date.now()+60_000),
+				verification:null,
+			});
 		const response=await POST(request());
 
-		expect(response.status).toBe(409);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({verificationRequired:true,email:payload.email});
+		expect(mocks.attemptUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+			where:{id:'pending-registration',tokenHash:'old-token-hash',expiresAt:{gt:expect.any(Date)}},
+		}));
+		expect(response.headers.get('set-cookie')).toContain('HttpOnly');
 		expect(mocks.attemptCreate).toHaveBeenCalledOnce();
 	});
 
-	it('preserves an existing verified user and does not touch account data',async()=>{
+	it('offers sign-in and password recovery for an existing verified user without changing it',async()=>{
 		mocks.userFindUnique.mockResolvedValue({
 			id:'existing-user',
 			email:payload.email,
-			emailVerifiedAt:new Date(),
+			role:'USER',
 			status:'ACTIVE',
+			emailVerifiedAt:new Date(),
+			requiresRegistrationVerification:false,
 		});
 		const response=await POST(request());
 
 		expect(response.status).toBe(409);
+		expect(await response.json()).toMatchObject({code:'ACCOUNT_ALREADY_VERIFIED'});
 		expect(mocks.attemptCreate).not.toHaveBeenCalled();
 		expect(mocks.userFindUnique).toHaveBeenCalledOnce();
+	});
+
+	it('routes an existing active unverified user to the existing verification flow',async()=>{
+		mocks.userFindUnique.mockResolvedValue({
+			id:'pending-user',
+			role:'USER',
+			status:'ACTIVE',
+			emailVerifiedAt:null,
+			requiresRegistrationVerification:true,
+		});
+		const response=await POST(request());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({existingVerification:true,verificationRequired:true,email:payload.email});
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+	});
+
+	it.each(['FROZEN','CLOSED'] as const)('does not reactivate an existing %s account',async status=>{
+		mocks.userFindUnique.mockResolvedValue({
+			id:'existing-user',
+			role:'USER',
+			status,
+			emailVerifiedAt:new Date(),
+			requiresRegistrationVerification:false,
+		});
+		const response=await POST(request());
+
+		expect(response.status).toBe(409);
+		expect(await response.json()).toMatchObject({code:'ACCOUNT_UNAVAILABLE'});
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+	});
+
+	it('resumes a matching temporary registration by its original password',async()=>{
+		const {hash}=await import('bcryptjs');
+		const passwordHash=await hash(payload.password,4);
+		mocks.attemptFindUnique.mockResolvedValue({
+			id:'pending-registration',
+			email:payload.email,
+			passwordHash,
+			tokenHash:'old-token-hash',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+		const response=await POST(request());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({verificationRequired:true,email:payload.email});
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+		expect(mocks.attemptUpdateMany).toHaveBeenCalledOnce();
+		expect(response.headers.get('set-cookie')).toContain('HttpOnly');
+	});
+
+	it('does not replace a pending registration password when the supplied password differs',async()=>{
+		mocks.attemptFindUnique.mockResolvedValue({
+			id:'pending-registration',
+			email:payload.email,
+			passwordHash:'not-a-matching-hash',
+			tokenHash:'old-token-hash',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+		const response=await POST(request());
+
+		expect(response.status).toBe(409);
+		expect(await response.json()).toMatchObject({code:'REGISTRATION_IN_PROGRESS'});
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+		expect(mocks.attemptUpdateMany).not.toHaveBeenCalled();
+	});
+
+	it('removes expired pending personal data before starting a replacement attempt',async()=>{
+		mocks.attemptFindUnique.mockResolvedValue({
+			id:'expired-registration',
+			email:payload.email,
+			passwordHash:'expired-hash',
+			tokenHash:'expired-token-hash',
+			expiresAt:new Date(Date.now()-1000),
+			verification:null,
+		});
+		const response=await POST(request());
+
+		expect(response.status).toBe(201);
+		expect(mocks.attemptDeleteMany).toHaveBeenCalledWith({
+			where:{id:'expired-registration',expiresAt:{lte:expect.any(Date)}},
+		});
+		expect(mocks.attemptCreate).toHaveBeenCalledOnce();
+	});
+
+	it('rejects a phone number already assigned to another user',async()=>{
+		mocks.userFindFirst.mockResolvedValue({id:'another-user'});
+		const response=await POST(request({...payload,phone:'+12025550123'}));
+
+		expect(response.status).toBe(409);
+		expect(await response.json()).toMatchObject({code:'PHONE_ALREADY_IN_USE'});
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
 	});
 });

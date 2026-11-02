@@ -15,8 +15,11 @@ const mocks=vi.hoisted(()=>({
 	txRegistrationAttemptFindUnique:vi.fn(),
 	txRegistrationAttemptDeleteMany:vi.fn(),
 	txUserCreateMany:vi.fn(),
+	txUserFindFirst:vi.fn(),
+	txRegistrationAttemptFindFirst:vi.fn(),
 	txUserFindUnique:vi.fn(),
 	txUserFindUniqueOrThrow:vi.fn(),
+	txExecuteRaw:vi.fn(),
 	txWaitlistUpdateMany:vi.fn(),
 	txKycUpsert:vi.fn(),
 	createNotification:vi.fn(),
@@ -102,8 +105,11 @@ describe('registration email-code verification',()=>{
 		mocks.txRegistrationAttemptFindUnique.mockResolvedValue(registration);
 		mocks.txRegistrationAttemptDeleteMany.mockResolvedValue({count:1});
 		mocks.txUserCreateMany.mockResolvedValue({count:1});
+		mocks.txUserFindFirst.mockResolvedValue(null);
+		mocks.txRegistrationAttemptFindFirst.mockResolvedValue(null);
 		mocks.txUserFindUnique.mockResolvedValue(null);
 		mocks.txUserFindUniqueOrThrow.mockResolvedValue({id:'created-user-1',accountMode:'DEMO'});
+		mocks.txExecuteRaw.mockResolvedValue(1);
 		mocks.txWaitlistUpdateMany.mockResolvedValue({count:0});
 		mocks.txKycUpsert.mockResolvedValue({});
 		mocks.notifyActiveAdmins.mockResolvedValue(undefined);
@@ -112,10 +118,15 @@ describe('registration email-code verification',()=>{
 		mocks.transaction.mockImplementation(async(callback:(tx:unknown)=>Promise<unknown>)=>callback({
 			verificationCode:{deleteMany:mocks.txDeleteMany},
 			registrationVerification:{deleteMany:mocks.txRegistrationVerificationDeleteMany},
-			registrationAttempt:{findUnique:mocks.txRegistrationAttemptFindUnique,deleteMany:mocks.txRegistrationAttemptDeleteMany},
 			waitlistEntry:{updateMany:mocks.txWaitlistUpdateMany},
 			kycProfile:{upsert:mocks.txKycUpsert},
-			user:{update:mocks.txUserUpdate,createMany:mocks.txUserCreateMany,findUnique:mocks.txUserFindUnique,findUniqueOrThrow:mocks.txUserFindUniqueOrThrow},
+			$executeRaw:mocks.txExecuteRaw,
+			registrationAttempt:{
+				findUnique:mocks.txRegistrationAttemptFindUnique,
+				findFirst:mocks.txRegistrationAttemptFindFirst,
+				deleteMany:mocks.txRegistrationAttemptDeleteMany,
+			},
+			user:{update:mocks.txUserUpdate,createMany:mocks.txUserCreateMany,findFirst:mocks.txUserFindFirst,findUnique:mocks.txUserFindUnique,findUniqueOrThrow:mocks.txUserFindUniqueOrThrow},
 		}));
 	});
 
@@ -227,6 +238,18 @@ describe('registration email-code verification',()=>{
 		expect(mocks.registrationAttemptDeleteMany).toHaveBeenCalledWith({where:{id:registration.id}});
 		expect(mocks.transaction).not.toHaveBeenCalled();
 		expect(mocks.initializePaperAccount).not.toHaveBeenCalled();
+	});
+
+	it('rejects a phone number claimed by another user before permanent account creation',async()=>{
+		mocks.txUserFindFirst.mockResolvedValue({id:'another-user'});
+		const response=await POST(request('123456',true));
+
+		expect(response.status).toBe(409);
+		expect(await response.json()).toMatchObject({code:'PHONE_ALREADY_IN_USE'});
+		expect(mocks.txExecuteRaw).toHaveBeenCalledOnce();
+		expect(mocks.txUserCreateMany).not.toHaveBeenCalled();
+		expect(mocks.initializePaperAccount).not.toHaveBeenCalled();
+		expect(mocks.registrationAttemptDeleteMany).toHaveBeenCalledWith({where:{id:registration.id}});
 	});
 
 	it('invalidates the temporary session when a malformed verification code is submitted',async()=>{

@@ -16,11 +16,13 @@ function safeWidgetUrl(value:string){
 export default function VerifyEmailPage(){
 	const router=useRouter();
 	const [email,setEmail]=useState('');
+	const [existingAccount,setExistingAccount]=useState(false);
 	const [attempt,setAttempt]=useState<Attempt|null>(null);
 	const [emailCodeMode,setEmailCodeMode]=useState(false);
 	const [code,setCode]=useState('');
 	const [message,setMessage]=useState('');
 	const [error,setError]=useState('');
+	const [phoneConflict,setPhoneConflict]=useState(false);
 	const [sessionRestoreFailed,setSessionRestoreFailed]=useState(false);
 	const [busy,setBusy]=useState(false);
 	const busyRef=useRef(false);
@@ -28,6 +30,7 @@ export default function VerifyEmailPage(){
 	useEffect(()=>{
 		const params=new URLSearchParams(window.location.search);
 		const nextEmail=(params.get('email')||'').trim().toLowerCase();
+		setExistingAccount(params.get('existing')==='1');
 		const registrationToken=new URLSearchParams(window.location.hash.slice(1)).get('registrationToken');
 		if(!registrationToken){
 			setEmail(nextEmail);
@@ -55,12 +58,26 @@ export default function VerifyEmailPage(){
 		try{
 			const response=await fetch('/api/register/resend',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email})});
 			const result=await response.json();
+			if(result.phoneConflict){
+				window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
+				setAttempt(null);
+				setEmailCodeMode(false);
+				setPhoneConflict(true);
+				setMessage(result.error||'That phone number is already associated with another account. Restart without it or use a different one.');
+				return;
+			}
 			if(result.verified){
 				window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
 				router.replace('/login?verified=1');
 				return;
 			}
-			if(!response.ok)throw new Error(result.error||'Unable to start email verification.');
+			if(!response.ok){
+				const retryAfter=Number(response.headers.get('Retry-After')||result.retryAfterSeconds);
+				const retryMessage=response.status===429&&Number.isFinite(retryAfter)&&retryAfter>0
+					?` You can retry in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
+					:'';
+				throw new Error(`${result.error||'Unable to start email verification.'}${retryMessage}`);
+			}
 			if(result.method==='email-code'){
 				window.sessionStorage.setItem(ATTEMPT_STORAGE_KEY,JSON.stringify({email,method:'email-code'}));
 				setAttempt(null);
@@ -93,6 +110,11 @@ export default function VerifyEmailPage(){
 			const response=await fetch('/api/register/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,code})});
 			const result=await response.json();
 			if(!response.ok){
+				if(result.code==='PHONE_ALREADY_IN_USE'){
+					window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
+					setEmailCodeMode(false);
+					setPhoneConflict(true);
+				}
 				if(typeof result.error==='string'&&result.error.includes('Start registration again')){
 					window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
 					setEmailCodeMode(false);
@@ -146,10 +168,20 @@ export default function VerifyEmailPage(){
 						router.replace('/login?verified=1');
 						return;
 					}
+					if(result.phoneConflict){
+						window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
+						setAttempt(null);
+						setEmailCodeMode(false);
+						setPhoneConflict(true);
+						setMessage('That phone number is already associated with another account. Your temporary registration was removed; restart without that number or use a different one.');
+						return;
+					}
 					if(result.expired){
 						window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
 						setAttempt(null);
-						setMessage('This verification attempt expired. Start a new registration to continue.');
+						setMessage(result.sessionExpired
+							?'This registration session expired. Start a new registration to continue.'
+							:'This verification attempt expired. Request a fresh code or provider attempt to continue.');
 						return;
 					}
 				}
@@ -183,14 +215,16 @@ export default function VerifyEmailPage(){
 		<div className="flex items-center gap-2 gold"><ShieldCheck size={20} aria-hidden="true"/><span className="text-sm font-semibold">Email verification</span></div>
 		<h1 id="verify-email-title" className="auth-heading mt-3">Verify your email address</h1>
 		<p className="mt-2 text-sm leading-6 muted">Your registration is temporary. No user or financial account is created until email verification succeeds. {emailCodeMode?'Enter the six-digit code sent to your email to continue.':'Complete the secure verification experience to continue.'} Email verification does not approve KYC or authorize financial activity.</p>
-		<label className="auth-field-label mt-5">Email address<input className="auth-input" type="email" autoComplete="email" value={email} onChange={event=>{window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);setAttempt(null);setEmailCodeMode(false);setSessionRestoreFailed(false);setCode('');setEmail(event.target.value.trim().toLowerCase());setMessage('')}} required maxLength={254}/></label>
+		{existingAccount&&<p className="mt-3 text-sm leading-6 muted">We found an existing unverified account. Verification will not change its password; sign in afterward with the password originally set for that account.</p>}
+		<label className="auth-field-label mt-5">Email address<input className="auth-input" type="email" autoComplete="email" value={email} onChange={event=>{window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);setAttempt(null);setEmailCodeMode(false);setSessionRestoreFailed(false);setExistingAccount(false);setCode('');setEmail(event.target.value.trim().toLowerCase());setMessage('')}} required maxLength={254}/></label>
 		{attempt&&<div className="mt-5 overflow-hidden rounded-lg border border-white/10 bg-black/30">
 			<iframe className="block h-[700px] w-full max-w-full" src={attempt.iframeUrl} title="Akedly secure email verification" allow="clipboard-write; publickey-credentials-get *; publickey-credentials-create *"/>
 		</div>}
 		{emailCodeMode&&<div className="mt-5"><label className="auth-field-label">Six-digit email verification code<input className="auth-input" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={event=>setCode(event.target.value.replace(/\D/g,'').slice(0,6))}/></label><button className="auth-submit mt-3 w-full" type="button" disabled={busy||code.length!==6} onClick={()=>void verifyEmailCode()}>{busy?'Verifying…':'Verify email address'}</button></div>}
 		{error&&<p className="auth-error mt-4" role="alert">{error}</p>}
 		{message&&<p className="mt-4 text-sm muted" role="status">{message}</p>}
-		<button className="auth-submit mt-5 w-full" type="button" disabled={busy||!email} onClick={()=>void startVerification()}>{busy?'Starting verification…':attempt||emailCodeMode?'Request another verification code':'Start email verification'}</button>
+		{phoneConflict&&<p className="mt-4 text-center text-sm"><Link href="/register" className="auth-link">Restart registration</Link></p>}
+		<button className="auth-submit mt-5 w-full" type="button" disabled={busy||!email||phoneConflict} onClick={()=>void startVerification()}>{busy?'Starting verification…':attempt||emailCodeMode?'Request another verification code':'Start email verification'}</button>
 		{!emailCodeMode&&!attempt&&<p className="mt-4 text-center text-sm muted"><Link href="/register" className="auth-link">Start a new registration</Link></p>}
 		<p className="auth-footer mt-5">Already verified? <Link href="/login" className="auth-link">Sign in</Link></p>
 	</section></main></>;

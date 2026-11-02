@@ -5,7 +5,7 @@ import {Prisma,VerificationChannel} from '@prisma/client';
 import {db} from '@/lib/db';
 import {akedlyIsConfigured} from '@/lib/akedly';
 import {startAkedlyRegistrationVerification,startAkedlyVerification} from '@/lib/akedly-verification';
-import {rateLimit} from '@/lib/rate-limit';
+import {rateLimit,RateLimitError} from '@/lib/rate-limit';
 import {trustedProxyClientIp} from '@/lib/request-ip';
 import {deliverVerificationCode,generateVerificationCode,hashVerificationCode,hasConfiguredVerificationProvider} from '@/lib/verification-delivery';
 import {verificationConfig} from '@/lib/config';
@@ -13,6 +13,14 @@ import {clearRegistrationCookie,hashRegistrationToken,registrationTokenFromReque
 
 const schema=z.object({email:z.string().trim().email().max(254)});
 const genericResponse={message:'If the account is eligible, email verification can continue after the resend cooldown.'};
+
+function cooldownResponse(message:string,resendAfter?:Date){
+	const retryAfterSeconds=Math.max(1,Math.ceil(((resendAfter?.getTime()||Date.now()+verificationConfig.resendCooldownSeconds*1000)-Date.now())/1000));
+	return NextResponse.json(
+		{error:message,retryAfterSeconds},
+		{status:429,headers:{'Retry-After':String(retryAfterSeconds),'Cache-Control':'no-store'}},
+	);
+}
 
 export async function POST(request:Request){
 	try{
@@ -28,18 +36,25 @@ export async function POST(request:Request){
 		}):null;
 		if(registrationAttempt&&registrationAttempt.email===email&&token){
 			const now=new Date();
-			if(registrationAttempt.expiresAt<=now||(registrationAttempt.verification&&registrationAttempt.verification.expiresAt<=now)){
+			if(registrationAttempt.expiresAt<=now){
 				await db.registrationAttempt.deleteMany({where:{id:registrationAttempt.id}});
 				const response=NextResponse.json({error:'This registration session expired. Start registration again.'},{status:410});
 				clearRegistrationCookie(response);
 				return response;
+			}
+			if(registrationAttempt.verification&&registrationAttempt.verification.expiresAt<=now){
+				await db.registrationVerification.deleteMany({
+					where:{registrationAttemptId:registrationAttempt.id,expiresAt:{lte:now}},
+				});
 			}
 			if(akedlyIsConfigured()){
 				try{
 					const attempt=await startAkedlyRegistrationVerification(registrationAttempt.id,registrationAttempt.email);
 					return NextResponse.json({method:'akedly',message:'Complete the secure email verification widget.',...attempt},{status:200,headers:{'Cache-Control':'no-store'}});
 				}catch(error){
-					if(error instanceof Error&&error.message==='AKEDLY_RESEND_COOLDOWN')throw error;
+					if(error instanceof Error&&error.message==='AKEDLY_RESEND_COOLDOWN'){
+						return cooldownResponse('Please wait before requesting another verification attempt.',registrationAttempt.verification?.resendAfter);
+					}
 					const providerFailure=error instanceof Error&&[
 						'AKEDLY_PROVIDER_UNAVAILABLE',
 						'AKEDLY_ATTEMPT_REJECTED',
@@ -66,7 +81,7 @@ export async function POST(request:Request){
 				if(existing.channel===VerificationChannel.EMAIL&&!existing.providerReference&&existing.expiresAt>now){
 					return NextResponse.json({method:'email-code',message:'A verification code was already requested. Check your email.',resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000)},{status:200});
 				}
-				return NextResponse.json({error:'Please wait before requesting another verification attempt.'},{status:429});
+				return cooldownResponse('Please wait before requesting another verification attempt.',existing.resendAfter);
 			}
 			const code=generateVerificationCode();
 			const codeHash=hashVerificationCode(registrationAttempt.id,code);
@@ -114,7 +129,11 @@ export async function POST(request:Request){
 				const attempt=await startAkedlyVerification(user.id,VerificationChannel.EMAIL,{email:user.email});
 				return NextResponse.json({method:'akedly',message:'Complete the secure email verification widget.',...attempt},{status:200});
 			}catch(error){
-				if(error instanceof Error&&['AKEDLY_RESEND_COOLDOWN','AKEDLY_ATTEMPT_RESERVATION_LOST'].includes(error.message))throw error;
+				if(error instanceof Error&&error.message==='AKEDLY_RESEND_COOLDOWN'){
+					const challenge=await db.verificationCode.findUnique({where:{userId:user.id},select:{resendAfter:true}});
+					return cooldownResponse('Please wait before requesting another verification attempt.',challenge?.resendAfter);
+				}
+				if(error instanceof Error&&error.message==='AKEDLY_ATTEMPT_RESERVATION_LOST')throw error;
 				const providerFailure=error instanceof Error&&[
 					'AKEDLY_PROVIDER_UNAVAILABLE',
 					'AKEDLY_ATTEMPT_REJECTED',
@@ -131,7 +150,7 @@ export async function POST(request:Request){
 			if(existing.channel===VerificationChannel.EMAIL&&!existing.providerReference&&existing.expiresAt>now){
 				return NextResponse.json({method:'email-code',message:'A verification code was already requested. Check your email.',resendAfterSeconds:Math.ceil((existing.resendAfter.getTime()-now.getTime())/1000)},{status:200});
 			}
-			return NextResponse.json({error:'Please wait before requesting another verification code.'},{status:429});
+			return cooldownResponse('Please wait before requesting another verification code.',existing.resendAfter);
 		}
 		const code=generateVerificationCode();
 		const codeHash=hashVerificationCode(user.id,code);
@@ -169,8 +188,12 @@ export async function POST(request:Request){
 		return NextResponse.json({method:'email-code',message:'The email provider accepted the verification request. Delivery may take a short time.',resendAfterSeconds:verificationConfig.resendCooldownSeconds},{status:200});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Enter a valid email address.'},{status:400});
+		if(error instanceof RateLimitError)return NextResponse.json(
+			{error:'Please wait before requesting another verification code.',retryAfterSeconds:error.retryAfterSeconds},
+			{status:429,headers:{'Retry-After':String(error.retryAfterSeconds),'Cache-Control':'no-store'}},
+		);
 		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json(genericResponse,{status:202});
-		if(error instanceof Error&&error.message==='AKEDLY_RESEND_COOLDOWN')return NextResponse.json({error:'Please wait before requesting another verification attempt.'},{status:429});
+		if(error instanceof Error&&error.message==='AKEDLY_RESEND_COOLDOWN')return cooldownResponse('Please wait before requesting another verification attempt.');
 		if(error instanceof Error&&error.message.startsWith('AKEDLY_'))return NextResponse.json({error:'Email verification is temporarily unavailable. Please try again shortly.'},{status:503});
 		console.error('[akedly-registration] Unable to create verification attempt.',{errorType:error instanceof Error?error.name:'UnknownError'});
 		return NextResponse.json({error:'Unable to start email verification right now.'},{status:503});

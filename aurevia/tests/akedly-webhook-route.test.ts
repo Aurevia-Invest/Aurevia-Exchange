@@ -3,11 +3,13 @@ import {Webhook} from 'svix';
 
 const mocks=vi.hoisted(()=>({
 	complete:vi.fn(),
+	reconcile:vi.fn(),
 	rateLimit:vi.fn(),
 }));
 
 vi.mock('@/lib/akedly-verification',()=>({
 	completeAkedlyVerification:mocks.complete,
+	reconcileAkedlyAttempt:mocks.reconcile,
 }));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit}));
 
@@ -51,6 +53,7 @@ describe('Akedly webhook route',()=>{
 		vi.clearAllMocks();
 		env();
 		mocks.complete.mockResolvedValue('verified');
+		mocks.reconcile.mockResolvedValue('verified');
 		mocks.rateLimit.mockImplementation(()=>undefined);
 	});
 
@@ -61,6 +64,7 @@ describe('Akedly webhook route',()=>{
 
 		expect(response.status).toBe(200);
 		expect(mocks.complete).toHaveBeenCalledWith('attempt_1234567890',result(),'webhook');
+		expect(mocks.reconcile).not.toHaveBeenCalled();
 	});
 
 	it('rejects invalid signatures without processing the callback',async()=>{
@@ -75,17 +79,35 @@ describe('Akedly webhook route',()=>{
 		expect(mocks.complete).not.toHaveBeenCalled();
 	});
 
-	it('rejects unsigned callbacks without a provider status lookup',async()=>{
+	it('confirms unsigned verification results through authenticated provider reconciliation',async()=>{
 		const response=await POST(new Request('https://aurevia.test/api/webhooks/akedly',{
 			method:'POST',
 			headers:{'content-type':'application/json'},
 			body:JSON.stringify(result()),
 		}));
 
-		expect(response.status).toBe(401);
+		expect(response.status).toBe(200);
+		expect(mocks.reconcile).toHaveBeenCalledWith('attempt_1234567890');
 		expect(mocks.complete).not.toHaveBeenCalled();
 	});
 
+	it('rejects unsigned event webhooks and incomplete signature headers',async()=>{
+		const unsignedEvent=await POST(new Request('https://aurevia.test/api/webhooks/akedly',{
+			method:'POST',
+			headers:{'content-type':'application/json'},
+			body:JSON.stringify({eventType:'otp.channels.sent'}),
+		}));
+		const partialSignature=await POST(new Request('https://aurevia.test/api/webhooks/akedly',{
+			method:'POST',
+			headers:{'content-type':'application/json','svix-id':'msg_123456789'},
+			body:JSON.stringify(result()),
+		}));
+
+		expect(unsignedEvent.status).toBe(401);
+		expect(partialSignature.status).toBe(401);
+		expect(mocks.complete).not.toHaveBeenCalled();
+		expect(mocks.reconcile).not.toHaveBeenCalled();
+	});
 	it('rate limits webhook requests before processing events',async()=>{
 		mocks.rateLimit.mockImplementation(()=>{throw new Error('RATE_LIMITED')});
 		const response=await POST(signedRequest(result()));

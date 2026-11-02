@@ -1,5 +1,5 @@
 import {NextResponse} from 'next/server';
-import {completeAkedlyVerification} from '@/lib/akedly-verification';
+import {completeAkedlyVerification,reconcileAkedlyAttempt} from '@/lib/akedly-verification';
 import {akedlyIsConfigured,readAkedlyWebhookBody,verifyAkedlyWebhook} from '@/lib/akedly';
 import {rateLimit} from '@/lib/rate-limit';
 
@@ -17,7 +17,9 @@ export async function POST(request:Request){
 	const signature=headers['svix-signature']||headers['webhook-signature'];
 	const messageId=headers['svix-id']||headers['webhook-id'];
 	const timestamp=headers['svix-timestamp']||headers['webhook-timestamp'];
-	if(!signature||!messageId||!timestamp)return NextResponse.json({error:'A signed Akedly webhook is required.'},{status:401});
+	const hasSignatureHeaders=Boolean(signature||messageId||timestamp);
+	const signed=Boolean(signature&&messageId&&timestamp);
+	if(hasSignatureHeaders&&!signed)return NextResponse.json({error:'Akedly signature headers are incomplete.'},{status:401});
 	let rawBody:string;
 	try{
 		rawBody=await readAkedlyWebhookBody(request);
@@ -25,10 +27,12 @@ export async function POST(request:Request){
 		if(error instanceof Error&&error.message==='AKEDLY_WEBHOOK_TOO_LARGE')return NextResponse.json({error:'Webhook body is too large.'},{status:413});
 		return NextResponse.json({error:'Unable to read webhook body.'},{status:400});
 	}
-	try{
-		verifyAkedlyWebhook(rawBody,headers);
-	}catch{
-		return NextResponse.json({error:'Invalid Akedly webhook signature.'},{status:401});
+	if(signed){
+		try{
+			verifyAkedlyWebhook(rawBody,headers);
+		}catch{
+			return NextResponse.json({error:'Invalid Akedly webhook signature.'},{status:401});
+		}
 	}
 	let payload:unknown;
 	try{
@@ -39,12 +43,16 @@ export async function POST(request:Request){
 	if(!isRecord(payload))return NextResponse.json({error:'Invalid Akedly webhook payload.'},{status:400});
 	const attempt=payload.widgetAttempt;
 	const attemptId=isRecord(attempt)&&typeof attempt.attemptId==='string'?attempt.attemptId:null;
+	if(typeof payload.eventType==='string'){
+		if(!signed)return NextResponse.json({error:'Signed Akedly event webhooks are required.'},{status:401});
+		return NextResponse.json({received:true});
+	}
 	if(!attemptId){
-		if(typeof payload.eventType==='string')return NextResponse.json({received:true});
 		return NextResponse.json({error:'Akedly verification result is missing its attempt identifier.'},{status:400});
 	}
 	try{
-		await completeAkedlyVerification(attemptId,payload,'webhook');
+		if(signed)await completeAkedlyVerification(attemptId,payload,'webhook');
+		else await reconcileAkedlyAttempt(attemptId);
 		return NextResponse.json({received:true});
 	}catch(error){
 		if(error instanceof Error&&error.message.startsWith('AKEDLY_'))return NextResponse.json({error:'Akedly verification could not be confirmed yet.'},{status:503});

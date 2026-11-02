@@ -50,6 +50,10 @@ export type ServerConfiguration = {
     phoneVerificationRequired: boolean;
     configured: boolean;
   };
+  captcha: {
+    turnstileSecretKey: string;
+    turnstileConfigured: boolean;
+  };
   execution: {
     realEnabled: boolean;
     alpacaPaperOrdersEnabled: boolean;
@@ -232,6 +236,10 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
       registrationVerificationEnabled: true,
       phoneVerificationRequired: false,
       configured: verificationEmailConfigured || verificationSmsConfigured,
+    },
+    captcha: {
+      turnstileSecretKey: env('TURNSTILE_SECRET_KEY', source),
+      turnstileConfigured: Boolean(env('TURNSTILE_SECRET_KEY', source)),
     },
     execution: {
       realEnabled: booleanEnv('REAL_EXECUTION_ENABLED', source),

@@ -22,6 +22,7 @@ export type ReceiptData={
 	completedAt?:string|null;
 	reviewedBy?:{name:string|null}|null;
 	accountReference?:string|null;
+	aureviaExchangeId?:string|null;
 	externalReference?:string|null;
 	processingReference?:string|null;
 	previousBalance?:number|string|null;
@@ -136,6 +137,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 				:'Your request is recorded and its current status is shown below.';
 	const rows:Array<{label:string;value:string;emphasis?:boolean}>=[
 		{label:'ACCOUNT',value:`${currentReceipt.name||'Account holder'} · ${currentReceipt.accountMode||'Mode not recorded'} · ${gateway}`},
+		...(currentReceipt.aureviaExchangeId?[{label:'AUREVIA EXCHANGE ID',value:currentReceipt.aureviaExchangeId}]:[]),
 		{label:'AMOUNT',value:amountLabel(currentReceipt.amount,currentReceipt.currency)},
 		{label:'FEE',value:feeLabel},
 		{label:'TOTAL',value:total===null?'Not available':amountLabel(total,currentReceipt.currency),emphasis:true},
@@ -179,6 +181,16 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 		}
 	}
 
+	async function copyExchangeId(){
+		if(!currentReceipt.aureviaExchangeId)return;
+		try{
+			await navigator.clipboard.writeText(currentReceipt.aureviaExchangeId);
+			setFeedback('Aurevia Exchange ID copied.');
+		}catch{
+			setFeedback('Copy is unavailable in this browser.');
+		}
+	}
+
 	return <div className="aurevia-receipt-wrap">
 		<article ref={receiptRef} className="receipt-container aurevia-receipt" aria-label={`${receiptTitle} · ${statusLabel}`}>
 			<div className="receipt-frame">
@@ -217,6 +229,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 		<div className="receipt-actions no-print" aria-label="Receipt actions">
 			<button type="button" className="receipt-action" disabled={busy} onClick={()=>void exportPdf()}><Download size={15}/>{busy?'Preparing PDF…':'Download PDF'}</button>
 			<button type="button" className="receipt-action" onClick={()=>window.print()}><Printer size={15}/>Print Receipt</button>
+			{currentReceipt.aureviaExchangeId&&<button type="button" className="receipt-action" onClick={()=>void copyExchangeId()}><ClipboardCopy size={15}/>Copy Aurevia ID</button>}
 			<button type="button" className="receipt-action" onClick={()=>void copyReference()}><ClipboardCopy size={15}/>Copy Reference Number</button>
 			<Link href="/wallet" className="receipt-action"><ArrowLeft size={15}/>Return to Wallet</Link>
 		</div>

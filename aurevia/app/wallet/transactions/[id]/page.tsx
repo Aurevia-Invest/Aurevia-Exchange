@@ -12,6 +12,7 @@ import {formatUsd} from '@/lib/currency-format';
 
 type FundingTransaction={
 	id:string;
+	aureviaExchangeId:string|null;
 	accountMode:'DEMO'|'REAL';
 	type:'DEPOSIT'|'WITHDRAWAL';
 	amount:string|number;
@@ -81,6 +82,7 @@ export default function TransactionDetailPage(){
 								senderInfo:transaction.senderInfo,
 								destinationInfo:transaction.destinationInfo,
 				processingReference:transaction.processingReference,
+				aureviaExchangeId:transaction.aureviaExchangeId,
 				name:session?.user?.name||'',
 				email:session?.user?.email||'',
 				amount:transaction.amount,

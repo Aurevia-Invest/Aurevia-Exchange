@@ -44,6 +44,7 @@ export async function anonymizeAccount(tx:Prisma.TransactionClient,input:{userId
 	await tx.user.update({
 		where:{id:current.id},
 		data:{email:`deleted+${current.id}@account.invalid`,passwordHash:input.replacementPasswordHash,name:null,phone:null,phoneVerified:false,phoneVerifiedAt:null,country:null,preferredDisplayCurrency:'USD',status:UserStatus.CLOSED,twoFactorEnabled:false,termsAcceptedAt:null,verifiedAt:null,verifiedChannel:null,requiresRegistrationVerification:false,depositEnabled:false,withdrawalEnabled:false,accountRestricted:true,restrictionReason:'Account closed.',activeSessionId:null,activeSessionUpdatedAt:null,avatarKey:null},
+		select:{id:true},
 	});
 	await tx.auditLog.create({data:{actorId:input.actorId,action:input.actorId?'ADMIN_ACCOUNT_DELETED':'USER_ACCOUNT_DELETED',entity:'USER',entityId:current.id,metadata:input.reason?{reason:input.reason.slice(0,500)}:undefined}});
 	return privateFiles;

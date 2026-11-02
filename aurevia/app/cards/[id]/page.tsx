@@ -6,9 +6,11 @@ import Link from 'next/link';
 import {useParams} from 'next/navigation';
 import Nav from '@/components/Nav';
 import AureviaCardVisual from '@/components/AureviaCardVisual';
+import AureviaExchangeId from '@/components/AureviaExchangeId';
 
 type CardDetails={
 	designTier:CardDesignTier;
+	aureviaExchangeId:string|null;
 	cardholderName:string;
 	maskedPan:string;
 	expiryMonth:number;
@@ -40,6 +42,7 @@ export default function CardDetailPage(){
 			{card&&(
 				<section className="card p-5 max-w-xl mobile-card-item">
 					<AureviaCardVisual designTier={card.designTier} cardholderName={card.cardholderName} maskedPan={card.maskedPan} expiryMonth={card.expiryMonth} expiryYear={card.expiryYear} displayName={card.displayName}/>
+					<AureviaExchangeId id={card.aureviaExchangeId} className="mt-4"/>
 					<dl className="mt-4 grid gap-2 text-sm">
 						<div className="flex justify-between"><dt className="muted">Status</dt><dd>{card.status.replaceAll('_',' ')}</dd></div>
 						<div className="flex justify-between"><dt className="muted">Reference</dt><dd className="font-mono">{card.referenceNumber}</dd></div>

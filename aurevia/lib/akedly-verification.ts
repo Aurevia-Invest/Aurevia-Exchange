@@ -1,8 +1,10 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {AccountMode,NotificationType,VerificationChannel} from '@prisma/client';
+import {AccountMode,NotificationType,Prisma,VerificationChannel} from '@prisma/client';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {verificationConfig} from '@/lib/config';
+import {createVerifiedRegistration} from '@/lib/registration-attempt';
+import {generateAureviaExchangeId,retryAureviaExchangeIdCollision} from '@/lib/aurevia-exchange-id';
 import {
 	AkedlyContact,
 	AkedlyAttempt,
@@ -13,6 +15,62 @@ import {
 } from '@/lib/akedly';
 
 const ATTEMPT_PREFIX='AKEDLY:';
+type RegistrationChallenge={
+	id:string;
+	channel:VerificationChannel;
+	expiresAt:Date;
+	registrationAttempt:{
+		id:string;
+		email:string;
+		expiresAt:Date;
+	};
+};
+
+export async function startAkedlyRegistrationVerification(registrationAttemptId:string,email:string):Promise<AkedlyAttempt>{
+	const now=new Date();
+	const existing=await db.registrationVerification.findUnique({where:{registrationAttemptId}});
+	if(existing&&existing.resendAfter>now)throw new Error('AKEDLY_RESEND_COOLDOWN');
+	const reservation=createHash('sha256').update(randomUUID()).digest('hex');
+	const expiresAt=new Date(now.getTime()+5*60_000);
+	const resendAfter=new Date(now.getTime()+verificationConfig.resendCooldownSeconds*1000);
+	if(existing){
+		const reserved=await db.registrationVerification.updateMany({
+			where:{id:existing.id,resendAfter:{lte:now}},
+			data:{codeHash:reservation,channel:VerificationChannel.EMAIL,providerReference:'AKEDLY_PENDING',expiresAt,resendAfter,attempts:0},
+		});
+		if(reserved.count!==1)throw new Error('AKEDLY_RESEND_COOLDOWN');
+	}else{
+		await db.registrationVerification.create({
+			data:{registrationAttemptId,codeHash:reservation,channel:VerificationChannel.EMAIL,providerReference:'AKEDLY_PENDING',expiresAt,resendAfter},
+		});
+	}
+	try{
+		const attempt=await createAkedlyAttempt({email});
+		const saved=await db.registrationVerification.updateMany({
+			where:{registrationAttemptId,codeHash:reservation,providerReference:'AKEDLY_PENDING'},
+			data:{providerReference:`${ATTEMPT_PREFIX}${attempt.attemptId}`,expiresAt:attempt.expiresAt},
+		});
+		if(saved.count!==1)throw new Error('AKEDLY_ATTEMPT_RESERVATION_LOST');
+		return attempt;
+	}catch(error){
+		if(existing){
+			await db.registrationVerification.updateMany({
+				where:{id:existing.id,codeHash:reservation},
+				data:{
+					codeHash:existing.codeHash,
+					channel:existing.channel,
+					providerReference:existing.providerReference,
+					expiresAt:existing.expiresAt,
+					resendAfter:existing.resendAfter,
+					attempts:existing.attempts,
+				},
+			});
+		}else{
+			await db.registrationVerification.deleteMany({where:{registrationAttemptId,codeHash:reservation,providerReference:'AKEDLY_PENDING'}});
+		}
+		throw error;
+	}
+}
 
 export async function startAkedlyVerification(userId:string,channel:VerificationChannel,contact:AkedlyContact):Promise<AkedlyAttempt>{
 	const now=new Date();
@@ -60,9 +118,16 @@ export async function startAkedlyVerification(userId:string,channel:Verification
 
 export async function completeAkedlyVerification(attemptId:string,result:unknown,source:'webhook'|'lookup'){
 	const reference=`${ATTEMPT_PREFIX}${attemptId}`;
+	const registrationChallenge=await db.registrationVerification.findFirst({
+		where:{providerReference:reference},
+		include:{registrationAttempt:true},
+	});
+	if(registrationChallenge){
+		return completeAkedlyRegistrationVerification(registrationChallenge,result,attemptId,source);
+	}
 	const challenge=await db.verificationCode.findFirst({
 		where:{providerReference:reference},
-		include:{user:{select:{id:true,email:true,phone:true,role:true,status:true,accountMode:true,phoneVerified:true,emailVerifiedAt:true,requiresRegistrationVerification:true}}},
+		include:{user:{select:{id:true,email:true,phone:true,role:true,status:true,accountMode:true,phoneVerified:true,emailVerifiedAt:true,requiresRegistrationVerification:true,aureviaExchangeId:true,createdAt:true}}},
 	});
 	if(!challenge||challenge.user.role!=='USER'||challenge.user.status!=='ACTIVE')return 'ignored' as const;
 	const contact=challenge.channel===VerificationChannel.EMAIL
@@ -77,7 +142,7 @@ export async function completeAkedlyVerification(attemptId:string,result:unknown
 	if(!confirmed)return 'ignored' as const;
 
 	const now=new Date();
-	return db.$transaction(async tx=>{
+	return retryAureviaExchangeIdCollision(()=>db.$transaction(async tx=>{
 		const stillCurrent=await tx.verificationCode.findFirst({
 			where:{id:challenge.id,providerReference:reference},
 			select:{id:true},
@@ -86,7 +151,12 @@ export async function completeAkedlyVerification(attemptId:string,result:unknown
 		if(challenge.channel===VerificationChannel.EMAIL){
 			const updated=await tx.user.updateMany({
 				where:{id:challenge.userId,role:'USER',status:'ACTIVE',requiresRegistrationVerification:true,emailVerifiedAt:null,email:challenge.user.email},
-				data:{emailVerifiedAt:now,verifiedChannel:VerificationChannel.EMAIL,requiresRegistrationVerification:false},
+				data:{
+					emailVerifiedAt:now,
+					verifiedChannel:VerificationChannel.EMAIL,
+					requiresRegistrationVerification:false,
+					...(!challenge.user.aureviaExchangeId?{aureviaExchangeId:generateAureviaExchangeId(challenge.user.createdAt)}:{}),
+				},
 			});
 			if(updated.count===0){
 				const current=await tx.user.findUnique({where:{id:challenge.userId},select:{emailVerifiedAt:true,verifiedChannel:true,requiresRegistrationVerification:true}});
@@ -128,10 +198,63 @@ export async function completeAkedlyVerification(attemptId:string,result:unknown
 			return 'verified' as const;
 		}
 		return 'ignored' as const;
-	});
+	}));
+}
+
+async function completeAkedlyRegistrationVerification(
+	challenge:RegistrationChallenge|null,
+	result:unknown,
+	attemptId:string,
+	source:'webhook'|'lookup',
+){
+	if(!challenge||challenge.channel!==VerificationChannel.EMAIL)return 'ignored' as const;
+	const attempt=challenge.registrationAttempt;
+	const now=new Date();
+	if(attempt.expiresAt<=now||challenge.expiresAt<=now){
+		await db.registrationAttempt.deleteMany({where:{id:attempt.id}});
+		return 'ignored' as const;
+	}
+	const confirmed=source==='webhook'
+		?isConfirmedAkedlyAttempt(result,attemptId,{email:attempt.email},challenge.expiresAt)
+		:isConfirmedAkedlyLookup(result,{email:attempt.email},challenge.expiresAt);
+	if(!confirmed)return 'ignored' as const;
+
+	try{
+		return await db.$transaction(async tx=>{
+			const stillCurrent=await tx.registrationVerification.findFirst({
+				where:{
+					id:challenge.id,
+					providerReference:`${ATTEMPT_PREFIX}${attemptId}`,
+					expiresAt:{gt:now},
+					registrationAttempt:{is:{expiresAt:{gt:now}}},
+				},
+				select:{registrationAttemptId:true},
+			});
+			if(!stillCurrent)return 'ignored' as const;
+			const user=await createVerifiedRegistration(tx,stillCurrent.registrationAttemptId,VerificationChannel.EMAIL,now);
+			await tx.auditLog.create({
+				data:{action:'AKEDLY_EMAIL_VERIFIED',entity:'USER',entityId:user.id,metadata:{provider:'akedly',attemptRef:hashAttemptReference(attemptId)}},
+			});
+			return 'verified' as const;
+		});
+	}catch(error){
+		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'){
+			await db.registrationAttempt.deleteMany({where:{id:attempt.id}});
+			return 'ignored' as const;
+		}
+		throw error;
+	}
 }
 
 export async function reconcileAkedlyAttempt(attemptId:string,userId?:string){
+	const registrationChallenge=await db.registrationVerification.findFirst({
+		where:{providerReference:`${ATTEMPT_PREFIX}${attemptId}`},
+		include:{registrationAttempt:true},
+	});
+	if(registrationChallenge&&!userId){
+		const result=await lookupAkedlyAttempt(attemptId);
+		return completeAkedlyVerification(attemptId,result,'lookup');
+	}
 	const challenge=await db.verificationCode.findFirst({
 		where:{providerReference:`${ATTEMPT_PREFIX}${attemptId}`,...(userId?{userId}:{})},
 		include:{user:{select:{email:true,phone:true}}},

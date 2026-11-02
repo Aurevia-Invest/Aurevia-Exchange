@@ -31,7 +31,7 @@ export async function GET(){
 			return tx.user.findUnique({
 				where:{id:sessionUser.id},
 				select:{
-					id:true,name:true,country:true,phone:true,phoneVerified:true,requiresRegistrationVerification:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,avatarKey:true,
+					id:true,aureviaExchangeId:true,name:true,country:true,phone:true,phoneVerified:true,requiresRegistrationVerification:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,avatarKey:true,
 					kyc:{select:{submittedAt:true}},
 				},
 			});
@@ -112,7 +112,7 @@ export async function GET(){
 		});
 
 		return NextResponse.json(jsonSafe({
-			profile:{name:profile.name,accountMode:mode,tier:tier.label,progress:tier.progress,profileRequirements:tierProfileRequirements,kycStatus:mode===AccountMode.REAL?profile.kycStatus:'NOT_AVAILABLE',hasAvatar:!!profile.avatarKey},
+			profile:{name:profile.name,aureviaExchangeId:profile.aureviaExchangeId,accountMode:mode,tier:tier.label,progress:tier.progress,profileRequirements:tierProfileRequirements,kycStatus:mode===AccountMode.REAL?profile.kycStatus:'NOT_AVAILABLE',hasAvatar:!!profile.avatarKey},
 			accountMode:mode,
 			demoStartingBalance:mode===AccountMode.DEMO?DEMO_STARTING_BALANCE:null,
 			balances:{[mode]:activeBalance},

@@ -1,9 +1,10 @@
 'use client';
 
-import {FormEvent,useState} from 'react';
+import {FormEvent,useEffect,useRef,useState} from 'react';
 import {useRouter} from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
+import Script from 'next/script';
 import {ArrowRight,ShieldCheck} from 'lucide-react';
 import type {CountryCode} from 'libphonenumber-js';
 import Nav from '@/components/Nav';
@@ -14,6 +15,17 @@ import {useLocale} from '@/lib/i18n-context';
 
 type AccountMode='DEMO'|'REAL';
 type RegistrationDetails={firstName:string;lastName:string;dateOfBirth:string;residenceCountry:string;phoneCountry:string;phoneNumber:string;email:string;password:string;confirmPassword:string;accountMode:AccountMode};
+type TurnstileOptions={sitekey:string;action:string;callback:(token:string)=>void;'expired-callback':()=>void;'error-callback':()=>void};
+
+declare global {
+	interface Window {
+		turnstile?:{
+			render:(container:HTMLElement,options:TurnstileOptions)=>string;
+			reset:(widgetId:string)=>void;
+			remove:(widgetId:string)=>void;
+		};
+	}
+}
 
 const initialDetails:RegistrationDetails={firstName:'',lastName:'',dateOfBirth:'',residenceCountry:'',phoneCountry:'US',phoneNumber:'',email:'',password:'',confirmPassword:'',accountMode:'DEMO'};
 
@@ -29,8 +41,26 @@ export default function RegistrationExperience(){
 	const [phoneError,setPhoneError]=useState('');
 	const [passwordError,setPasswordError]=useState('');
 	const [busy,setBusy]=useState(false);
+	const [captchaToken,setCaptchaToken]=useState('');
+	const [captchaLoaded,setCaptchaLoaded]=useState(false);
+	const [captchaWidgetId,setCaptchaWidgetId]=useState('');
+	const captchaContainer=useRef<HTMLDivElement>(null);
 	const router=useRouter();
 	const residence=findCountry(details.residenceCountry);
+	const captchaSiteKey=process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY||'';
+
+	useEffect(()=>{
+		if(!captchaLoaded||!captchaSiteKey||!captchaContainer.current||!window.turnstile)return;
+		const widgetId=window.turnstile.render(captchaContainer.current,{
+			sitekey:captchaSiteKey,
+			action:'register',
+			callback:setCaptchaToken,
+			'expired-callback':()=>setCaptchaToken(''),
+			'error-callback':()=>setCaptchaToken(''),
+		});
+		setCaptchaWidgetId(widgetId);
+		return ()=>window.turnstile?.remove(widgetId);
+	},[captchaLoaded,captchaSiteKey]);
 
 	function update<K extends keyof RegistrationDetails>(key:K,value:RegistrationDetails[K]){
 		setDetails(current=>({...current,[key]:value}));
@@ -48,9 +78,10 @@ export default function RegistrationExperience(){
 		if(details.phoneNumber.trim()&&!phone){setPhoneError(translate('validPhone'));invalid=true;}
 		if(details.password!==details.confirmPassword){setPasswordError(translate('passwordMatch'));invalid=true;}
 		if(invalid||!residence)return;
+		if(!captchaToken){setError('Complete the registration security check and try again.');return;}
 		setBusy(true);
 		try{
-			const response=await fetch('/api/register',{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted})});
+			const response=await fetch('/api/register',{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted,captchaToken})});
 			const result=await response.json().catch(()=>({}));
 			if(!response.ok){
 				setError(result.requestId?`${result.error||translate('registrationFailed')} (Reference: ${result.requestId})`:result.error||translate('registrationFailed'));return;
@@ -58,7 +89,11 @@ export default function RegistrationExperience(){
 			router.replace(`/verify-email?email=${encodeURIComponent(result.email||details.email)}`);
 			router.refresh();
 		}catch{setError(translate('unableRegistration'));}
-		finally{setBusy(false);}
+		finally{
+			setBusy(false);
+			setCaptchaToken('');
+			if(captchaWidgetId)window.turnstile?.reset(captchaWidgetId);
+		}
 	}
 
 	return <><Nav/><main className="auth-scene"><section className="auth-card auth-register-card" aria-labelledby="registration-title">
@@ -87,8 +122,9 @@ export default function RegistrationExperience(){
 					<p className="mt-3 text-xs leading-5 muted">Registration is free. Verify your email before signing in. New accounts start on <span className="tier-badge">Tier 1</span>; identity review remains separate for eligible account services.</p>
 					<label className="mt-4 flex min-h-11 items-start gap-2 text-xs leading-5 muted"><input className="mt-1" type="checkbox" checked={termsAccepted} onChange={event=>setTermsAccepted(event.target.checked)} required/><span>{translate('termsConsent')} <Link className="auth-link" href="/terms">{translate('terms')}</Link>, <Link className="auth-link" href="/privacy">{translate('privacyPolicy')}</Link>, {translate('riskDisclosure')}</span></label>
 				</fieldset>
+				{captchaSiteKey?<><Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onReady={()=>setCaptchaLoaded(true)} onError={()=>setError('Registration security checks are temporarily unavailable. Please try again later.')}/><div ref={captchaContainer} aria-label="Registration security check"/></>:<p className="text-sm text-loss" role="alert">Registration security checks are not configured.</p>}
 				{error&&<p className="auth-error" role="alert">{error}</p>}
-				<button type="submit" disabled={busy} className="auth-submit flex w-full items-center justify-center gap-2">{busy?translate('creatingAccount'):translate('createAccountButton')}<ArrowRight size={16} aria-hidden="true"/></button>
+				<button type="submit" disabled={busy||!captchaSiteKey} className="auth-submit flex w-full items-center justify-center gap-2">{busy?translate('creatingAccount'):translate('createAccountButton')}<ArrowRight size={16} aria-hidden="true"/></button>
 			</form>
 				<p className="auth-footer">{translate('alreadyRegistered')} <Link href="/login" className="auth-link">{translate('signIn')}</Link></p>
 		<div className="mt-5 flex items-center gap-2 border-t border-white/10 pt-4 text-xs muted"><ShieldCheck size={15} className="gold" aria-hidden="true"/>{translate('accountPrivate')}</div>

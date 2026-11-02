@@ -2,6 +2,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
 const mocks=vi.hoisted(()=>({
 	challengeFindFirst:vi.fn(),
+	registrationFindFirst:vi.fn(),
 	transactionFindFirst:vi.fn(),
 	transaction:vi.fn(),
 	userUpdateMany:vi.fn(),
@@ -12,6 +13,7 @@ const mocks=vi.hoisted(()=>({
 
 vi.mock('@/lib/db',()=>({db:{
 	verificationCode:{findFirst:mocks.challengeFindFirst},
+	registrationVerification:{findFirst:mocks.registrationFindFirst},
 	$transaction:mocks.transaction,
 }}));
 vi.mock('@/lib/notifications',()=>({createNotification:mocks.createNotification}));
@@ -52,6 +54,7 @@ describe('Akedly verification persistence',()=>{
 			expiresAt:new Date(Date.now()+5*60_000),
 			user:{
 				id:'user-1',
+				createdAt:new Date('2025-03-01T00:00:00.000Z'),
 				email:'person@example.invalid',
 				phone:null,
 				role:'USER',
@@ -63,6 +66,7 @@ describe('Akedly verification persistence',()=>{
 			},
 		};
 		mocks.challengeFindFirst.mockResolvedValue(challenge);
+		mocks.registrationFindFirst.mockResolvedValue(null);
 		mocks.transactionFindFirst.mockResolvedValue({id:'challenge-1'});
 		mocks.userUpdateMany.mockResolvedValueOnce({count:1}).mockResolvedValueOnce({count:0});
 		mocks.userFindUnique.mockResolvedValue({
@@ -90,6 +94,7 @@ describe('Akedly verification persistence',()=>{
 		expect(await completeAkedlyVerification(attemptId,result,'webhook')).toBe('already');
 
 		expect(mocks.userUpdateMany).toHaveBeenCalledTimes(2);
+		expect(mocks.userUpdateMany.mock.calls[0][0].data.aureviaExchangeId).toMatch(/^AEX-2025-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
 		expect(mocks.createNotification).toHaveBeenCalledTimes(1);
 		expect(mocks.auditCreate).toHaveBeenCalledTimes(1);
 		expect(JSON.stringify(mocks.auditCreate.mock.calls)).not.toContain('person@example.invalid');

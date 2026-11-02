@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {CreditCard,Plus} from 'lucide-react';
 import Nav from '@/components/Nav';
 import AureviaCardVisual from '@/components/AureviaCardVisual';
+import AureviaExchangeId from '@/components/AureviaExchangeId';
 
 type Card={id:string;displayName:string;cardholderName:string;designTier:'SIGNATURE'|'GOLD'|'BLACK';referenceNumber:string;maskedPan:string;expiryMonth:number;expiryYear:number;status:string};
 type AppRow={id:string;reference:string;status:string;designTier:string;priceSnapshot:string;currencySnapshot:string;catalogItem:{displayName:string}};
@@ -12,6 +13,7 @@ type AppRow={id:string;reference:string;status:string;designTier:string;priceSna
 export default function CardsPage(){
 	const [cards,setCards]=useState<Card[]>([]);
 	const [applications,setApplications]=useState<AppRow[]>([]);
+	const [aureviaExchangeId,setAureviaExchangeId]=useState<string|null>(null);
 	const [error,setError]=useState('');
 	const [loading,setLoading]=useState(true);
 
@@ -21,7 +23,7 @@ export default function CardsPage(){
 			const response=await fetch('/api/cards/mine',{cache:'no-store'});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to load cards.');
-			setCards(result.cards||[]);setApplications(result.applications||[]);setError('');
+			setCards(result.cards||[]);setApplications(result.applications||[]);setAureviaExchangeId(result.aureviaExchangeId||null);setError('');
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to load cards.')}
 		finally{setLoading(false)}
 	},[]);
@@ -45,6 +47,7 @@ export default function CardsPage(){
 				<section key={card.id} className="card mobile-card-item">
 					<div className="mobile-card-view-heading"><span>YOUR AUREVIA CARD</span><span className="status-pill">{card.status.replaceAll('_',' ')}</span></div>
 					<AureviaCardVisual designTier={card.designTier} cardholderName={card.cardholderName} maskedPan={card.maskedPan} expiryMonth={card.expiryMonth} expiryYear={card.expiryYear} displayName={card.displayName}/>
+					<AureviaExchangeId id={aureviaExchangeId} className="mt-4"/>
 					<div className="mobile-card-item-footer">
 						<div><b>{card.displayName}</b><small>Reference · {card.referenceNumber}</small></div>
 						<Link className="mobile-card-details" href={`/cards/${card.id}`}>Card details <Plus size={14}/></Link>

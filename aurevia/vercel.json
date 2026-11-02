@@ -6,6 +6,10 @@
     {
       "path": "/api/cron/market-tick",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/registration-cleanup",
+      "schedule": "* * * * *"
     }
   ]
 }

@@ -2,10 +2,14 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
 const mocks=vi.hoisted(()=>({
 	findFirst:vi.fn(),
+	registrationFindFirst:vi.fn(),
 	reconcile:vi.fn(),
 }));
 
-vi.mock('@/lib/db',()=>({db:{verificationCode:{findFirst:mocks.findFirst}}}));
+vi.mock('@/lib/db',()=>({db:{
+	verificationCode:{findFirst:mocks.findFirst},
+	registrationVerification:{findFirst:mocks.registrationFindFirst},
+}}));
 vi.mock('@/lib/akedly-verification',()=>({reconcileAkedlyAttempt:mocks.reconcile}));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:vi.fn()}));
 vi.mock('@/lib/akedly',()=>({akedlyIsConfigured:vi.fn(()=>true)}));
@@ -25,6 +29,7 @@ describe('Akedly callback route',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
 		mocks.findFirst.mockResolvedValue({channel:VerificationChannel.EMAIL});
+		mocks.registrationFindFirst.mockResolvedValue(null);
 		mocks.reconcile.mockResolvedValue('verified');
 	});
 
@@ -49,6 +54,7 @@ describe('Akedly callback route',()=>{
 
 	it('rejects unknown attempts and invalid callback payloads',async()=>{
 		mocks.findFirst.mockResolvedValue(null);
+		mocks.registrationFindFirst.mockResolvedValue(null);
 		const unknown=await POST(request({attemptId:'attempt_1234567890',status:'success'}));
 		const invalid=await POST(request({attemptId:'short',status:'success'}));
 

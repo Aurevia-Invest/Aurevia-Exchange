@@ -18,9 +18,10 @@ import AccountTierBadge from '@/components/AccountTierBadge';
 import {useAccountTier} from '@/components/useAccountTier';
 import {DEFAULT_WATCHLIST,MARKET_ASSETS,MARKET_UI_REFRESH_INTERVAL_MS,type MarketCandle,type MarketQuote,type TimeframeId} from '@/lib/live-market';
 import {formatUsd} from '@/lib/currency-format';
+import AureviaExchangeId from '@/components/AureviaExchangeId';
 
 type Overview={
-	profile:{name:string|null;accountMode:'DEMO'|'REAL';tier:string;progress:number;profileRequirements:{nameComplete:boolean;countryComplete:boolean;phoneComplete:boolean;profileComplete:boolean};kycStatus:string;hasAvatar:boolean};
+	profile:{name:string|null;aureviaExchangeId:string|null;accountMode:'DEMO'|'REAL';tier:string;progress:number;profileRequirements:{nameComplete:boolean;countryComplete:boolean;phoneComplete:boolean;profileComplete:boolean};kycStatus:string;hasAvatar:boolean};
 	accountMode:'DEMO'|'REAL';
 	demoStartingBalance:string|null;
 	balances:Partial<Record<'DEMO'|'REAL',string>>;
@@ -285,6 +286,7 @@ export default function UserDashboardExperience(){
 					{overview.recentActivity.length>0?<div className="mobile-transactions-list">{overview.recentActivity.slice(0,2).map(item=><Link href={item.link||'/activity'} key={item.id}><span className="mobile-transaction-icon"><Activity size={17}/></span><span><b>{item.action}</b><small>{item.asset} · {timeAgo(item.timestamp)}</small></span><span><strong>{activityAmount(item)}</strong><small>{item.status}</small></span></Link>)}</div>:<p className="mobile-summary-empty">Your recent account activity will appear here.</p>}
 				</section>
 			</section>
+			<AureviaExchangeId id={overview.profile.aureviaExchangeId} className="mb-4"/>
 			<section className="user-dashboard-metrics" aria-label={`${overview.accountMode} account balance and portfolio value`}>
 				<UserMetric label={`${overview.accountMode} ${overview.accountMode==='DEMO'?'virtual cash':'account balance'}`} value={formatUsd(overview.balances[overview.accountMode]||'0')} detail={overview.accountMode==='DEMO'?`Available DEMO cash · ${formatUsd(overview.demoStartingBalance||'5000.00')} starting allocation`:'Internal USD ledger balance'} active icon={overview.accountMode==='DEMO'?WalletCards:ShieldCheck}/>
 				<UserMetric label={`${overview.accountMode} portfolio value`} value={formatUsd(overview.portfolioSummary.totalValue)} detail={overview.accountMode==='DEMO'?'Virtual cash + simulated trading positions':'Cash + positions + allocated principal'} active icon={ChartNoAxesCombined}/>

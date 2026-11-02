@@ -17,6 +17,14 @@ const baseReceipt:ReceiptData={
 };
 
 describe('transaction receipt',()=>{
+	it('shows the permanent Aurevia Exchange ID and a dedicated copy action',()=>{
+		const markup=renderToStaticMarkup(<ReceiptGenerator receipt={{...baseReceipt,status:'COMPLETED',aureviaExchangeId:'AEX-2026-8K7M-4Q9X'}}/>);
+
+		expect(markup).toContain('AUREVIA EXCHANGE ID');
+		expect(markup).toContain('AEX-2026-8K7M-4Q9X');
+		expect(markup).toContain('Copy Aurevia ID');
+	});
+
 	it('does not label an approved REAL withdrawal as completed or successful',()=>{
 		const markup=renderToStaticMarkup(<ReceiptGenerator receipt={baseReceipt}/>);
 		expect(markup).toContain('Approved · payout not confirmed');

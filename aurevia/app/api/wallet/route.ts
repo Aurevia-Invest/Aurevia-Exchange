@@ -41,13 +41,13 @@ const reservingStatuses=[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,Fund
 export async function GET(){
 	try{
 		const user=await requireUser();
-		const currentUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
+		const currentUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true,aureviaExchangeId:true}});
 		if(!currentUser||currentUser.status!=='ACTIVE')return NextResponse.json({error:'Wallet account is unavailable.'},{status:403});
 		await ensureUserLedger(db,user.id,currentUser.accountMode,'USD');
 		if(currentUser.accountMode===AccountMode.DEMO){
 			const account=await db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${AccountMode.DEMO}:USD`}});
 			const virtualBalance=account?await balance(db,account.id):new Prisma.Decimal(0);
-			return NextResponse.json(jsonSafe({accountMode:AccountMode.DEMO,balance:virtualBalance,withdrawableBalance:null,balances:[{currency:'USD',balance:virtualBalance}],transactions:[],adminLedgerReceipts:[]}),{headers:{'Cache-Control':'private, no-store'}});
+			return NextResponse.json(jsonSafe({accountMode:AccountMode.DEMO,aureviaExchangeId:currentUser.aureviaExchangeId,balance:virtualBalance,withdrawableBalance:null,balances:[{currency:'USD',balance:virtualBalance}],transactions:[],adminLedgerReceipts:[]}),{headers:{'Cache-Control':'private, no-store'}});
 		}
 		const [accounts,transactions]=await Promise.all([
 			db.ledgerAccount.findMany({where:{userId:user.id,accountMode:currentUser.accountMode},orderBy:{currency:'asc'}}),
@@ -76,7 +76,7 @@ export async function GET(){
 			approvalByRequest.set(approval.entityId,{reviewedAt:approval.createdAt,reviewedBy:approval.actor,previousBalance:typeof metadata.previousBalance==='string'?metadata.previousBalance:null,resultingBalance:typeof metadata.resultingBalance==='string'?metadata.resultingBalance:null});
 		}
 		const safeTransactions=transactions.map(({receiptKey,withdrawalDestinationSnapshot,...transaction})=>({...transaction,withdrawalDestination:withdrawalDestinationSnapshot||transaction.withdrawalDestination,hasReceipt:!!receiptKey,...(approvalByRequest.get(transaction.id)||{})}));
-		return NextResponse.json(jsonSafe({accountMode:currentUser.accountMode,balance:usdBalance,withdrawableBalance,balances,transactions:safeTransactions,adminLedgerReceipts}),{headers:{'Cache-Control':'private, no-store'}});
+		return NextResponse.json(jsonSafe({accountMode:currentUser.accountMode,aureviaExchangeId:currentUser.aureviaExchangeId,balance:usdBalance,withdrawableBalance,balances,transactions:safeTransactions,adminLedgerReceipts}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';

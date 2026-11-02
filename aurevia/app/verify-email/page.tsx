@@ -21,16 +21,35 @@ export default function VerifyEmailPage(){
 	const [code,setCode]=useState('');
 	const [message,setMessage]=useState('');
 	const [error,setError]=useState('');
+	const [sessionRestoreFailed,setSessionRestoreFailed]=useState(false);
 	const [busy,setBusy]=useState(false);
 	const busyRef=useRef(false);
 
 	useEffect(()=>{
 		const params=new URLSearchParams(window.location.search);
-		setEmail((params.get('email')||'').trim().toLowerCase());
+		const nextEmail=(params.get('email')||'').trim().toLowerCase();
+		const registrationToken=new URLSearchParams(window.location.hash.slice(1)).get('registrationToken');
+		if(!registrationToken){
+			setEmail(nextEmail);
+			return;
+		}
+		window.history.replaceState(null,'',`${window.location.pathname}${window.location.search}`);
+		void fetch('/api/register/session',{
+			method:'POST',
+			headers:{'content-type':'application/json'},
+			body:JSON.stringify({email:nextEmail,registrationToken}),
+		}).then(async response=>{
+			if(!response.ok)throw new Error('This registration session is invalid or expired.');
+			setEmail(nextEmail);
+		}).catch(()=>{
+			setSessionRestoreFailed(true);
+			setError('This registration session is invalid or expired. Start a new registration to continue.');
+			setEmail(nextEmail);
+		});
 	},[]);
 
 	const startVerification=useCallback(async()=>{
-		if(!email||busyRef.current)return;
+		if(!email||sessionRestoreFailed||busyRef.current)return;
 		busyRef.current=true;
 		setBusy(true);setError('');setMessage('');
 		try{
@@ -64,7 +83,7 @@ export default function VerifyEmailPage(){
 			busyRef.current=false;
 			setBusy(false);
 		}
-	},[email,router]);
+	},[email,router,sessionRestoreFailed]);
 
 	const verifyEmailCode=async()=>{
 		if(!email||!/^\d{6}$/.test(code)||busyRef.current)return;
@@ -73,7 +92,14 @@ export default function VerifyEmailPage(){
 		try{
 			const response=await fetch('/api/register/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,code})});
 			const result=await response.json();
-			if(!response.ok)throw new Error(result.error||'Unable to verify this email address.');
+			if(!response.ok){
+				if(typeof result.error==='string'&&result.error.includes('Start registration again')){
+					window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
+					setEmailCodeMode(false);
+					setCode('');
+				}
+				throw new Error(result.error||'Unable to verify this email address.');
+			}
 			window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
 			router.replace('/login?verified=1');
 		}catch(exception){
@@ -85,7 +111,7 @@ export default function VerifyEmailPage(){
 	};
 
 	useEffect(()=>{
-		if(!email)return;
+		if(!email||sessionRestoreFailed)return;
 		try{
 			const saved=window.sessionStorage.getItem(ATTEMPT_STORAGE_KEY);
 			if(saved){
@@ -104,7 +130,7 @@ export default function VerifyEmailPage(){
 			window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
 		}
 		void startVerification();
-	},[email,startVerification]);
+	},[email,startVerification,sessionRestoreFailed]);
 
 	useEffect(()=>{
 		if(!attempt||!email)return;
@@ -123,7 +149,7 @@ export default function VerifyEmailPage(){
 					if(result.expired){
 						window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
 						setAttempt(null);
-						setMessage('This verification attempt expired. Request a new one to continue.');
+						setMessage('This verification attempt expired. Start a new registration to continue.');
 						return;
 					}
 				}
@@ -156,8 +182,8 @@ export default function VerifyEmailPage(){
 	return <><Nav/><main className="auth-scene"><section className="auth-card auth-register-card" aria-labelledby="verify-email-title">
 		<div className="flex items-center gap-2 gold"><ShieldCheck size={20} aria-hidden="true"/><span className="text-sm font-semibold">Email verification</span></div>
 		<h1 id="verify-email-title" className="auth-heading mt-3">Verify your email address</h1>
-		<p className="mt-2 text-sm leading-6 muted">Your account is pending email verification. {emailCodeMode?'Enter the six-digit code sent to your email to continue.':'Complete the secure verification experience to continue.'} Email verification does not approve KYC or authorize financial activity.</p>
-		<label className="auth-field-label mt-5">Email address<input className="auth-input" type="email" autoComplete="email" value={email} onChange={event=>{window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);setAttempt(null);setEmailCodeMode(false);setCode('');setEmail(event.target.value.trim().toLowerCase());setMessage('')}} required maxLength={254}/></label>
+		<p className="mt-2 text-sm leading-6 muted">Your registration is temporary. No user or financial account is created until email verification succeeds. {emailCodeMode?'Enter the six-digit code sent to your email to continue.':'Complete the secure verification experience to continue.'} Email verification does not approve KYC or authorize financial activity.</p>
+		<label className="auth-field-label mt-5">Email address<input className="auth-input" type="email" autoComplete="email" value={email} onChange={event=>{window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);setAttempt(null);setEmailCodeMode(false);setSessionRestoreFailed(false);setCode('');setEmail(event.target.value.trim().toLowerCase());setMessage('')}} required maxLength={254}/></label>
 		{attempt&&<div className="mt-5 overflow-hidden rounded-lg border border-white/10 bg-black/30">
 			<iframe className="block h-[700px] w-full max-w-full" src={attempt.iframeUrl} title="Akedly secure email verification" allow="clipboard-write; publickey-credentials-get *; publickey-credentials-create *"/>
 		</div>}
@@ -165,6 +191,7 @@ export default function VerifyEmailPage(){
 		{error&&<p className="auth-error mt-4" role="alert">{error}</p>}
 		{message&&<p className="mt-4 text-sm muted" role="status">{message}</p>}
 		<button className="auth-submit mt-5 w-full" type="button" disabled={busy||!email} onClick={()=>void startVerification()}>{busy?'Starting verification…':attempt||emailCodeMode?'Request another verification code':'Start email verification'}</button>
+		{!emailCodeMode&&!attempt&&<p className="mt-4 text-center text-sm muted"><Link href="/register" className="auth-link">Start a new registration</Link></p>}
 		<p className="auth-footer mt-5">Already verified? <Link href="/login" className="auth-link">Sign in</Link></p>
 	</section></main></>;
 }

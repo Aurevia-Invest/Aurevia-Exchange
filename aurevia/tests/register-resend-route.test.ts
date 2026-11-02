@@ -2,6 +2,12 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
 const mocks=vi.hoisted(()=>({
 	userFindUnique:vi.fn(),
+	registrationAttemptFindUnique:vi.fn(),
+	registrationAttemptDeleteMany:vi.fn(),
+	registrationVerificationFindUnique:vi.fn(),
+	registrationVerificationCreate:vi.fn(),
+	registrationVerificationUpdateMany:vi.fn(),
+	registrationVerificationDeleteMany:vi.fn(),
 	codeFindUnique:vi.fn(),
 	codeCreate:vi.fn(),
 	codeUpdateMany:vi.fn(),
@@ -17,6 +23,13 @@ const mocks=vi.hoisted(()=>({
 
 vi.mock('@/lib/db',()=>({db:{
 	user:{findUnique:mocks.userFindUnique},
+	registrationAttempt:{findUnique:mocks.registrationAttemptFindUnique,deleteMany:mocks.registrationAttemptDeleteMany},
+	registrationVerification:{
+		findUnique:mocks.registrationVerificationFindUnique,
+		create:mocks.registrationVerificationCreate,
+		updateMany:mocks.registrationVerificationUpdateMany,
+		deleteMany:mocks.registrationVerificationDeleteMany,
+	},
 	verificationCode:{
 		findUnique:mocks.codeFindUnique,
 		create:mocks.codeCreate,
@@ -35,6 +48,7 @@ vi.mock('@/lib/verification-delivery',()=>({
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit}));
 
 import {POST} from '@/app/api/register/resend/route';
+import {VerificationChannel} from '@prisma/client';
 
 const user={
 	id:'user-1',
@@ -55,10 +69,28 @@ function request(){
 	});
 }
 
+function registrationRequest(){
+	return new Request('https://aurevia.test/api/register/resend',{
+		method:'POST',
+		headers:{
+			'content-type':'application/json',
+			'x-forwarded-for':'192.0.2.3',
+			cookie:`aurevia_registration=${'a'.repeat(43)}`,
+		},
+		body:JSON.stringify({email:'new-registration@example.invalid'}),
+	});
+}
+
 describe('registration verification resend',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
 		mocks.userFindUnique.mockResolvedValue(user);
+		mocks.registrationAttemptFindUnique.mockResolvedValue(null);
+		mocks.registrationAttemptDeleteMany.mockResolvedValue({count:1});
+		mocks.registrationVerificationFindUnique.mockResolvedValue(null);
+		mocks.registrationVerificationCreate.mockResolvedValue({id:'registration-verification-1'});
+		mocks.registrationVerificationUpdateMany.mockResolvedValue({count:1});
+		mocks.registrationVerificationDeleteMany.mockResolvedValue({count:1});
 		mocks.codeFindUnique.mockResolvedValue(null);
 		mocks.codeCreate.mockResolvedValue({id:'challenge-1'});
 		mocks.codeUpdateMany.mockResolvedValue({count:1});
@@ -177,5 +209,46 @@ describe('registration verification resend',()=>{
 			where:{id:'previous-challenge',codeHash:'hashed-value'},
 			data:expect.objectContaining({codeHash:'previous-hash',attempts:1}),
 		}));
+	});
+
+	it('sends an email code to a temporary registration without creating a user',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-1',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:null,
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({method:'email-code'});
+		expect(mocks.registrationVerificationCreate).toHaveBeenCalledOnce();
+		expect(mocks.deliverCode).toHaveBeenCalledWith(
+			VerificationChannel.EMAIL,
+			expect.objectContaining({email:'new-registration@example.invalid'}),
+			'123456',
+			{registrationToken:'a'.repeat(43)},
+		);
+		expect(mocks.userFindUnique).not.toHaveBeenCalled();
+	});
+
+	it('deletes the temporary registration if OTP delivery fails',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-1',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:null,
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+		mocks.deliverCode.mockResolvedValue(false);
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(502);
+		expect(mocks.registrationAttemptDeleteMany).toHaveBeenCalledWith({where:{id:'registration-1'}});
+		expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
+		expect(mocks.userFindUnique).not.toHaveBeenCalled();
 	});
 });

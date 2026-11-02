@@ -4,6 +4,7 @@ import {verificationConfig} from './config';
 import {getServerConfiguration} from './config/env';
 
 type Contact={email:string;phone:string|null;name:string|null};
+type VerificationDeliveryOptions={registrationToken?:string};
 
 function legacyProvider(channel:VerificationChannel){
 	const config=getServerConfiguration();
@@ -60,7 +61,7 @@ export function verificationCodeMatches(userId:string,code:string,hash:string){
 	return actual.length===expected.length&&timingSafeEqual(actual,expected);
 }
 
-export async function deliverVerificationCode(channel:VerificationChannel,contact:Contact,code:string){
+export async function deliverVerificationCode(channel:VerificationChannel,contact:Contact,code:string,options:VerificationDeliveryOptions={}){
 	if(channel!==VerificationChannel.EMAIL)return false;
 	const config=getServerConfiguration().verification;
 	if(!contact.email)return false;
@@ -69,6 +70,10 @@ export async function deliverVerificationCode(channel:VerificationChannel,contac
 	try{
 		const verificationUrl=new URL('/verify-email',config.appUrl);
 		verificationUrl.searchParams.set('email',contact.email);
+		if(options.registrationToken){
+			if(!/^[A-Za-z0-9_-]{40,60}$/.test(options.registrationToken))return false;
+			verificationUrl.hash=new URLSearchParams({registrationToken:options.registrationToken}).toString();
+		}
 		text=`Your Aurevia Exchange verification code is ${code}. It expires in ${verificationConfig.expiresInMinutes} minutes. Enter it at ${verificationUrl.toString()}. If you did not request it, you can ignore this message.`;
 	}catch{
 		return false;

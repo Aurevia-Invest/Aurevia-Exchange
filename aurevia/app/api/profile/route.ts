@@ -11,7 +11,7 @@ import {isProfileLocked,profileEditDeadline} from '@/lib/profile-lock';
 import {isValidE164} from '@/lib/registration-validation';
 
 const profileSelect={
-	id:true,email:true,name:true,phone:true,phoneVerified:true,country:true,avatarKey:true,twoFactorEnabled:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,emailVerifiedAt:true,verifiedAt:true,verifiedChannel:true,requiresRegistrationVerification:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,updatedAt:true,
+	id:true,aureviaExchangeId:true,email:true,name:true,phone:true,phoneVerified:true,country:true,avatarKey:true,twoFactorEnabled:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,emailVerifiedAt:true,verifiedAt:true,verifiedChannel:true,requiresRegistrationVerification:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,updatedAt:true,
 	kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}},
 	kyc:{select:{address:true,submittedAt:true}},
 } satisfies Prisma.UserSelect;

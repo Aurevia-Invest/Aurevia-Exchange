@@ -261,6 +261,7 @@ enum StoryEngagementType {
 
 model User {
   id                               String                            @id @default(cuid())
+  aureviaExchangeId                String?                           @unique
   email                            String                            @unique
   passwordHash                     String
   name                             String?
@@ -337,6 +338,42 @@ model User {
 
   tierReviews TierUpgradeRequest[] @relation("TierRequestReviewer")
   avatarKey   String?
+}
+
+model RegistrationAttempt {
+  id              String                   @id @default(cuid())
+  email           String                   @unique
+  passwordHash    String
+  name            String
+  country         String
+  phone           String?
+  dateOfBirth     DateTime
+  accountMode     AccountMode
+  termsAcceptedAt DateTime
+  tokenHash       String                   @unique
+  expiresAt       DateTime
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  verification    RegistrationVerification?
+
+  @@index([expiresAt])
+}
+
+model RegistrationVerification {
+  id                    String               @id @default(cuid())
+  registrationAttemptId String               @unique
+  registrationAttempt   RegistrationAttempt  @relation(fields: [registrationAttemptId], references: [id], onDelete: Cascade)
+  codeHash              String
+  channel               VerificationChannel
+  providerReference     String?
+  expiresAt             DateTime
+  resendAfter           DateTime
+  attempts              Int                  @default(0)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([expiresAt])
+  @@index([providerReference])
 }
 
 model WaitlistEntry {

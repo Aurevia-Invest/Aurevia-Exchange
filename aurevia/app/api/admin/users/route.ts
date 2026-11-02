@@ -5,6 +5,7 @@ import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {getServerConfiguration} from '@/lib/config/env';
+import {AUREVIA_EXCHANGE_ID_PATTERN} from '@/lib/aurevia-exchange-id';
 
 const schema=z.object({
   userId:z.string(),
@@ -27,16 +28,24 @@ export async function GET(request:Request){
     if(requestedMode&&requestedMode!=='DEMO'&&requestedMode!=='REAL')return NextResponse.json({error:'Invalid account mode.'},{status:400});
     const mode=requestedMode==='DEMO'?AccountMode.DEMO:requestedMode==='REAL'?AccountMode.REAL:undefined;
     const configuredAdminEmail=getServerConfiguration().auth.adminEmail.trim().toLowerCase();
+    const exchangeIdSearch=search.toUpperCase();
+    const matchesExchangeId=AUREVIA_EXCHANGE_ID_PATTERN.test(exchangeIdSearch);
+    const searchConditions:Prisma.UserWhereInput[]=[
+      {id:{contains:search}},
+      {email:{contains:search,mode:'insensitive'}},
+      {name:{contains:search,mode:'insensitive'}},
+      ...(matchesExchangeId?[{aureviaExchangeId:exchangeIdSearch}]:[{aureviaExchangeId:{contains:search,mode:'insensitive' as const}}]),
+    ];
     const where:Prisma.UserWhereInput={
       role:'USER',
       status:includeDeleted?'DELETED':{notIn:['DELETED','CLOSED']},
       ...(mode?{accountMode:mode}:{}),
       ...(configuredAdminEmail?{email:{not:configuredAdminEmail}}:{}),
-      ...(search?{OR:[{id:{contains:search}},{email:{contains:search,mode:'insensitive'}},{name:{contains:search,mode:'insensitive'}}]}:{}),
+      ...(search?{OR:searchConditions}:{}),
     };
     const users=await db.user.findMany({
       where,
-      select:{id:true,email:true,name:true,country:true,phone:true,role:true,status:true,kycStatus:true,accountMode:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,createdAt:true,kyc:{select:{legalName:true,dob:true,address:true,idType:true,idNumber:true,submittedAt:true,reviewedAt:true,reviewNote:true}},kycDocuments:{select:{id:true,kind:true,filename:true,mimeType:true,size:true,status:true,uploadedAt:true,reviewedAt:true,reviewNote:true},orderBy:{uploadedAt:'desc'}}},
+      select:{id:true,aureviaExchangeId:true,email:true,name:true,country:true,phone:true,role:true,status:true,kycStatus:true,accountMode:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,createdAt:true,kyc:{select:{legalName:true,dob:true,address:true,idType:true,idNumber:true,submittedAt:true,reviewedAt:true,reviewNote:true}},kycDocuments:{select:{id:true,kind:true,filename:true,mimeType:true,size:true,status:true,uploadedAt:true,reviewedAt:true,reviewNote:true},orderBy:{uploadedAt:'desc'}}},
       orderBy:{createdAt:'desc'},
       take:search?100:200,
     });

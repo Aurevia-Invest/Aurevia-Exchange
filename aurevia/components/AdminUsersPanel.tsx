@@ -5,8 +5,9 @@ import {FormEvent,useCallback,useEffect,useState} from 'react';
 import {RefreshCw,Search,Trash2,UserRound} from 'lucide-react';
 import {SUPPORTED_CURRENCIES} from '@/lib/config/simulation';
 import ReceiptGenerator,{type ReceiptData} from '@/components/ReceiptGenerator';
+import AureviaExchangeId from '@/components/AureviaExchangeId';
 
-type AdminUser={id:string;email:string;name:string|null;phone:string|null;country:string|null;role:'USER'|'ADMIN';status:string;accountMode:'DEMO'|'REAL';kycStatus:string;createdAt:string;depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null};
+type AdminUser={id:string;aureviaExchangeId:string|null;email:string;name:string|null;phone:string|null;country:string|null;role:'USER'|'ADMIN';status:string;accountMode:'DEMO'|'REAL';kycStatus:string;createdAt:string;depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null};
 type AdminLoginEvent={id:string;action:string;createdAt:string;metadata:{clientIp?:string|null;userAgent?:string|null;reason?:string|null}|null};
 function AdminUserPhoto({userId,name}:{userId:string;name:string|null}){
 	const [url,setUrl]=useState('');
@@ -184,6 +185,7 @@ export default function AdminUsersPanel(){
 				amount:adjustment.amount,
 				currency:adjustment.currency,
 				method:'Administrator direct paper-ledger adjustment',
+				aureviaExchangeId:user.aureviaExchangeId,
 				purpose:`${adjustment.category.replaceAll('_',' ')} · ${adjustment.reason.trim()}`,
 			}});
 			setAdjustments(current=>({...current,[user.id]:emptyAdjustment(adjustment.accountMode)}));
@@ -202,16 +204,17 @@ export default function AdminUsersPanel(){
 		<header className="account-heading"><div><span className="account-kicker">WORKSPACE · ACCOUNTS</span><h1>User accounts</h1><p>Manage customer access and review deleted accounts. Admin identities are managed separately.</p></div><button className="icon-action" type="button" aria-label="Refresh user accounts" onClick={()=>void load(search.trim(),showDeleted,undefined,accountMode)}><RefreshCw size={15}/></button></header>
 		{error&&<div className="account-callout mb-3" role="alert">{error}</div>}{notice&&<p className="mb-3 text-sm text-profit" role="status">{notice}</p>}
 		<div className="mb-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
-			<label className="account-label">Search users by name, email, or account ID<div className="relative mt-1"><Search size={15} className="absolute left-3 top-3.5 muted"/><input className="input pl-9" value={search} onChange={event=>setSearch(event.target.value)} maxLength={120} autoComplete="off" placeholder="Search accounts"/></div></label>
+			<label className="account-label">Search users by Aurevia ID, internal ID, name, or email<div className="relative mt-1"><Search size={15} className="absolute left-3 top-3.5 muted"/><input className="input pl-9" value={search} onChange={event=>setSearch(event.target.value)} maxLength={120} autoComplete="off" placeholder="Search accounts"/></div></label>
 			<label className="account-label">Account mode<select className="input mt-1" value={accountMode} onChange={event=>{const mode=event.target.value;if(mode==='ALL'||mode==='DEMO'||mode==='REAL')setAccountMode(mode)}}><option value="ALL">All account modes</option><option value="DEMO">DEMO accounts</option><option value="REAL">REAL accounts</option></select></label>
 		</div>
 		<label className="mb-4 inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={showDeleted} onChange={event=>setShowDeleted(event.target.checked)}/>Show deleted accounts</label>
 		<div className="overflow-hidden rounded-md border border-white/10">
 			{loading?<p className="account-empty" role="status">Loading accounts…</p>:users.length?<div className="divide-y divide-white/10">{users.map(user=><article className="p-4" key={user.id}>
-				<div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0"><b className="block break-words">{user.name||'Unnamed account'} · {user.email}</b><small className="muted break-all">{user.id} · {user.role} · {user.accountMode} · {user.kycStatus} · {user.status}</small></div><div className="flex flex-wrap gap-2">
+				<div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0"><b className="block break-words">{user.name||'Unnamed account'} · {user.email}</b><small className="muted break-all">Internal ID: {user.id} · {user.role} · {user.accountMode} · {user.kycStatus} · {user.status}</small><small className="mt-1 block break-all font-mono text-gold">Aurevia Exchange ID: {user.aureviaExchangeId||'Not assigned'}</small></div><div className="flex flex-wrap gap-2">
 					{user.status==='DELETED'?<><button type="button" className="btn min-h-10 bg-profit text-black" disabled={busy} onClick={()=>void updateDeletedStatus(user,'ACTIVE')}>{busyUserId===user.id?'Saving…':'Restore'}</button><button type="button" className="btn min-h-10 bg-loss text-black" disabled={busy} onClick={()=>{setSelected(user);setConfirmation('');setReason('')}}><Trash2 size={14}/>Permanently delete</button></>:<><button type="button" className="btn min-h-10 bg-white/5" disabled={busy||user.status==='CLOSED'} onClick={()=>void toggleStatus(user)}>{busyUserId===user.id?'Saving…':user.status==='ACTIVE'?'Freeze':'Unfreeze'}</button><button type="button" className="btn min-h-10 bg-loss text-black" disabled={busy||user.status==='CLOSED'} onClick={()=>void updateDeletedStatus(user,'DELETED')}><Trash2 size={14}/>Delete</button><button type="button" className="btn min-h-10 border border-loss/40 bg-loss/10 text-loss" disabled={busy||user.status==='CLOSED'} onClick={()=>{setSelected(user);setConfirmation('');setReason('')}}>Permanently delete</button></>}
 				</div></div>
 				{user.status==='DELETED'?<p className="mt-3 text-sm muted">This account cannot sign in. Restore it to re-enable account access.</p>:<details className="mt-2" open={expandedUserId===user.id} onToggle={event=>{if(event.currentTarget.open)setExpandedUserId(user.id);else if(expandedUserId===user.id)setExpandedUserId('')}}><summary className="min-h-11 cursor-pointer py-2 text-sm gold">Account controls, verification, and ledger</summary>{expandedUserId===user.id&&<div>
+					<AureviaExchangeId id={user.aureviaExchangeId} className="mt-3"/>
 					<dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2"><div><dt className="muted">Country</dt><dd>{user.country||'Not set'}</dd></div><div><dt className="muted">Phone</dt><dd>{user.phone||'Not set'}</dd></div><div><dt className="muted">Created</dt><dd>{new Date(user.createdAt).toLocaleString()}</dd></div><div><dt className="muted">Deposit / withdrawal</dt><dd>{user.depositEnabled?'Enabled':'Disabled'} / {user.withdrawalEnabled?'Enabled':'Disabled'}</dd></div><div><dt className="muted">Account restriction</dt><dd>{user.accountRestricted?user.restrictionReason||'Restricted':'None'}</dd></div></dl>
 					<AdminUserPhoto userId={user.id} name={user.name}/>
 					<AdminLoginHistory userId={user.id}/>

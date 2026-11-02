@@ -9,10 +9,11 @@ import BrowserPushSettings from '@/components/BrowserPushSettings';
 import ThemeToggle from '@/components/ThemeToggle';
 import ProfileAvatar,{notifyProfileAvatarUpdated} from '@/components/ProfileAvatar';
 import AccountTierBadge from '@/components/AccountTierBadge';
+import AureviaExchangeId from '@/components/AureviaExchangeId';
 import {useAccountTier} from '@/components/useAccountTier';
 import {useLocale} from '@/lib/i18n-context';
 
-type Profile={id:string;email:string;name:string|null;firstName:string;lastName:string;label:string;phone:string|null;phoneVerified:boolean;emailVerified:boolean;country:string|null;address:string|null;hasAvatar:boolean;twoFactorEnabled:boolean;role:'USER'|'ADMIN';status:string;kycStatus:string;profileLocked:boolean;profileLockAt:string|null};
+type Profile={id:string;aureviaExchangeId:string|null;email:string;name:string|null;firstName:string;lastName:string;label:string;phone:string|null;phoneVerified:boolean;emailVerified:boolean;country:string|null;address:string|null;hasAvatar:boolean;twoFactorEnabled:boolean;role:'USER'|'ADMIN';status:string;kycStatus:string;profileLocked:boolean;profileLockAt:string|null};
 
 export default function Settings(){
 	const [profile,setProfile]=useState<Profile|null>(null);
@@ -144,6 +145,7 @@ export default function Settings(){
 				{section==='profile'&&<section className="account-panel card p-5" role="tabpanel"><div className="account-panel-title"><div><h2>{translate('personalProfile')}</h2><p className="account-panel-subtitle">{translate('profileDetailsSubtitle')}</p></div><UserRound size={18} className="gold" aria-hidden="true"/></div>
 					{profile&&<form onSubmit={save} className="account-form-grid">
 						{profile.profileLocked&&<div className="account-callout md:col-span-2" role="status"><ShieldCheck size={16}/><span>Verified profile details are locked as of {profile.profileLockAt?new Date(profile.profileLockAt).toLocaleDateString():''}. Contact support to request a correction.</span></div>}
+						{profile.aureviaExchangeId&&<AureviaExchangeId id={profile.aureviaExchangeId} className="md:col-span-2"/>}
 						<div className="account-label md:col-span-2"><span>{translate('profilePhoto')}</span><div className="account-profile-identity mt-2"><ProfileAvatar className="profile-avatar" size={72} alt={translate('profilePhotoAlt')}/><span><b>{profile.name||'Your profile'}</b><AccountTierBadge tier={accountTier||profile.label}/></span><input type="file" accept="image/png,image/jpeg,image/webp" aria-label={translate('chooseProfilePhoto')} onChange={event=>setAvatarFile(event.target.files?.[0]||null)}/><button className="btn min-h-11 bg-white/5" type="button" disabled={!avatarFile||avatarSaving} onClick={()=>void uploadAvatar()}>{avatarSaving?translate('uploading'):translate('uploadPhoto')}</button></div><small className="mt-1 block muted">{translate('privateImage')}</small><Link className="profile-tier-link" href="/tier">View tier requirements</Link></div>
 						<label className="account-label md:col-span-2">{translate('emailAddress')}<input className="input" type="email" autoComplete="email" value={profile.email} disabled/><small className="mt-1 block muted">Email verification: {profile.emailVerified?'Verified':'Not verified'}</small></label>
 						<label className="account-label">{translate('firstName')}<input className="input" autoComplete="given-name" required maxLength={60} value={profile.firstName} disabled={profile.profileLocked} onChange={event=>setProfile({...profile,firstName:event.target.value})}/></label>

@@ -43,24 +43,58 @@ export default function RegistrationExperience(){
 	const [busy,setBusy]=useState(false);
 	const [captchaToken,setCaptchaToken]=useState('');
 	const [captchaLoaded,setCaptchaLoaded]=useState(false);
+	const [captchaUnavailable,setCaptchaUnavailable]=useState(false);
+	const [captchaConfigLoaded,setCaptchaConfigLoaded]=useState(false);
 	const [captchaWidgetId,setCaptchaWidgetId]=useState('');
+	const [captchaSiteKey,setCaptchaSiteKey]=useState('');
 	const captchaContainer=useRef<HTMLDivElement>(null);
 	const router=useRouter();
 	const residence=findCountry(details.residenceCountry);
-	const captchaSiteKey=process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY||'';
 
 	useEffect(()=>{
-		if(!captchaLoaded||!captchaSiteKey||!captchaContainer.current||!window.turnstile)return;
-		const widgetId=window.turnstile.render(captchaContainer.current,{
-			sitekey:captchaSiteKey,
-			action:'register',
-			callback:setCaptchaToken,
-			'expired-callback':()=>setCaptchaToken(''),
-			'error-callback':()=>setCaptchaToken(''),
-		});
-		setCaptchaWidgetId(widgetId);
-		return ()=>window.turnstile?.remove(widgetId);
-	},[captchaLoaded,captchaSiteKey]);
+		let cancelled=false;
+		void fetch('/api/register/security',{cache:'no-store',headers:{accept:'application/json'}})
+			.then(async response=>{
+				if(!response.ok)throw new Error('SECURITY_CONFIGURATION_UNAVAILABLE');
+				return response.json() as Promise<{available?:unknown;siteKey?:unknown}>;
+			})
+			.then(result=>{
+				if(cancelled)return;
+				if(result.available!==true||typeof result.siteKey!=='string'||!result.siteKey.trim()){
+					setCaptchaUnavailable(true);
+					return;
+				}
+				setCaptchaSiteKey(result.siteKey);
+			})
+			.catch(()=>{
+				if(!cancelled)setCaptchaUnavailable(true);
+			})
+			.finally(()=>{
+				if(!cancelled)setCaptchaConfigLoaded(true);
+			});
+		return ()=>{cancelled=true};
+	},[]);
+
+	useEffect(()=>{
+		if(!captchaLoaded||!captchaSiteKey||!captchaContainer.current||captchaUnavailable)return;
+		if(!window.turnstile){
+			setCaptchaUnavailable(true);
+			return;
+		}
+		try{
+			const widgetId=window.turnstile.render(captchaContainer.current,{
+				sitekey:captchaSiteKey,
+				action:'register',
+				callback:token=>{setCaptchaToken(token);setError('')},
+				'expired-callback':()=>{setCaptchaToken('');setError('The security check expired. Please complete it again.')},
+				'error-callback':()=>{setCaptchaToken('');setError('The security check could not be completed. Refresh the page or try again later.')},
+			});
+			setCaptchaWidgetId(widgetId);
+			return ()=>window.turnstile?.remove(widgetId);
+		}catch{
+			setCaptchaUnavailable(true);
+		}
+	},[captchaLoaded,captchaSiteKey,captchaUnavailable]);
 
 	function update<K extends keyof RegistrationDetails>(key:K,value:RegistrationDetails[K]){
 		setDetails(current=>({...current,[key]:value}));
@@ -78,7 +112,7 @@ export default function RegistrationExperience(){
 		if(details.phoneNumber.trim()&&!phone){setPhoneError(translate('validPhone'));invalid=true;}
 		if(details.password!==details.confirmPassword){setPasswordError(translate('passwordMatch'));invalid=true;}
 		if(invalid||!residence)return;
-		if(!captchaToken){setError('Complete the registration security check and try again.');return;}
+		if(!captchaToken){setError('Complete the registration security check before creating your account.');return;}
 		setBusy(true);
 		try{
 			const response=await fetch('/api/register',{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted,captchaToken})});
@@ -122,9 +156,13 @@ export default function RegistrationExperience(){
 					<p className="mt-3 text-xs leading-5 muted">Registration is free. Verify your email before signing in. New accounts start on <span className="tier-badge">Tier 1</span>; identity review remains separate for eligible account services.</p>
 					<label className="mt-4 flex min-h-11 items-start gap-2 text-xs leading-5 muted"><input className="mt-1" type="checkbox" checked={termsAccepted} onChange={event=>setTermsAccepted(event.target.checked)} required/><span>{translate('termsConsent')} <Link className="auth-link" href="/terms">{translate('terms')}</Link>, <Link className="auth-link" href="/privacy">{translate('privacyPolicy')}</Link>, {translate('riskDisclosure')}</span></label>
 				</fieldset>
-				{captchaSiteKey?<><Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onReady={()=>setCaptchaLoaded(true)} onError={()=>setError('Registration security checks are temporarily unavailable. Please try again later.')}/><div ref={captchaContainer} aria-label="Registration security check"/></>:<p className="text-sm text-loss" role="alert">Registration security checks are not configured.</p>}
+				{captchaSiteKey&&!captchaUnavailable&&<Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onReady={()=>setCaptchaLoaded(true)} onError={()=>setCaptchaUnavailable(true)}/>}
+				<div ref={captchaContainer} aria-label="Registration security check"/>
+				{!captchaConfigLoaded&&<p className="text-sm muted" role="status">Loading the secure registration check…</p>}
+				{captchaUnavailable&&<p className="text-sm text-loss" role="alert">We couldn’t load the security check. Refresh the page or try again later.</p>}
+				{captchaSiteKey&&!captchaUnavailable&&!captchaToken&&<p className="text-sm muted" role="status">Complete the security check to continue.</p>}
 				{error&&<p className="auth-error" role="alert">{error}</p>}
-				<button type="submit" disabled={busy||!captchaSiteKey} className="auth-submit flex w-full items-center justify-center gap-2">{busy?translate('creatingAccount'):translate('createAccountButton')}<ArrowRight size={16} aria-hidden="true"/></button>
+				<button type="submit" disabled={busy||!captchaToken} aria-busy={busy} className="auth-submit flex w-full items-center justify-center gap-2">{busy?translate('creatingAccount'):translate('createAccountButton')}<ArrowRight size={16} aria-hidden="true"/></button>
 			</form>
 				<p className="auth-footer">{translate('alreadyRegistered')} <Link href="/login" className="auth-link">{translate('signIn')}</Link></p>
 		<div className="mt-5 flex items-center gap-2 border-t border-white/10 pt-4 text-xs muted"><ShieldCheck size={15} className="gold" aria-hidden="true"/>{translate('accountPrivate')}</div>

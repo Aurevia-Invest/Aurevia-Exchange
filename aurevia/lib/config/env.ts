@@ -51,6 +51,7 @@ export type ServerConfiguration = {
     configured: boolean;
   };
   captcha: {
+    turnstileSiteKey: string;
     turnstileSecretKey: string;
     turnstileConfigured: boolean;
   };
@@ -238,8 +239,9 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
       configured: verificationEmailConfigured || verificationSmsConfigured,
     },
     captcha: {
+      turnstileSiteKey: env('NEXT_PUBLIC_TURNSTILE_SITE_KEY', source),
       turnstileSecretKey: env('TURNSTILE_SECRET_KEY', source),
-      turnstileConfigured: Boolean(env('TURNSTILE_SECRET_KEY', source)),
+      turnstileConfigured: Boolean(env('NEXT_PUBLIC_TURNSTILE_SITE_KEY', source) && env('TURNSTILE_SECRET_KEY', source)),
     },
     execution: {
       realEnabled: booleanEnv('REAL_EXECUTION_ENABLED', source),

@@ -433,7 +433,7 @@ test('dashboard hierarchy remains usable and contained at mobile and desktop wid
 			await expect(page.locator('.mobile-home-greeting')).toBeVisible();
 			await expect(page.locator('.mobile-home-greeting .account-tier-badge')).toHaveText(profile.label);
 			await expect(page.locator('.mobile-balance-card')).toBeVisible();
-			await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
+			await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
 			await expect(page.getByRole('heading',{name:'Recent activity'})).toBeVisible();
 		}else{
 			await expect(page.getByRole('heading',{name:/Welcome back/})).toBeVisible();
@@ -784,8 +784,15 @@ test('sign-in password visibility, recovery link, and account link are accessibl
 test('registration completes through email-code fallback when Akedly is disabled',async({page})=>{
 	const email=fixture('REGISTRATION_EMAIL');
 	const password=fixture('REGISTRATION_PASSWORD');
+	const openProfileSettings=async()=>{
+		await page.goto('/settings');
+		await page.getByRole('link',{name:/Account Details/}).click();
+	};
+	await page.setViewportSize({width:390,height:844});
 	await page.goto('/register');
 	await expect(page.getByRole('heading',{name:'Open an account'})).toBeVisible();
+	await expect(page.getByRole('button',{name:'Create account'})).toBeEnabled();
+	await expectNoHorizontalOverflow(page);
 	await expect(page.getByRole('radio',{name:/DEMO ACCOUNT/})).toBeVisible();
 	const realMode=page.getByRole('radio',{name:/REAL ACCOUNT/});
 	await realMode.check();
@@ -816,11 +823,15 @@ test('registration completes through email-code fallback when Akedly is disabled
 	await page.getByRole('button',{name:'Create account'}).click();
 	const registrationPayload=(await registrationRequest).postDataJSON();
 	expect(registrationPayload).toMatchObject({name:'Temporary Browser Test',country:'United States',phone:'+447400123456',dateOfBirth:'2000-02-29'});
+	expect(registrationPayload.captchaToken).toEqual(expect.any(String));
+	expect(registrationPayload.captchaToken.trim().length).toBeGreaterThan(0);
 	const response=await registrationResponse;
-	expect(response.status()).toBe(201);
-	expect(await response.json()).toMatchObject({verificationRequired:true,authMethod:'email-code'});
+	const responseBody=await response.json();
+	expect(response.status(),JSON.stringify(responseBody)).toBe(201);
+	expect(responseBody).toMatchObject({verificationRequired:true,authMethod:'email-code'});
 	await expect(page).toHaveURL(url=>url.pathname==='/verify-email'&&url.searchParams.get('email')===email);
-	expect(await db.user.findUniqueOrThrow({where:{email},select:{requiresRegistrationVerification:true,emailVerifiedAt:true}})).toEqual({requiresRegistrationVerification:true,emailVerifiedAt:null});
+	expect(await db.user.findUnique({where:{email}})).toBeNull();
+	expect(await db.registrationAttempt.findUniqueOrThrow({where:{email},select:{email:true,verification:{select:{channel:true}}}})).toEqual({email,verification:{channel:'EMAIL'}});
 	await expect.poll(async()=>await (await page.request.get(`${providerOrigin}/stats`)).json()).toMatchObject({email:1,sms:0});
 	const codeResponse=await page.request.get(`${providerOrigin}/test-code?email=${encodeURIComponent(email)}`);
 	expect(codeResponse.ok()).toBe(true);
@@ -835,7 +846,9 @@ test('registration completes through email-code fallback when Akedly is disabled
 	await page.getByLabel('Six-digit email verification code').fill(code);
 	await page.getByRole('button',{name:'Verify email address'}).click();
 	await page.waitForURL('/login?verified=1');
-	expect(await db.user.findUniqueOrThrow({where:{email},select:{requiresRegistrationVerification:true,emailVerifiedAt:true}})).toMatchObject({requiresRegistrationVerification:false,emailVerifiedAt:expect.any(Date)});
+	const verifiedUser=await db.user.findUniqueOrThrow({where:{email},select:{requiresRegistrationVerification:true,emailVerifiedAt:true,aureviaExchangeId:true}});
+	expect(verifiedUser).toMatchObject({requiresRegistrationVerification:false,emailVerifiedAt:expect.any(Date)});
+	expect(verifiedUser.aureviaExchangeId).toMatch(/^AEX-\d{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
 	expect(await db.verificationCode.count({where:{user:{email},channel:'EMAIL'}})).toBe(0);
 	const duplicateRegistration=await page.request.post('/api/register',{data:registrationPayload});
 	expect(duplicateRegistration.status()).toBe(409);
@@ -843,9 +856,9 @@ test('registration completes through email-code fallback when Akedly is disabled
 	await page.getByLabel('Password',{exact:true}).fill(password);
 	await page.getByRole('button',{name:'Sign in'}).click();
 	await page.waitForURL(/dashboard/);
-	await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
+	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
 	await expect(page.locator('.dashboard-profile-panel')).toHaveCount(0);
-	await page.goto('/settings');
+	await openProfileSettings();
 	await expect(page.getByRole('tab',{name:'Profile'})).toBeVisible();
 	await expect(page.getByLabel('Email address')).toHaveValue(email);
 	await page.getByLabel('First name').fill('Edited');
@@ -862,13 +875,14 @@ test('registration completes through email-code fallback when Akedly is disabled
 	expect(await patchResponse.json()).toMatchObject({name:'Edited Persistent Owner',firstName:'Edited',lastName:'Persistent Owner',phone:'+447400123457',country:'United Kingdom',address:null});
 	await expect(page.getByRole('status')).toContainText('Profile saved successfully.');
 	await page.reload();
+	await page.getByRole('link',{name:/Account Details/}).click();
 	await expect(page.getByLabel('First name')).toHaveValue('Edited');
 	await expect(page.getByLabel('Last name')).toHaveValue('Persistent Owner');
 	await expect(page.getByLabel('Phone')).toHaveValue('+447400123457');
 	await expect(page.getByLabel('Country')).toHaveValue('United Kingdom');
 	await expect(page.getByLabel('Address (optional)')).toHaveValue('');
 	await page.goto('/dashboard');
-	await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
+	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
 	const profileResponse=await page.request.get('/api/profile');
 	expect(profileResponse.ok()).toBeTruthy();
 	const profile=await profileResponse.json();
@@ -881,17 +895,17 @@ test('registration completes through email-code fallback when Akedly is disabled
 	const demoWallet=await page.request.get('/api/wallet');
 	expect(Number((await demoWallet.json()).balance)).toBe(5000);
 	await selectAccountMode(page,'REAL');
-	await page.goto('/settings');
+	await openProfileSettings();
 	await expect(page.getByLabel('Address (optional)')).toHaveValue('42 Persistent Test Road');
 	expect(await page.request.get('/api/profile').then(response=>response.json())).toMatchObject({address:'42 Persistent Test Road'});
 	expect((await page.request.get('/api/kyc').then(response=>response.json())).dob).toBe('2000-02-29T00:00:00.000Z');
 	await page.goto('/dashboard');
-	await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
+	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
 	await expect(page.locator('.user-mode-pill')).toContainText('REAL ACCOUNT');
 	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(0);
 	await selectAccountMode(page,'DEMO');
 	await page.goto('/dashboard');
-	await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
+	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
 	await expect(page.locator('.user-mode-pill')).toContainText('DEMO MODE · VIRTUAL');
 	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 	await logout(page);
@@ -899,7 +913,7 @@ test('registration completes through email-code fallback when Akedly is disabled
 	expect(healthAfterLogout.ok()).toBeTruthy();
 	expect(await healthAfterLogout.json()).toMatchObject({ok:true,database:'ok'});
 	await loginAs(page,email,password);
-	await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
+	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
 	expect(await page.request.get('/api/profile').then(response=>response.json())).toMatchObject({name:'Edited Persistent Owner',address:null});
 	await page.goto('/');
 	await expect(page.getByRole('link',{name:/Dashboard/}).first()).toBeVisible();

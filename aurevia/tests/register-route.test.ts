@@ -86,6 +86,17 @@ describe('registration privacy boundary',()=>{
 		expect(mocks.userFindUnique).not.toHaveBeenCalled();
 	});
 
+	it('rejects a missing CAPTCHA token before checking accounts or storing registration data',async()=>{
+		const {captchaToken:_captchaToken,...payloadWithoutCaptcha}=payload;
+		const response=await POST(request(payloadWithoutCaptcha));
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({error:'Complete the registration security check and try again.'});
+		expect(mocks.verifyTurnstile).not.toHaveBeenCalled();
+		expect(mocks.userFindUnique).not.toHaveBeenCalled();
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+	});
+
 	it('does not retain personal details if no email verification provider is configured',async()=>{
 		mocks.emailProviderConfigured.mockReturnValue(false);
 		const response=await POST(request());

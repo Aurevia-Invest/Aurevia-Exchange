@@ -20,7 +20,7 @@ const schema=z.object({
 	phone:z.string().trim().max(16).refine(value=>value===''||isValidE164(value),'Enter a valid phone number with its country code.').optional().or(z.literal('')),
 	accountMode:z.nativeEnum(AccountMode),
 	termsAccepted:z.literal(true),
-	captchaToken:z.string().min(1).max(4096),
+	captchaToken:z.string().trim().min(1).max(2048),
 });
 
 export async function POST(request:Request){
@@ -75,6 +75,7 @@ export async function POST(request:Request){
 		if(error instanceof ZodError){
 			if(error.issues.some(issue=>issue.path[0]==='dateOfBirth'))return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
 			if(error.issues.some(issue=>issue.path[0]==='phone'))return NextResponse.json({error:'Enter a valid phone number with its country code.'},{status:400});
+			if(error.issues.some(issue=>issue.path[0]==='captchaToken'))return NextResponse.json({error:'Complete the registration security check and try again.'},{status:400});
 			return NextResponse.json({error:'Check your name, email, country, password, and consent details.'},{status:400});
 		}
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'){

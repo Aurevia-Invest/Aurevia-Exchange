@@ -1,10 +1,14 @@
-import {afterEach,describe,expect,it,vi} from 'vitest';
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {availableVerificationChannel,deliverVerificationCode,generateVerificationCode,hashVerificationCode,hasConfiguredTermii,registrationVerificationChannel,sendTermiiVerificationToken,verificationCodeMatches,verifyTermiiVerificationToken} from '../lib/verification-delivery';
 
 describe('account verification codes',()=>{
  const previousSecret=process.env.VERIFICATION_CODE_SECRET;
  const deliveryKeys=['VERIFICATION_EMAIL_API_URL','VERIFICATION_EMAIL_API_KEY','VERIFICATION_SMS_API_URL','VERIFICATION_SMS_API_KEY','REGISTRATION_VERIFICATION_ENABLED','AUREVIA_E2E_ALLOW_HTTP_PROVIDER','RESEND_API_KEY','VERIFICATION_EMAIL_FROM','TERMII_API_KEY','TERMII_SENDER_ID','NEXT_PUBLIC_APP_URL'];
  const previousDeliveryValues=Object.fromEntries(deliveryKeys.map(key=>[key,process.env[key]]));
+ beforeEach(()=>{
+  delete process.env.VERIFICATION_CODE_SECRET;
+  for(const key of deliveryKeys)delete process.env[key];
+ });
  afterEach(()=>{
   vi.unstubAllGlobals();
   if(previousSecret===undefined)delete process.env.VERIFICATION_CODE_SECRET;

@@ -28,11 +28,13 @@ describe('registration verification email link',()=>{
 		expect(message.text).toContain('email=person%40example.invalid');
 	});
 
-	it('reports a redacted provider rejection category and HTTP status',async()=>{
+	it('reports provider rejection status and a safe code without retaining response text',async()=>{
 		vi.stubEnv('RESEND_API_KEY','test-resend-key');
 		vi.stubEnv('VERIFICATION_EMAIL_FROM','noreply@example.invalid');
 		vi.stubEnv('NEXT_PUBLIC_APP_URL','https://aurevia.test');
-		vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(null,{status:401})));
+		vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({
+			error:{code:'invalid_api_key',message:'private response for person@example.invalid'},
+		}),{status:401,headers:{'content-type':'application/json'}})));
 		const onFailure=vi.fn();
 
 		await expect(deliverVerificationCode(VerificationChannel.EMAIL,{
@@ -45,7 +47,10 @@ describe('registration verification email link',()=>{
 			provider:'resend',
 			reason:'provider-rejected',
 			httpStatus:401,
+			providerCode:'INVALID_API_KEY',
 		});
+		expect(JSON.stringify(onFailure.mock.calls)).not.toContain('private response');
+		expect(JSON.stringify(onFailure.mock.calls)).not.toContain('person@example.invalid');
 	});
 
 	it('reports timeouts without exposing the request or provider error',async()=>{

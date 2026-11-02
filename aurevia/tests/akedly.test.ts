@@ -80,6 +80,8 @@ describe('Akedly V2 server integration',()=>{
 			digits:6,
 			signature:expectedSignature,
 		});
+		expect(body.timestamp).toEqual(expect.any(Number));
+		expect(Math.abs(Date.now()-Number(body.timestamp))).toBeLessThan(5_000);
 		expect(body).not.toHaveProperty('phoneNumber');
 		expect(attempt).toMatchObject({attemptId:'attempt_1234567890',iframeUrl:'https://auth.akedly.io/auth?attemptId=attempt_1234567890'});
 	});
@@ -116,13 +118,20 @@ describe('Akedly V2 server integration',()=>{
 		await expect(createAkedlyAttempt({email:'person@example.invalid'})).rejects.toThrow('AKEDLY_INVALID_WIDGET_URL');
 	});
 
-	it('retains only the provider HTTP status for a rejected attempt',async()=>{
-		vi.stubGlobal('fetch',vi.fn(async()=>new Response('private provider response',{status:401})));
+	it('retains the HTTP status and only a safe provider code for a rejected attempt',async()=>{
+		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
+			status:'error',
+			error:{code:'invalid_signature',message:'private provider response for person@example.invalid'},
+		}),{status:401,headers:{'content-type':'application/json'}})));
 
-		await expect(createAkedlyAttempt({email:'person@example.invalid'})).rejects.toMatchObject({
+		const failure=await createAkedlyAttempt({email:'person@example.invalid'}).catch(error=>error);
+		expect(failure).toMatchObject({
 			message:'AKEDLY_ATTEMPT_REJECTED',
 			httpStatus:401,
+			providerCode:'INVALID_SIGNATURE',
 		});
+		expect(JSON.stringify(failure)).not.toContain('private provider response');
+		expect(JSON.stringify(failure)).not.toContain('person@example.invalid');
 	});
 
 	it('uses an authenticated server-side attempt status lookup',async()=>{

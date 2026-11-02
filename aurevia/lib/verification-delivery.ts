@@ -8,6 +8,7 @@ type VerificationDeliveryFailure={
 	provider:'resend'|'configured-email-api'|'none';
 	reason:'unsupported-channel'|'missing-email'|'invalid-registration-token'|'invalid-url'|'provider-not-configured'|'timeout'|'network-error'|'provider-rejected';
 	httpStatus?:number;
+	providerCode?:string;
 };
 type VerificationDeliveryOptions={
 	registrationToken?:string;
@@ -29,6 +30,18 @@ function legacyProvider(channel:VerificationChannel){
 	}catch{
 		return null;
 	}
+}
+
+function providerErrorCode(value:unknown){
+	if(typeof value!=='object'||value===null||Array.isArray(value))return undefined;
+	const record=value as Record<string,unknown>;
+	const nested=typeof record.error==='object'&&record.error!==null&&!Array.isArray(record.error)
+		?record.error as Record<string,unknown>
+		:null;
+	const candidate=record.code??record.errorCode??record.error_code
+		??nested?.code??nested?.errorCode??nested?.error_code;
+	if(typeof candidate!=='string'||!/^[A-Za-z][A-Za-z0-9_.-]{1,63}$/.test(candidate))return undefined;
+	return candidate.toUpperCase();
 }
 
 export function hasConfiguredVerificationProvider(channel?:VerificationChannel){
@@ -106,7 +119,8 @@ export async function deliverVerificationCode(channel:VerificationChannel,contac
 				signal:AbortSignal.timeout(8000),
 			});
 			if(!response.ok){
-				options.onFailure?.({provider:'resend',reason:'provider-rejected',httpStatus:response.status});
+				const body=await response.clone().json().catch(()=>null) as unknown;
+				options.onFailure?.({provider:'resend',reason:'provider-rejected',httpStatus:response.status,providerCode:providerErrorCode(body)});
 			}
 			return response.ok;
 		}catch(error){
@@ -126,7 +140,8 @@ export async function deliverVerificationCode(channel:VerificationChannel,contac
 	try{
 		const response=await fetch(configured.url,{method:'POST',headers:{authorization:`Bearer ${configured.key}`,'content-type':'application/json'},body:JSON.stringify({channel:channel.toLowerCase(),to:contact.email,name:contact.name,subject,text}),signal:AbortSignal.timeout(8000)});
 		if(!response.ok){
-			options.onFailure?.({provider:'configured-email-api',reason:'provider-rejected',httpStatus:response.status});
+			const body=await response.clone().json().catch(()=>null) as unknown;
+			options.onFailure?.({provider:'configured-email-api',reason:'provider-rejected',httpStatus:response.status,providerCode:providerErrorCode(body)});
 		}
 		return response.ok;
 	}catch(error){

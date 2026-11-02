@@ -8,11 +8,13 @@ const MAX_WEBHOOK_BYTES=64*1024;
 
 export class AkedlyProviderError extends Error{
 	readonly httpStatus?:number;
+	readonly providerCode?:string;
 
-	constructor(category:string,httpStatus?:number){
+	constructor(category:string,httpStatus?:number,providerCode?:string){
 		super(category);
 		this.name='AkedlyProviderError';
 		this.httpStatus=httpStatus;
+		this.providerCode=providerCode;
 	}
 }
 
@@ -73,7 +75,7 @@ export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyA
 		throw new Error('AKEDLY_PROVIDER_UNAVAILABLE');
 	}
 	const result=await response.json().catch(()=>null) as unknown;
-	if(!response.ok)throw new AkedlyProviderError('AKEDLY_ATTEMPT_REJECTED',response.status);
+	if(!response.ok)throw new AkedlyProviderError('AKEDLY_ATTEMPT_REJECTED',response.status,providerErrorCode(result));
 	if(!isRecord(result)||result.status!=='success'||!isRecord(result.data))throw new Error('AKEDLY_INVALID_PROVIDER_RESPONSE');
 	const {attemptId,iframeUrl,expiresAt}=result.data;
 	if(typeof attemptId!=='string'||attemptId.length<8||attemptId.length>200)throw new Error('AKEDLY_INVALID_PROVIDER_RESPONSE');
@@ -194,4 +196,13 @@ function completedWithinAttempt(transaction:Record<string,unknown>,widgetAttempt
 
 function isRecord(value:unknown):value is Record<string,unknown>{
 	return typeof value==='object'&&value!==null&&!Array.isArray(value);
+}
+
+function providerErrorCode(value:unknown){
+	if(!isRecord(value))return undefined;
+	const nested=isRecord(value.error)?value.error:null;
+	const candidate=value.code??value.errorCode??value.error_code
+		??nested?.code??nested?.errorCode??nested?.error_code;
+	if(typeof candidate!=='string'||!/^[A-Za-z][A-Za-z0-9_.-]{1,63}$/.test(candidate))return undefined;
+	return candidate.toUpperCase();
 }

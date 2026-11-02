@@ -13,6 +13,15 @@ const mocks=vi.hoisted(()=>({
 	codeUpdateMany:vi.fn(),
 	codeDeleteMany:vi.fn(),
 	akedlyConfigured:vi.fn(),
+	AkedlyProviderError:class extends Error{
+		readonly httpStatus?:number;
+		readonly providerCode?:string;
+		constructor(httpStatus?:number,providerCode?:string){
+			super('AKEDLY_ATTEMPT_REJECTED');
+			this.httpStatus=httpStatus;
+			this.providerCode=providerCode;
+		}
+	},
 	startAkedly:vi.fn(),
 	startAkedlyRegistration:vi.fn(),
 	hasEmailProvider:vi.fn(),
@@ -46,7 +55,7 @@ vi.mock('@/lib/db',()=>({db:{
 	},
 }}));
 vi.mock('@/lib/akedly',()=>({
-	AkedlyProviderError:class extends Error{readonly httpStatus?:number},
+	AkedlyProviderError:mocks.AkedlyProviderError,
 	akedlyIsConfigured:mocks.akedlyConfigured,
 }));
 vi.mock('@/lib/akedly-verification',()=>({
@@ -342,6 +351,69 @@ describe('registration verification resend',()=>{
 			message:expect.stringContaining('Akedly could not start'),
 		});
 		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+	});
+
+	it('preserves a valid pending registration when Akedly rejects and email fallback definitively fails',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-1',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:null,
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new mocks.AkedlyProviderError(401,'INVALID_SIGNATURE'));
+		mocks.deliverCode.mockImplementation(async(
+			_channel:unknown,
+			_contact:unknown,
+			_code:unknown,
+			options:{onFailure?:(failure:{provider:string;reason:string;httpStatus?:number;providerCode?:string})=>void},
+		)=>{
+			options.onFailure?.({provider:'resend',reason:'provider-rejected',httpStatus:401,providerCode:'INVALID_API_KEY'});
+			return false;
+		});
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(502);
+		expect(await response.json()).toMatchObject({code:'EMAIL_DELIVERY_FAILED'});
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+		expect(mocks.registrationVerificationDeleteMany).toHaveBeenCalledWith({
+			where:{registrationAttemptId:'registration-1',codeHash:'hashed-value'},
+		});
+		expect(warning).toHaveBeenCalledWith(
+			'[registration-verification] Akedly initiation failed; using the configured email fallback.',
+			expect.objectContaining({category:'AKEDLY_ATTEMPT_REJECTED',httpStatus:401,providerCode:'INVALID_SIGNATURE'}),
+		);
+		expect(warning).toHaveBeenCalledWith(
+			'[registration-verification] Email delivery failed.',
+			expect.objectContaining({provider:'resend',reason:'provider-rejected',httpStatus:401,providerCode:'INVALID_API_KEY'}),
+		);
+		warning.mockRestore();
+	});
+
+	it('recovers the same pending registration when email fallback accepts delivery',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-1',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:null,
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new mocks.AkedlyProviderError(401,'INVALID_SIGNATURE'));
+
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({method:'email-code',fallbackFrom:'akedly'});
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+		expect(mocks.registrationVerificationCreate).toHaveBeenCalledOnce();
+		expect(mocks.deliverCode).toHaveBeenCalledOnce();
+		expect(mocks.userFindUnique).not.toHaveBeenCalled();
 	});
 
 	it('preserves the temporary registration and clears the failed challenge reservation when delivery fails',async()=>{

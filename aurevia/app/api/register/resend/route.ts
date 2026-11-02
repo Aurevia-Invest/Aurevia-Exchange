@@ -47,6 +47,7 @@ function akedlyFailureDiagnostic(error:unknown){
 	return {
 		category:error instanceof Error?error.message:'unknown',
 		...(error instanceof AkedlyProviderError&&error.httpStatus?{httpStatus:error.httpStatus}:{}),
+		...(error instanceof AkedlyProviderError&&error.providerCode?{providerCode:error.providerCode}:{}),
 	};
 }
 
@@ -138,7 +139,7 @@ export async function POST(request:Request){
 					data:{registrationAttemptId:registrationAttempt.id,codeHash:reservation,channel:VerificationChannel.EMAIL,expiresAt,resendAfter},
 				});
 			}
-			let deliveryFailure:{reason:string;httpStatus?:number}|undefined;
+			let deliveryFailure:{reason:string;httpStatus?:number;providerCode?:string}|undefined;
 			const delivered=await deliverVerificationCode(VerificationChannel.EMAIL,{
 				email:registrationAttempt.email,
 				name:registrationAttempt.name,

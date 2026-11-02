@@ -279,6 +279,7 @@ model User {
   termsAcceptedAt                  DateTime?
   kycStatus                        KycStatus                         @default(PENDING)
   kycDocuments                     KycDocument[]
+  emailVerifiedAt                  DateTime?
   verifiedAt                       DateTime?
   verifiedChannel                  VerificationChannel?
   requiresRegistrationVerification Boolean                           @default(false)

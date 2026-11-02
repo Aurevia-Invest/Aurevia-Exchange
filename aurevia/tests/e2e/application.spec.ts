@@ -781,7 +781,7 @@ test('sign-in password visibility, recovery link, and account link are accessibl
 	await expectNoHorizontalOverflow(page);
 });
 
-test('registration is free and does not require email verification before sign-in',async({page})=>{
+test('registration completes through email-code fallback when Akedly is disabled',async({page})=>{
 	const email=fixture('REGISTRATION_EMAIL');
 	const password=fixture('REGISTRATION_PASSWORD');
 	await page.goto('/register');
@@ -816,13 +816,29 @@ test('registration is free and does not require email verification before sign-i
 	await page.getByRole('button',{name:'Create account'}).click();
 	const registrationPayload=(await registrationRequest).postDataJSON();
 	expect(registrationPayload).toMatchObject({name:'Temporary Browser Test',country:'United States',phone:'+447400123456',dateOfBirth:'2000-02-29'});
-	expect(await (await registrationResponse).json()).toMatchObject({verificationRequired:false,authMethod:'credentials'});
-	await expect(page).toHaveURL('/login?registered=1');
-	expect(await db.user.findUniqueOrThrow({where:{email},select:{requiresRegistrationVerification:true}})).toEqual({requiresRegistrationVerification:false});
+	const response=await registrationResponse;
+	expect(response.status()).toBe(201);
+	expect(await response.json()).toMatchObject({verificationRequired:true,authMethod:'email-code'});
+	await expect(page).toHaveURL(url=>url.pathname==='/verify-email'&&url.searchParams.get('email')===email);
+	expect(await db.user.findUniqueOrThrow({where:{email},select:{requiresRegistrationVerification:true,emailVerifiedAt:true}})).toEqual({requiresRegistrationVerification:true,emailVerifiedAt:null});
+	await expect.poll(async()=>await (await page.request.get(`${providerOrigin}/stats`)).json()).toMatchObject({email:1,sms:0});
+	const codeResponse=await page.request.get(`${providerOrigin}/test-code?email=${encodeURIComponent(email)}`);
+	expect(codeResponse.ok()).toBe(true);
+	const {code}=await codeResponse.json() as {code:string};
+	await page.goto('/login');
+	await page.getByLabel('Email or administrator username').fill(email);
+	await page.getByLabel('Password',{exact:true}).fill(password);
+	await page.getByRole('button',{name:'Sign in'}).click();
+	await expect(page.getByRole('alert')).toBeVisible();
+	await page.goto(`${appOrigin}/verify-email?email=${encodeURIComponent(email)}`);
+	await expect(page.getByLabel('Six-digit email verification code')).toBeVisible();
+	await page.getByLabel('Six-digit email verification code').fill(code);
+	await page.getByRole('button',{name:'Verify email address'}).click();
+	await page.waitForURL('/login?verified=1');
+	expect(await db.user.findUniqueOrThrow({where:{email},select:{requiresRegistrationVerification:true,emailVerifiedAt:true}})).toMatchObject({requiresRegistrationVerification:false,emailVerifiedAt:expect.any(Date)});
 	expect(await db.verificationCode.count({where:{user:{email},channel:'EMAIL'}})).toBe(0);
-	const providerStats=await page.request.get(`${providerOrigin}/stats`);
-	expect(await providerStats.json()).toMatchObject({email:0,sms:0});
-	expect(await db.user.findUniqueOrThrow({where:{email},select:{requiresRegistrationVerification:true,verifiedAt:true}})).toEqual({requiresRegistrationVerification:false,verifiedAt:null});
+	const duplicateRegistration=await page.request.post('/api/register',{data:registrationPayload});
+	expect(duplicateRegistration.status()).toBe(409);
 	await page.getByLabel('Email or administrator username').fill(email);
 	await page.getByLabel('Password',{exact:true}).fill(password);
 	await page.getByRole('button',{name:'Sign in'}).click();
@@ -1887,9 +1903,10 @@ test('administrator user and KYC actions persist and report protected actions',a
 		const refreshed=await page.request.get('/api/admin/users').then(response=>response.json());
 		return refreshed.find((item:{id:string})=>item.id===investor.id)?.kycStatus;
 	}).toBe('APPROVED');
-	const approvedInvestor=await db.user.findUniqueOrThrow({where:{id:investor.id},select:{requiresRegistrationVerification:true,verifiedAt:true}});
-	expect(approvedInvestor.requiresRegistrationVerification).toBe(false);
+	const approvedInvestor=await db.user.findUniqueOrThrow({where:{id:investor.id},select:{requiresRegistrationVerification:true,verifiedAt:true,emailVerifiedAt:true}});
+	expect(approvedInvestor.requiresRegistrationVerification).toBe(true);
 	expect(approvedInvestor.verifiedAt).toBeInstanceOf(Date);
+	expect(approvedInvestor.emailVerifiedAt).toBeNull();
 	const verifiedResponse=await page.request.get(`/api/admin/verified-accounts?search=${encodeURIComponent(fixture('INVESTOR_EMAIL'))}&tier=1&status=ACTIVE`);
 	expect(verifiedResponse.ok()).toBe(true);
 	const verifiedResults=await verifiedResponse.json();
@@ -2514,7 +2531,7 @@ test('browser notification settings explain denied permission without prompting 
 	await expectNoHorizontalOverflow(page);
 });
 
-test('account deletion reauthenticates, preserves ledger history, and permits registration again',async({page})=>{
+test('account deletion preserves ledger history and re-registration fails closed without Akedly',async({page})=>{
 	const userId=fixture('DELETE_USER_ID');
 	const email=fixture('DELETE_EMAIL');
 	const password=fixture('DELETE_PASSWORD');
@@ -2541,14 +2558,8 @@ test('account deletion reauthenticates, preserves ledger history, and permits re
 
 	const newPassword='NewE2e1!Password';
 	const registered=await page.request.post('/api/register',{data:{name:'Replacement E2E User',email,password:newPassword,country:'Test',dateOfBirth:'1990-01-01',accountMode:'DEMO',termsAccepted:true}});
-	expect(registered.status()).toBe(201);
-	const replacement=await db.user.findUniqueOrThrow({where:{email},select:{id:true,status:true,approvedTier:true}});
-	expect(replacement).toMatchObject({status:'ACTIVE',approvedTier:1});
-	expect(replacement.id).not.toBe(userId);
-	const replacementCode=await page.request.get(`${providerOrigin}/test-code?email=${encodeURIComponent(email)}`).then(response=>response.json());
-	expect((await page.request.post('/api/register/verify',{data:{email,code:replacementCode.code}})).status()).toBe(200);
-	await loginAs(page,email,newPassword);
-	await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
+	expect(registered.status()).toBe(503);
+	expect(await db.user.findUnique({where:{email}})).toBeNull();
 });
 
 test('admin broadcast lifecycle is persisted and visible to active users without inventing a stream',async({browser,page})=>{

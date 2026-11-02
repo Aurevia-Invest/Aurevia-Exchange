@@ -7,6 +7,7 @@ import {createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
 import {verificationConfig} from '@/lib/config';
 import {verificationCodeMatches,verifyTermiiVerificationToken} from '@/lib/verification-delivery';
+import {akedlyAttemptIdFromReference} from '@/lib/akedly-verification';
 
 const schema=z.object({code:z.string().regex(/^\d{6}$/)});
 
@@ -26,6 +27,7 @@ export async function POST(request:Request){
 
 		const challenge=await db.verificationCode.findUnique({where:{userId:user.id}});
 		if(!challenge||challenge.channel!==VerificationChannel.SMS||!challenge.providerReference)return NextResponse.json({error:'Request a new phone verification code.'},{status:400});
+		if(akedlyAttemptIdFromReference(challenge.providerReference))return NextResponse.json({error:'Complete phone verification in the secure Akedly widget.'},{status:409});
 		const now=new Date();
 		if(challenge.expiresAt<=now){
 			await db.verificationCode.deleteMany({where:{id:challenge.id,expiresAt:{lte:now}}});

@@ -3,7 +3,7 @@
 import {useEffect,useState} from 'react';
 import {Activity,AlertTriangle,Check,ExternalLink,KeyRound,RefreshCw,ShieldCheck,X} from 'lucide-react';
 
-type Status='CONNECTED'|'MISSING_CREDENTIALS'|'CONFIGURATION_REQUIRED'|'CONNECTION_FAILED'|'PROVIDER_UNAVAILABLE'|'PENDING_ADMIN_APPROVAL'|'NOT_CONFIGURED';
+type Status='CONNECTED'|'MISSING_CREDENTIALS'|'CONFIGURATION_REQUIRED'|'CONNECTION_FAILED'|'PROVIDER_UNAVAILABLE'|'PENDING_ADMIN_APPROVAL'|'NOT_CONFIGURED'|'DISABLED';
 type Integration={id:string;name:string;status:Status;detail:string;feature:string;documentation:string;checkedAt:string;canTest:boolean};
 type AiProvider={provider:string;status:Status;model:string|null;availableModels:number};
 type AiFeature={id:string;label:string;description:string;enabled:boolean};
@@ -97,7 +97,7 @@ export default function AdminCommandCenter(){
 		finally{setBusy('')}
 	}
 
-	const missing=data?.integrations.filter(item=>item.status==='MISSING_CREDENTIALS'||item.status==='CONFIGURATION_REQUIRED')||[];
+	const missing=data?.integrations.filter(item=>item.status==='MISSING_CREDENTIALS'||item.status==='CONFIGURATION_REQUIRED'||item.status==='DISABLED')||[];
 	return <div className="admin-command-center">
 		<section className="admin-command-center-overview" aria-label="AI engine status">
 			<div><span className="admin-command-center-kicker"><Activity size={14}/> CENTRAL AI ENGINE</span><h2>{data?.ai.activeProvider?`${data.ai.activeProvider} · ${data.ai.activeModel}`:'No verified free model active'}</h2><p>Configured preference: {data?`${data.ai.configuredProvider} · ${data.ai.configuredModel}`:'Checking providers…'} · AI output is generated analysis, not verified external information.</p></div>

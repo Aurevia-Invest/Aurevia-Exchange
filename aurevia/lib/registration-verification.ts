@@ -2,7 +2,7 @@ export function requiresRegistrationVerification(
   role:'USER'|'ADMIN',
   verificationEnabled:boolean,
   userRequiresVerification:boolean,
-  verifiedAt:Date|null,
+  emailVerifiedAt:Date|null,
 ){
-  return role==='USER'&&verificationEnabled&&userRequiresVerification&&!verifiedAt;
+  return role==='USER'&&verificationEnabled&&userRequiresVerification&&!emailVerifiedAt;
 }

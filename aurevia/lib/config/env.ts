@@ -90,6 +90,16 @@ export type ServerConfiguration = {
     configured: boolean;
     finnhubApiKey: string;
   };
+  akedly: {
+    enabled: boolean;
+    apiKey: string;
+    pipelineId: string;
+    widgetId: string;
+    publicKey: string;
+    widgetSecret: string;
+    webhookSecret: string;
+    configured: boolean;
+  };
 };
 
 export type PublicConfiguration = {
@@ -163,6 +173,15 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
   const paymentConfigured = Boolean(env('PAYMENT_PROVIDER', source) && env('PAYMENT_API_URL', source) && env('PAYMENT_API_KEY', source));
   const finnhubApiKey = env('FINNHUB_API_KEY', source);
   const marketDataConfigured = Boolean(env('MARKET_DATA_API_URL', source) || finnhubApiKey);
+  const akedly = {
+    enabled: env('AKEDLY_ENABLED', source).toLowerCase() === 'true',
+    apiKey: env('AKEDLY_API_KEY', source),
+    pipelineId: env('AKEDLY_PIPELINE_ID', source),
+    widgetId: env('AKEDLY_WIDGET_ID', source),
+    publicKey: env('AKEDLY_PUBLIC_KEY', source),
+    widgetSecret: env('AKEDLY_WIDGET_SECRET', source),
+    webhookSecret: env('AKEDLY_WEBHOOK_SECRET', source),
+  };
 
   return {
     database: {
@@ -210,7 +229,7 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
       smsApiUrl: env('VERIFICATION_SMS_API_URL', source),
       smsApiKey: env('VERIFICATION_SMS_API_KEY', source),
       appUrl: cleanUrl(env('NEXT_PUBLIC_APP_URL', source) || env('NEXTAUTH_URL', source) || env('RENDER_EXTERNAL_URL', source) || 'https://aurevia-exchange-6hfi.onrender.com'),
-      registrationVerificationEnabled: false,
+      registrationVerificationEnabled: true,
       phoneVerificationRequired: false,
       configured: verificationEmailConfigured || verificationSmsConfigured,
     },
@@ -253,6 +272,10 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
       apiKey: env('MARKET_DATA_API_KEY', source),
       configured: marketDataConfigured,
       finnhubApiKey,
+    },
+    akedly: {
+      ...akedly,
+      configured: Boolean(akedly.apiKey&&akedly.pipelineId&&akedly.widgetId&&akedly.publicKey&&akedly.widgetSecret&&akedly.webhookSecret),
     },
   };
 }
@@ -303,6 +326,7 @@ export function configurationSummary(config: ServerConfiguration) {
     },
     marketDataConfigured: config.marketData.configured,
     finnhubConfigured: Boolean(config.marketData.finnhubApiKey),
+    akedlyConfigured: config.akedly.configured,
     paymentConfigured: config.payment.configured,
   };
 }

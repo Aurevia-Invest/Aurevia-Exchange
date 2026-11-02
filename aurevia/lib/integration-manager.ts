@@ -6,8 +6,8 @@ import {getAlpacaMarketDataOptions} from '@/lib/market-data-service';
 import {getFinnhubQuote} from '@/lib/providers/finnhub-market-data';
 import {getAlpacaPaperAccountHealth} from '@/lib/providers/alpaca-crypto-provider';
 
-export type IntegrationStatus='CONNECTED'|'MISSING_CREDENTIALS'|'CONFIGURATION_REQUIRED'|'CONNECTION_FAILED'|'PROVIDER_UNAVAILABLE'|'PENDING_ADMIN_APPROVAL'|'NOT_CONFIGURED';
-export type IntegrationId='openrouter'|'gemini'|'groq'|'alpaca'|'finnhub'|'currency'|'supabase_auth'|'supabase_storage'|'resend'|'termii'|'smtp'|'browser_push'|'gnews'|'payment'|'database';
+export type IntegrationStatus='CONNECTED'|'MISSING_CREDENTIALS'|'CONFIGURATION_REQUIRED'|'CONNECTION_FAILED'|'PROVIDER_UNAVAILABLE'|'PENDING_ADMIN_APPROVAL'|'NOT_CONFIGURED'|'DISABLED';
+export type IntegrationId='openrouter'|'gemini'|'groq'|'alpaca'|'finnhub'|'currency'|'supabase_auth'|'supabase_storage'|'resend'|'termii'|'smtp'|'browser_push'|'gnews'|'payment'|'database'|'akedly';
 export type IntegrationCheck={id:IntegrationId;name:string;status:IntegrationStatus;detail:string;feature:string;documentation:string;checkedAt:string;canTest:boolean};
 
 const docs:Record<IntegrationId,string>={
@@ -16,6 +16,7 @@ const docs:Record<IntegrationId,string>={
 	supabase_auth:'https://supabase.com/docs/guides/auth',supabase_storage:'https://supabase.com/docs/guides/storage',resend:'https://resend.com/docs/api-reference/domains/list-domains',
 	termii:'https://developers.termii.com/',smtp:'https://nodemailer.com/smtp/',browser_push:'https://developer.mozilla.org/en-US/docs/Web/API/Push_API',
 	gnews:'https://docs.gnews.io/',payment:'https://render.com/docs/configure-environment-variables',database:'https://supabase.com/docs/guides/database/connecting-to-postgres',
+	akedly:'https://docs.akedly.io/authentication/v2',
 };
 
 type AiEngineStatus=Awaited<ReturnType<typeof getAiEngineStatus>>;
@@ -154,19 +155,33 @@ export async function checkIntegration(id:IntegrationId,aiEngineStatus?:Promise<
 		const config=getServerConfiguration().verification;
 		return checkConfiguredOnly(id,'Termii SMS',Boolean(config.termiiApiKey&&config.termiiSenderId),'Phone verification','TERMII_API_KEY and TERMII_SENDER_ID are required.');
 	}
+	if(id==='akedly'){
+		const config=getServerConfiguration().akedly;
+		const missing=[
+			['AKEDLY_API_KEY',config.apiKey],
+			['AKEDLY_PIPELINE_ID',config.pipelineId],
+			['AKEDLY_WIDGET_ID',config.widgetId],
+			['AKEDLY_PUBLIC_KEY',config.publicKey],
+			['AKEDLY_WIDGET_SECRET',config.widgetSecret],
+			['AKEDLY_WEBHOOK_SECRET',config.webhookSecret],
+		].filter(([,value])=>!value).map(([name])=>name);
+		if(missing.length)return item('akedly','Akedly authentication','MISSING_CREDENTIALS',`Missing server-side configuration: ${missing.join(', ')}.`,'Email and phone verification',false);
+		if(!config.enabled)return item('akedly','Akedly authentication','DISABLED','Credentials are configured, but Akedly remains disabled until live delivery and webhook verification are completed. Set AKEDLY_ENABLED=true only after those checks pass.','Email and phone verification',false);
+		return item('akedly','Akedly authentication','CONFIGURATION_REQUIRED','Credentials are configured, but Akedly has no read-only health check. Test a controlled email and phone verification, including the configured webhook, before relying on delivery.','Email and phone verification',false);
+	}
 	if(id==='browser_push')return checkConfiguredOnly(id,'Browser push',Boolean(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim()&&process.env.VAPID_PRIVATE_KEY?.trim()&&process.env.VAPID_SUBJECT?.trim()&&process.env.PUSH_SUBSCRIPTION_ENCRYPTION_KEY?.trim()),'Web push notifications','VAPID keys, subject, and subscription encryption key are required.');
 	const payment=getServerConfiguration().payment;
 	return item('payment','Payment processing',payment.configured?'PENDING_ADMIN_APPROVAL':'NOT_CONFIGURED',payment.configured?'Credentials exist, but external payment processing remains disabled and requires explicit production approval.':'External payment processing is not configured or enabled.','External deposits and payouts',false);
 }
 
 export async function getIntegrationInventory(aiStatus?:Promise<AiEngineStatus>):Promise<IntegrationCheck[]>{
-	const ids:IntegrationId[]=['openrouter','gemini','groq','alpaca','finnhub','currency','supabase_auth','supabase_storage','resend','termii','smtp','browser_push','gnews','payment','database'];
+	const ids:IntegrationId[]=['openrouter','gemini','groq','alpaca','finnhub','currency','supabase_auth','supabase_storage','resend','termii','smtp','browser_push','gnews','payment','database','akedly'];
 	const aiEngineStatus=aiStatus||getAiEngineStatus();
 	return Promise.all(ids.map(id=>checkIntegration(id,aiEngineStatus)));
 }
 
 export function isIntegrationId(value:unknown):value is IntegrationId{
-	return typeof value==='string'&&['openrouter','gemini','groq','alpaca','finnhub','currency','supabase_auth','supabase_storage','resend','termii','smtp','browser_push','gnews','payment','database'].includes(value);
+	return typeof value==='string'&&['openrouter','gemini','groq','alpaca','finnhub','currency','supabase_auth','supabase_storage','resend','termii','smtp','browser_push','gnews','payment','database','akedly'].includes(value);
 }
 
 export function mapAiStatusForDisplay(value:string){return aiStatus(value)}

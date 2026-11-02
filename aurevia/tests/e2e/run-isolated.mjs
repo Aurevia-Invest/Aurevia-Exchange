@@ -68,7 +68,7 @@ try{
 	portReservations.push(providerPortReservation.server);
 	const appUrl=`http://127.0.0.1:${appPortReservation.port}`;
 	const providerUrl=`http://127.0.0.1:${providerPortReservation.port}`;
-	const environment={...process.env,DATABASE_URL:databaseUrl,DIRECT_URL:databaseUrl,AUREVIA_E2E_DATABASE_URL:databaseUrl,AUREVIA_E2E_DIRECT_URL:databaseUrl,AUREVIA_E2E_APP_PORT:String(appPortReservation.port),AUREVIA_E2E_PROVIDER_PORT:String(providerPortReservation.port),AUREVIA_E2E_APP_URL:appUrl,AUREVIA_E2E_PROVIDER_URL:providerUrl,CRON_SECRET:randomUUID(),PORT:String(appPortReservation.port),NODE_ENV:'production',ALPACA_PAPER_ORDERS_ENABLED:'false',REAL_EXECUTION_ENABLED:'false',FINNHUB_API_KEY:'',WITHDRAWAL_DESTINATION_ENCRYPTION_KEY:Buffer.alloc(32,1).toString('base64')};
+	const environment={...process.env,DATABASE_URL:databaseUrl,DIRECT_URL:databaseUrl,AUREVIA_E2E_DATABASE_URL:databaseUrl,AUREVIA_E2E_DIRECT_URL:databaseUrl,AUREVIA_E2E_APP_PORT:String(appPortReservation.port),AUREVIA_E2E_PROVIDER_PORT:String(providerPortReservation.port),AUREVIA_E2E_APP_URL:appUrl,AUREVIA_E2E_PROVIDER_URL:providerUrl,CRON_SECRET:randomUUID(),PORT:String(appPortReservation.port),NODE_ENV:'production',ALPACA_PAPER_ORDERS_ENABLED:'false',REAL_EXECUTION_ENABLED:'false',FINNHUB_API_KEY:'',AKEDLY_ENABLED:'false',AKEDLY_API_KEY:'',AKEDLY_PIPELINE_ID:'',AKEDLY_WIDGET_ID:'',AKEDLY_PUBLIC_KEY:'',AKEDLY_WIDGET_SECRET:'',AKEDLY_WEBHOOK_SECRET:'',WITHDRAWAL_DESTINATION_ENCRYPTION_KEY:Buffer.alloc(32,1).toString('base64')};
 	for(const name of Object.keys(environment))if(/SUPABASE|STORAGE/i.test(name))environment[name]='';
 	Object.assign(environment,{SUPABASE_URL:'',SUPABASE_SERVICE_ROLE_KEY:'',NEXT_PUBLIC_SUPABASE_URL:'',NEXT_PUBLIC_SUPABASE_ANON_KEY:''});
 	let ready=false;

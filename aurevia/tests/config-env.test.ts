@@ -71,6 +71,34 @@ describe('canonical environment configuration',()=>{
     expect(JSON.stringify(publicConfig)).not.toContain('private-service-key');
   });
 
+  it('keeps Akedly credentials server-side and reports only whether the set is complete',()=>{
+    const akedlySource={
+      AKEDLY_API_KEY:'test-api-key',
+      AKEDLY_PIPELINE_ID:'test-pipeline',
+      AKEDLY_WIDGET_ID:'test-widget',
+      AKEDLY_PUBLIC_KEY:'test-public-key',
+      AKEDLY_WIDGET_SECRET:'test-widget-secret',
+      AKEDLY_WEBHOOK_SECRET:'test-webhook-secret',
+    };
+    const config=getServerConfiguration(akedlySource);
+
+    expect(config.akedly).toMatchObject({
+      enabled:false,
+      apiKey:'test-api-key',
+      pipelineId:'test-pipeline',
+      widgetId:'test-widget',
+      publicKey:'test-public-key',
+      configured:true,
+    });
+    expect(getServerConfiguration({...akedlySource,AKEDLY_ENABLED:'true'}).akedly.enabled).toBe(true);
+    expect(config.akedly.widgetSecret).toBe('test-widget-secret');
+    expect(config.akedly.webhookSecret).toBe('test-webhook-secret');
+    expect(getServerConfiguration({AKEDLY_API_KEY:'test-api-key'}).akedly.configured).toBe(false);
+    expect(JSON.stringify(getPublicConfiguration(akedlySource))).not.toContain('test-api-key');
+    expect(JSON.stringify(getPublicConfiguration(akedlySource))).not.toContain('test-widget-secret');
+    expect(JSON.stringify(getPublicConfiguration(akedlySource))).not.toContain('test-webhook-secret');
+  });
+
   it('detects optional integrations without requiring credentials',()=>{
     const config=getServerConfiguration({
       REAL_EXECUTION_ENABLED:'false',
@@ -92,14 +120,14 @@ describe('canonical environment configuration',()=>{
     expect(getServerConfiguration({SUPPORT_PHONE:'+1 555 010 1234'}).smtp.supportPhone).toBe('+1 555 010 1234');
   });
 
-  it('keeps signup email verification disabled even when legacy flags are set',()=>{
-    expect(getServerConfiguration({}).verification.registrationVerificationEnabled).toBe(false);
+  it('requires signup email verification even when legacy flags disable it',()=>{
+    expect(getServerConfiguration({}).verification.registrationVerificationEnabled).toBe(true);
     expect(getServerConfiguration({}).verification.appUrl).toBe('https://aurevia-exchange-6hfi.onrender.com');
     expect(getServerConfiguration({
       REGISTRATION_VERIFICATION_ENABLED:'true',
       PHONE_VERIFICATION_REQUIRED:'true',
     }).verification).toMatchObject({
-      registrationVerificationEnabled:false,
+      registrationVerificationEnabled:true,
       phoneVerificationRequired:false,
     });
   });

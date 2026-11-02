@@ -81,7 +81,7 @@ export const authOptions:NextAuthOptions={
           return tx.user.create({data:{email:configuredEmail,passwordHash,name:authConfig.adminUsername!.trim(),role:Role.ADMIN,status:UserStatus.ACTIVE}});
         },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
       }
-      const registrationVerificationRequired=u&&requiresRegistrationVerification(u.role,serverConfig.verification.registrationVerificationEnabled,u.requiresRegistrationVerification,u.verifiedAt);
+      const registrationVerificationRequired=u&&requiresRegistrationVerification(u.role,serverConfig.verification.registrationVerificationEnabled,u.requiresRegistrationVerification,u.emailVerifiedAt);
       if(!u||u.status!=='ACTIVE'||registrationVerificationRequired){
         await writeLoginAudit('FAILED',u?.id,undefined,!u?'ACCOUNT_NOT_FOUND':u.status!=='ACTIVE'?'ACCOUNT_INACTIVE':'VERIFICATION_REQUIRED');
         return null;

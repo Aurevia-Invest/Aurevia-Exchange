@@ -10,6 +10,7 @@ import type {TranslationKey} from '@/lib/i18n';
 type VerificationStatus='PENDING'|'APPROVED'|'REJECTED'|'NEEDS_CHANGES';
 type VerificationForm={legalName:string;dob:string;address:string;idType:string;idNumber:string};
 type KycDocument={id:string;kind:string;filename:string;mimeType:string;size:number;status:string;uploadedAt:string;reviewedAt:string|null;reviewNote:string|null};
+type AkedlyPhoneAttempt={attemptId:string;iframeUrl:string;expiresAt:string};
 const emptyForm:VerificationForm={legalName:'',dob:'',address:'',idType:'PASSPORT',idNumber:''};
 
 const statusCopy:Record<VerificationStatus,{label:TranslationKey;description:TranslationKey}>={
@@ -37,6 +38,7 @@ export default function Kyc(){
   const [uploading,setUploading]=useState(false);
   const [phone,setPhone]=useState('');
   const [phoneCode,setPhoneCode]=useState('');
+  const [phoneAttempt,setPhoneAttempt]=useState<AkedlyPhoneAttempt|null>(null);
   const [phoneVerified,setPhoneVerified]=useState(false);
   const [sendingPhoneCode,setSendingPhoneCode]=useState(false);
   const [verifyingPhoneCode,setVerifyingPhoneCode]=useState(false);
@@ -68,6 +70,33 @@ export default function Kyc(){
     return()=>{active=false};
   },[load,retryCount]);
 
+  useEffect(()=>{
+    if(!phoneAttempt)return;
+    let active=true;
+    let timeout:ReturnType<typeof setTimeout>;
+    const check=async()=>{
+      try{
+        const response=await fetch('/api/kyc/phone/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({attemptId:phoneAttempt.attemptId})});
+        if(response.ok){
+          const result=await response.json();
+          if(result.verified){
+            if(active){setPhoneVerified(true);setPhoneMessage('Your phone number is verified.');setPhoneAttempt(null)}
+            return;
+          }
+          if(result.expired){
+            if(active){setPhoneAttempt(null);setPhoneMessage('This phone verification attempt expired. Start a new attempt to continue.')}
+            return;
+          }
+        }
+      }catch{
+        if(active)setPhoneMessage('Phone verification is still being checked. Keep this page open or check again shortly.');
+      }
+      if(active)timeout=setTimeout(()=>void check(),3000);
+    };
+    timeout=setTimeout(()=>void check(),3000);
+    return()=>{active=false;clearTimeout(timeout)};
+  },[phoneAttempt]);
+
   const completed=[form.legalName,form.dob,form.address,form.idType,form.idNumber].filter(Boolean).length;
   const completion=Math.round(completed/5*100);
   const state={label:translate(statusCopy[status].label),description:translate(statusCopy[status].description)};
@@ -93,6 +122,9 @@ export default function Kyc(){
       const result=await response.json();
       if(!response.ok)throw new Error(result.error||'Unable to send a phone verification code.');
       setPhoneVerified(false);setPhoneCode('');setPhoneMessage(result.message||'A verification code was sent to your phone.');
+      if(result.provider==='akedly'&&typeof result.attemptId==='string'&&typeof result.iframeUrl==='string'&&typeof result.expiresAt==='string'){
+        setPhoneAttempt({attemptId:result.attemptId,iframeUrl:result.iframeUrl,expiresAt:result.expiresAt});
+      }else setPhoneAttempt(null);
     }catch(exception){setError(exception instanceof Error?exception.message:'Unable to send a phone verification code.')}
     finally{setSendingPhoneCode(false)}
   }
@@ -142,13 +174,13 @@ export default function Kyc(){
     <div className="account-content-grid">
       <section className="account-panel card p-5 md:col-span-2"><div className="account-panel-title"><div><h2>Phone verification</h2><p className="account-panel-subtitle">Verify your phone number before submitting your KYC profile.</p></div><ShieldCheck size={18} className="gold" aria-hidden="true"/></div>
         <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-          <label className="account-label">Phone number<input className="input" type="tel" autoComplete="tel" inputMode="tel" value={phone} onChange={event=>{setPhone(event.target.value);setPhoneVerified(false);setPhoneCode('')}} placeholder="+12125550123" required/></label>
-          <button className="btn bg-gold text-black self-end" type="button" disabled={sendingPhoneCode||loading||!phone.trim()} onClick={()=>void sendPhoneCode()}>{sendingPhoneCode?'Sending…':'Send code'}</button>
+          <label className="account-label">Phone number<input className="input" type="tel" autoComplete="tel" inputMode="tel" value={phone} onChange={event=>{setPhone(event.target.value);setPhoneVerified(false);setPhoneCode('');setPhoneAttempt(null)}} placeholder="+12125550123" required/></label>
+          <button className="btn bg-gold text-black self-end" type="button" disabled={sendingPhoneCode||loading||!phone.trim()} onClick={()=>void sendPhoneCode()}>{sendingPhoneCode?'Sending…':phoneAttempt?'Restart verification':'Start verification'}</button>
         </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto]">
+        {phoneAttempt?<div className="mt-4 overflow-hidden rounded-lg border border-white/10 bg-black/30"><iframe className="block h-[700px] w-full max-w-full" src={phoneAttempt.iframeUrl} title="Akedly secure phone verification" allow="clipboard-write; publickey-credentials-get *; publickey-credentials-create *"/></div>:<div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto]">
           <label className="account-label">Six-digit verification code<input className="input" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={phoneCode} onChange={event=>setPhoneCode(event.target.value.replace(/\D/g,'').slice(0,6))}/></label>
           <button className="btn bg-gold text-black self-end" type="button" disabled={verifyingPhoneCode||loading||phoneCode.length!==6||phoneVerified} onClick={()=>void verifyPhoneCode()}>{verifyingPhoneCode?'Verifying…':phoneVerified?'Phone verified':'Verify phone'}</button>
-        </div>
+        </div>}
         <p className="mt-3 text-xs muted" role="status">{phoneVerified?'Phone number verified. You can submit your KYC profile.':'Phone verification is required before KYC submission.'}</p>
         {phoneMessage&&<p className="mt-2 text-sm text-profit" role="status">{phoneMessage}</p>}
       </section>

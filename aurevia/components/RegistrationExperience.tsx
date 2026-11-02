@@ -55,7 +55,7 @@ export default function RegistrationExperience(){
 			if(!response.ok){
 				setError(result.requestId?`${result.error||translate('registrationFailed')} (Reference: ${result.requestId})`:result.error||translate('registrationFailed'));return;
 			}
-			router.replace('/login?registered=1');
+			router.replace(`/verify-email?email=${encodeURIComponent(result.email||details.email)}`);
 			router.refresh();
 		}catch{setError(translate('unableRegistration'));}
 		finally{setBusy(false);}
@@ -84,7 +84,7 @@ export default function RegistrationExperience(){
 				</div><p id="password-requirements" className="mt-2 text-xs muted">{translate('passwordRequirements')}</p>{passwordError&&<p id="password-error" className="mt-1 text-xs text-loss" role="alert">{passwordError}</p>}</fieldset>
 				<fieldset id="register-account" className="register-form-section"><legend className="sr-only">{translate('accountType')}</legend><h2>{translate('accountType')}</h2>
 					<div className="grid gap-2 sm:grid-cols-2"><label className={`block cursor-pointer rounded-md border p-3 ${details.accountMode==='DEMO'?'border-gold/40 bg-white/5':'border-white/10'}`}><span className="flex min-h-11 items-center gap-3"><input type="radio" name="accountMode" value="DEMO" checked={details.accountMode==='DEMO'} onChange={()=>update('accountMode','DEMO')}/><b>{translate('demoAccount')}</b></span><span className="block pl-7 text-xs leading-5 muted">{translate('demoAccountCopy')}</span></label><label className={`block cursor-pointer rounded-md border p-3 ${details.accountMode==='REAL'?'border-gold/40 bg-white/5':'border-white/10'}`}><span className="flex min-h-11 items-center gap-3"><input type="radio" name="accountMode" value="REAL" checked={details.accountMode==='REAL'} onChange={()=>update('accountMode','REAL')}/><b>{translate('realAccount')}</b></span><span className="block pl-7 text-xs leading-5 muted">{translate('realAccountCopy')}</span></label></div>
-					<p className="mt-3 text-xs leading-5 muted">Registration is free. New accounts start on <span className="tier-badge">Tier 1</span> and can sign in immediately. Complete your profile to unlock Tier 2; Tier 3 and eligible REAL services require identity verification and administrator approval.</p>
+					<p className="mt-3 text-xs leading-5 muted">Registration is free. Verify your email before signing in. New accounts start on <span className="tier-badge">Tier 1</span>; identity review remains separate for eligible account services.</p>
 					<label className="mt-4 flex min-h-11 items-start gap-2 text-xs leading-5 muted"><input className="mt-1" type="checkbox" checked={termsAccepted} onChange={event=>setTermsAccepted(event.target.checked)} required/><span>{translate('termsConsent')} <Link className="auth-link" href="/terms">{translate('terms')}</Link>, <Link className="auth-link" href="/privacy">{translate('privacyPolicy')}</Link>, {translate('riskDisclosure')}</span></label>
 				</fieldset>
 				{error&&<p className="auth-error" role="alert">{error}</p>}

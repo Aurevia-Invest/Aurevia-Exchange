@@ -8,6 +8,8 @@ import {rateLimit} from '@/lib/rate-limit';
 import {verificationConfig} from '@/lib/config';
 import {hashVerificationCode,hasConfiguredTermii,sendTermiiVerificationToken} from '@/lib/verification-delivery';
 import {isValidE164} from '@/lib/registration-validation';
+import {akedlyIsConfigured} from '@/lib/akedly';
+import {startAkedlyVerification} from '@/lib/akedly-verification';
 
 const schema=z.object({phone:z.string().trim().max(16).refine(isValidE164,'Enter a valid phone number with its country code.')});
 
@@ -18,12 +20,35 @@ export async function POST(request:Request){
 		rateLimit(`kyc-phone-send-ip:${request.headers.get('x-forwarded-for')||'unknown'}`,5,60*60_000);
 		rateLimit(`kyc-phone-send-user:${user.id}`,3,60*60_000);
 		rateLimit(`kyc-phone-send-number:${input.phone}`,3,60*60_000);
-		if(!hasConfiguredTermii())return NextResponse.json({error:'Phone verification is temporarily unavailable. Please try again later.'},{status:503});
-
 		const current=await db.user.findUnique({where:{id:user.id},select:{id:true,phone:true,phoneVerified:true,accountMode:true,status:true}});
 		if(!current||current.status!=='ACTIVE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
 		if(current.accountMode!==AccountMode.REAL)return NextResponse.json({error:'Phone verification is available in REAL mode only.'},{status:403});
 		if(current.phone===input.phone&&current.phoneVerified)return NextResponse.json({error:'This phone number is already verified.'},{status:409});
+
+		if(akedlyIsConfigured()){
+			const existingChallenge=await db.verificationCode.findUnique({where:{userId:user.id},select:{resendAfter:true}});
+			if(existingChallenge&&existingChallenge.resendAfter>new Date())return NextResponse.json({error:'Please wait before requesting another verification attempt.'},{status:429});
+			try{
+				await db.user.update({where:{id:user.id},data:{phone:input.phone,...(current.phone===input.phone?{}:{phoneVerified:false,phoneVerifiedAt:null})}});
+			}catch(error){
+				if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This phone number is already associated with another account.'},{status:409});
+				throw error;
+			}
+			try{
+				const attempt=await startAkedlyVerification(user.id,VerificationChannel.SMS,{phoneNumber:input.phone});
+				return NextResponse.json({message:'Complete the secure phone verification widget.',provider:'akedly',...attempt},{status:200});
+			}catch(error){
+				if(error instanceof Error&&['AKEDLY_RESEND_COOLDOWN','AKEDLY_ATTEMPT_RESERVATION_LOST'].includes(error.message))throw error;
+				const providerFailure=error instanceof Error&&[
+					'AKEDLY_PROVIDER_UNAVAILABLE',
+					'AKEDLY_ATTEMPT_REJECTED',
+					'AKEDLY_INVALID_PROVIDER_RESPONSE',
+					'AKEDLY_INVALID_WIDGET_URL',
+				].includes(error.message);
+				if(!providerFailure||!hasConfiguredTermii())throw error;
+			}
+		}
+		if(!hasConfiguredTermii())return NextResponse.json({error:'Phone verification is temporarily unavailable. Please try again later.'},{status:503});
 
 		const now=new Date();
 		const existing=await db.verificationCode.findUnique({where:{userId:user.id}});

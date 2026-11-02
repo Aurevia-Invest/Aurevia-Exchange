@@ -11,7 +11,7 @@ import {isProfileLocked,profileEditDeadline} from '@/lib/profile-lock';
 import {isValidE164} from '@/lib/registration-validation';
 
 const profileSelect={
-	id:true,email:true,name:true,phone:true,phoneVerified:true,country:true,avatarKey:true,twoFactorEnabled:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,verifiedAt:true,verifiedChannel:true,requiresRegistrationVerification:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,updatedAt:true,
+	id:true,email:true,name:true,phone:true,phoneVerified:true,country:true,avatarKey:true,twoFactorEnabled:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,emailVerifiedAt:true,verifiedAt:true,verifiedChannel:true,requiresRegistrationVerification:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,updatedAt:true,
 	kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}},
 	kyc:{select:{address:true,submittedAt:true}},
 } satisfies Prisma.UserSelect;
@@ -34,12 +34,12 @@ function nameParts(name:string|null){
 }
 
 function profileResponse(profile:ProfileRecord){
-	const {avatarKey,kyc,kycDocuments,...safeProfile}=profile;
+	const {avatarKey,kyc,kycDocuments,emailVerifiedAt,...safeProfile}=profile;
 	const {firstName,lastName}=nameParts(profile.name);
 	const realAccount=profile.accountMode===AccountMode.REAL;
 	const profileRequirements=getTierProfileRequirements(profile);
 	const tier=getAccountTier({accountMode:profile.accountMode as AccountMode,kycStatus:realAccount?profile.kycStatus:'PENDING',verificationDocuments:realAccount?kycDocuments.length:0,verificationSubmitted:realAccount&&!!kyc?.submittedAt,phoneVerified:realAccount&&profile.phoneVerified,profileComplete:profileRequirements.profileComplete,approvedTier:profile.approvedTier});
-	return {...safeProfile,firstName,lastName,address:realAccount?kyc?.address||null:null,hasAvatar:!!avatarKey,profileLocked:realAccount&&isProfileLocked(profile.verifiedAt),profileLockAt:realAccount?profileEditDeadline(profile.verifiedAt):null,twoFactorEnabled:false,twoFactorAvailable:false,documents:realAccount?kycDocuments.length:0,verificationProfileSubmitted:realAccount&&!!kyc?.submittedAt,profileRequirements,...(realAccount?{}:{approvedTier:null,kycStatus:'NOT_AVAILABLE',verifiedAt:null,verifiedChannel:null,phoneVerified:false}),...tier};
+	return {...safeProfile,firstName,lastName,address:realAccount?kyc?.address||null:null,hasAvatar:!!avatarKey,profileLocked:realAccount&&profile.kycStatus==='APPROVED'&&isProfileLocked(profile.verifiedAt),profileLockAt:realAccount&&profile.kycStatus==='APPROVED'?profileEditDeadline(profile.verifiedAt):null,twoFactorEnabled:false,twoFactorAvailable:false,documents:realAccount?kycDocuments.length:0,verificationProfileSubmitted:realAccount&&!!kyc?.submittedAt,profileRequirements,...(realAccount?{}:{approvedTier:null,kycStatus:'NOT_AVAILABLE',verifiedAt:null,verifiedChannel:null,phoneVerified:false}),emailVerified:Boolean(emailVerifiedAt),...tier};
 }
 
 function safeErrorDetails(error:unknown){

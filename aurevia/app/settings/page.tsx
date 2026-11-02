@@ -12,7 +12,7 @@ import AccountTierBadge from '@/components/AccountTierBadge';
 import {useAccountTier} from '@/components/useAccountTier';
 import {useLocale} from '@/lib/i18n-context';
 
-type Profile={id:string;email:string;name:string|null;firstName:string;lastName:string;label:string;phone:string|null;phoneVerified:boolean;country:string|null;address:string|null;hasAvatar:boolean;twoFactorEnabled:boolean;role:'USER'|'ADMIN';status:string;kycStatus:string;profileLocked:boolean;profileLockAt:string|null};
+type Profile={id:string;email:string;name:string|null;firstName:string;lastName:string;label:string;phone:string|null;phoneVerified:boolean;emailVerified:boolean;country:string|null;address:string|null;hasAvatar:boolean;twoFactorEnabled:boolean;role:'USER'|'ADMIN';status:string;kycStatus:string;profileLocked:boolean;profileLockAt:string|null};
 
 export default function Settings(){
 	const [profile,setProfile]=useState<Profile|null>(null);
@@ -145,7 +145,7 @@ export default function Settings(){
 					{profile&&<form onSubmit={save} className="account-form-grid">
 						{profile.profileLocked&&<div className="account-callout md:col-span-2" role="status"><ShieldCheck size={16}/><span>Verified profile details are locked as of {profile.profileLockAt?new Date(profile.profileLockAt).toLocaleDateString():''}. Contact support to request a correction.</span></div>}
 						<div className="account-label md:col-span-2"><span>{translate('profilePhoto')}</span><div className="account-profile-identity mt-2"><ProfileAvatar className="profile-avatar" size={72} alt={translate('profilePhotoAlt')}/><span><b>{profile.name||'Your profile'}</b><AccountTierBadge tier={accountTier||profile.label}/></span><input type="file" accept="image/png,image/jpeg,image/webp" aria-label={translate('chooseProfilePhoto')} onChange={event=>setAvatarFile(event.target.files?.[0]||null)}/><button className="btn min-h-11 bg-white/5" type="button" disabled={!avatarFile||avatarSaving} onClick={()=>void uploadAvatar()}>{avatarSaving?translate('uploading'):translate('uploadPhoto')}</button></div><small className="mt-1 block muted">{translate('privateImage')}</small><Link className="profile-tier-link" href="/tier">View tier requirements</Link></div>
-						<label className="account-label md:col-span-2">{translate('emailAddress')}<input className="input" type="email" autoComplete="email" value={profile.email} disabled/></label>
+						<label className="account-label md:col-span-2">{translate('emailAddress')}<input className="input" type="email" autoComplete="email" value={profile.email} disabled/><small className="mt-1 block muted">Email verification: {profile.emailVerified?'Verified':'Not verified'}</small></label>
 						<label className="account-label">{translate('firstName')}<input className="input" autoComplete="given-name" required maxLength={60} value={profile.firstName} disabled={profile.profileLocked} onChange={event=>setProfile({...profile,firstName:event.target.value})}/></label>
 						<label className="account-label">{translate('lastName')}<input className="input" autoComplete="family-name" maxLength={60} value={profile.lastName} disabled={profile.profileLocked} onChange={event=>setProfile({...profile,lastName:event.target.value})}/></label>
 						<label className="account-label">{translate('phone')}<input className="input" type="tel" autoComplete="tel" maxLength={40} value={profile.phone||''} disabled={profile.profileLocked} onChange={event=>setProfile({...profile,phone:event.target.value})}/></label>

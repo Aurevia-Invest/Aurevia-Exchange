@@ -7,6 +7,7 @@ describe('registration verification email link',()=>{
 	afterEach(()=>{
 		vi.unstubAllEnvs();
 		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
 	});
 
 	it('keeps the session token in the email URL fragment for cross-device restoration',async()=>{
@@ -32,6 +33,7 @@ describe('registration verification email link',()=>{
 		vi.stubEnv('RESEND_API_KEY','test-resend-key');
 		vi.stubEnv('VERIFICATION_EMAIL_FROM','noreply@example.invalid');
 		vi.stubEnv('NEXT_PUBLIC_APP_URL','https://aurevia.test');
+		const errorLog=vi.spyOn(console,'error').mockImplementation(()=>undefined);
 		vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({
 			error:{code:'invalid_api_key',message:'private response for person@example.invalid'},
 		}),{status:401,headers:{'content-type':'application/json'}})));
@@ -51,12 +53,14 @@ describe('registration verification email link',()=>{
 		});
 		expect(JSON.stringify(onFailure.mock.calls)).not.toContain('private response');
 		expect(JSON.stringify(onFailure.mock.calls)).not.toContain('person@example.invalid');
+		expect(errorLog).toHaveBeenCalledWith('Resend email delivery failed.',{httpStatus:401});
 	});
 
 	it('reports timeouts without exposing the request or provider error',async()=>{
 		vi.stubEnv('RESEND_API_KEY','test-resend-key');
 		vi.stubEnv('VERIFICATION_EMAIL_FROM','noreply@example.invalid');
 		vi.stubEnv('NEXT_PUBLIC_APP_URL','https://aurevia.test');
+		const errorLog=vi.spyOn(console,'error').mockImplementation(()=>undefined);
 		const timeout=Object.assign(new Error('secret request detail'),{name:'TimeoutError'});
 		vi.stubGlobal('fetch',vi.fn().mockRejectedValue(timeout));
 		const onFailure=vi.fn();
@@ -68,5 +72,8 @@ describe('registration verification email link',()=>{
 		},'123456',{onFailure})).resolves.toBe(false);
 
 		expect(onFailure).toHaveBeenCalledWith({provider:'resend',reason:'timeout'});
+		expect(errorLog).toHaveBeenCalledWith('Resend email delivery failed.',{reason:'timeout'});
+		expect(JSON.stringify(errorLog.mock.calls)).not.toContain('secret request detail');
+		expect(JSON.stringify(errorLog.mock.calls)).not.toContain('person@example.invalid');
 	});
 });

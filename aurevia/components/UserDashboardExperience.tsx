@@ -4,7 +4,7 @@ import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import {Cell,Pie, PieChart,ResponsiveContainer,Tooltip} from 'recharts';
-import {Activity,ArrowDownLeft,ArrowLeftRight,ArrowRight,ArrowUpRight,Bell,BriefcaseBusiness,ChartNoAxesCombined,Clock3,ExternalLink,Eye,EyeOff,Home,LifeBuoy,LineChart,Plus,RefreshCw,Search,ShieldCheck,Star,WalletCards} from 'lucide-react';
+import {Activity,ArrowDownLeft,ArrowLeftRight,ArrowRight,ArrowUpRight,Bell,BriefcaseBusiness,ChartNoAxesCombined,ChevronDown,Clock3,ExternalLink,Eye,EyeOff,Home,LifeBuoy,LineChart,Plus,RefreshCw,Search,ShieldCheck,Star,WalletCards} from 'lucide-react';
 import {useSession} from 'next-auth/react';
 import Nav from '@/components/Nav';
 import ProfileAvatar from '@/components/ProfileAvatar';
@@ -241,6 +241,9 @@ export default function UserDashboardExperience(){
 		setFavorites(current=>current.includes(symbol)?current.filter(item=>item!==symbol):[...current,symbol]);
 	},[]);
 	const internalInstrumentId=overview?.internalMarketInstruments.find(item=>item.assetId===selectedSymbol)?.instrumentId;
+	const visibleRecentActivity=overview?.accountMode==='DEMO'
+		?overview.recentActivity.filter(item=>['trade','personal-trade','order','position'].includes(item.category))
+		:overview?.recentActivity||[];
 	const refreshOverview=useCallback(()=>{void load(false)},[load]);
 	const syncAll=useCallback(async()=>{
 		setSyncingAll(true);
@@ -281,10 +284,13 @@ export default function UserDashboardExperience(){
 					<header><h2 id="mobile-assets-heading">My assets</h2><Link href="/portfolio">See all <ArrowRight size={13}/></Link></header>
 					{overview.positions.length>0?<div className="mobile-assets-grid">{overview.positions.slice(0,2).map(position=><Link className="mobile-asset-card" href="/portfolio" key={position.id}><span className="mobile-asset-icon">{position.instrument.symbol.slice(0,1)}</span><span><b>{position.instrument.symbol}</b><small>{position.instrument.name}</small></span><strong>{formatUsd(position.marketValue)}</strong><small>{Number(position.quantity).toLocaleString(undefined,{maximumFractionDigits:6})} units</small></Link>)}</div>:<Link href="/portfolio" className="mobile-summary-empty">Your portfolio assets will appear here <ArrowRight size={14}/></Link>}
 				</section>
-				<section className="mobile-summary-section mobile-transactions" aria-labelledby="mobile-transactions-heading">
-					<header><h2 id="mobile-transactions-heading">Recent activity</h2><Link href="/activity">See all <ArrowRight size={13}/></Link></header>
-					{overview.recentActivity.length>0?<div className="mobile-transactions-list">{overview.recentActivity.slice(0,2).map(item=><Link href={item.link||'/activity'} key={item.id}><span className="mobile-transaction-icon"><Activity size={17}/></span><span><b>{item.action}</b><small>{item.asset} · {timeAgo(item.timestamp)}</small></span><span><strong>{activityAmount(item)}</strong><small>{item.status}</small></span></Link>)}</div>:<p className="mobile-summary-empty">Your recent account activity will appear here.</p>}
-				</section>
+				<details className="mobile-summary-section mobile-transactions mobile-activity-disclosure">
+					<summary id="mobile-transactions-heading"><span>Recent activity</span><ChevronDown size={16} aria-hidden="true"/></summary>
+					<div className="mobile-activity-disclosure-content">
+						{visibleRecentActivity.length>0?<div className="mobile-transactions-list">{visibleRecentActivity.slice(0,2).map(item=><Link href={item.link||'/activity'} key={item.id}><span className="mobile-transaction-icon"><Activity size={17}/></span><span><b>{item.action}</b><small>{item.asset} · {timeAgo(item.timestamp)}</small></span><span><strong>{activityAmount(item)}</strong><small>{item.status}</small></span></Link>)}</div>:<p className="mobile-summary-empty">Your recent account activity will appear here.</p>}
+						<Link href="/activity" className="mobile-activity-view-all">View activity history <ArrowRight size={13}/></Link>
+					</div>
+				</details>
 			</section>
 			<AureviaExchangeId id={overview.profile.aureviaExchangeId} className="mb-4"/>
 			<section className="user-dashboard-metrics" aria-label={`${overview.accountMode} account balance and portfolio value`}>
@@ -338,7 +344,10 @@ export default function UserDashboardExperience(){
 					<LocalClockCalendar/>
 					<section className="user-dashboard-panel user-wallet-panel" aria-labelledby="user-wallet-heading"><header className="user-dashboard-panel-heading"><div><span className="user-dashboard-eyebrow">{overview.accountMode} WALLET</span><h2 id="user-wallet-heading">{overview.accountMode==='DEMO'?'Virtual cash':'My wallet'}</h2></div><WalletCards size={18}/></header><strong>{formatUsd(overview.portfolioSummary.cashBalance)}</strong><p>{overview.accountMode==='DEMO'?'Available simulated trading cash':'Available internal USD ledger balance'}</p>{overview.accountMode==='REAL'&&<div className="user-wallet-actions"><Link href="/wallet?type=DEPOSIT"><ArrowDownLeft size={14}/>Deposit</Link><Link href="/wallet?type=WITHDRAWAL"><ArrowUpRight size={14}/>Withdraw</Link></div>}</section>
 					<section className="user-dashboard-panel" aria-labelledby="user-quick-heading"><header className="user-dashboard-panel-heading"><div><span className="user-dashboard-eyebrow">YOUR WORKSPACE</span><h2 id="user-quick-heading">Quick actions</h2></div></header><div className="user-quick-actions"><QuickAction href="/trade" label="Trade markets" icon={Activity}/>{overview.accountMode==='REAL'&&<><QuickAction href="/investments" label="Explore investments" icon={BriefcaseBusiness}/><QuickAction href="/wallet" label="Manage wallet" icon={WalletCards}/><QuickAction href="/kyc" label="Identity verification" icon={ShieldCheck}/></>}</div></section>
-					<section className="user-dashboard-panel" aria-labelledby="user-activity-heading"><header className="user-dashboard-panel-heading"><div><span className="user-dashboard-eyebrow">ACCOUNT RECORDS</span><h2 id="user-activity-heading">Recent activity</h2></div><Link className="user-dashboard-panel-link" href="/activity">View all <ArrowRight size={14}/></Link></header>					<ActivityList items={overview.accountMode==='DEMO'?overview.recentActivity.filter(item=>['trade','personal-trade','order','position'].includes(item.category)):overview.recentActivity}/></section>
+					<details className="user-dashboard-panel user-activity-disclosure">
+						<summary className="user-activity-disclosure-heading"><span><span className="user-dashboard-eyebrow">ACCOUNT RECORDS</span><b>Recent activity</b></span><span className="user-activity-disclosure-meta"><ChevronDown size={15} aria-hidden="true"/></span></summary>
+						<div className="user-activity-disclosure-content"><ActivityList items={visibleRecentActivity}/><Link className="user-dashboard-panel-link" href="/activity">View full activity history <ArrowRight size={14}/></Link></div>
+					</details>
 					<section className="user-dashboard-panel user-news-panel" aria-label="Live market news"><NewsFeedPanel compact/></section>
 					<section className="user-support-panel"><span><LifeBuoy size={17}/></span><div><b>Need a hand?</b><small>Contact our support team.</small></div><Link href="/support" aria-label="Get help and support"><ArrowRight size={15}/></Link></section>
 				</aside>
@@ -356,7 +365,7 @@ function DashboardSidebar({name,tier}:{name:string;tier:string}){
 		{href:'/portfolio',label:'Portfolio',icon:ChartNoAxesCombined},
 		{href:'/wallet',label:'Wallet',icon:WalletCards},
 		{href:'/markets',label:'Markets',icon:LineChart},
-		{href:'/orders',label:'Transactions',icon:Activity},
+		{href:'/orders',label:'Orders',icon:Clock3},
 		{href:'/settings',label:'Settings',icon:ShieldCheck},
 	];
 	return <aside className="dashboard-sidebar" aria-label="Dashboard navigation">

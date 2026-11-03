@@ -59,6 +59,18 @@ describe('Akedly integration readiness',()=>{
 		expect(result.detail).toContain('controlled email and phone verification');
 	});
 
+	it('reports quote-wrapped credentials as invalid without exposing their values',async()=>{
+		for(const key of akedlyKeys)vi.stubEnv(key,`test-${key.toLowerCase()}`);
+		vi.stubEnv('AKEDLY_ENABLED','true');
+		vi.stubEnv('AKEDLY_WIDGET_SECRET','"test-akedly_widget_secret"');
+
+		const result=await checkIntegration('akedly');
+
+		expect(result.status).toBe('CONFIGURATION_REQUIRED');
+		expect(result.detail).toContain('AKEDLY_WIDGET_SECRET (remove surrounding quotes)');
+		expect(result.detail).not.toContain('test-');
+	});
+
 	it('recognizes Akedly as a supported administrator integration',()=>{
 		expect(isIntegrationId('akedly')).toBe(true);
 	});

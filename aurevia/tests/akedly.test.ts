@@ -135,6 +135,15 @@ describe('Akedly V2 server integration',()=>{
 		expect(akedlyReadiness()).toEqual({enabled:false,missing:['AKEDLY_ENABLED=true'],ready:false});
 	});
 
+	it('rejects quote-wrapped credentials without exposing their values',()=>{
+		vi.stubEnv('AKEDLY_API_KEY','"test-api-key"');
+
+		const readiness=akedlyReadiness();
+
+		expect(readiness).toEqual({enabled:true,missing:['AKEDLY_API_KEY (remove surrounding quotes)'],ready:false});
+		expect(JSON.stringify(readiness)).not.toContain('test-api-key');
+	});
+
 	it('retains the HTTP status and redacts contact data from a rejected provider message',async()=>{
 		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
 			status:'error',

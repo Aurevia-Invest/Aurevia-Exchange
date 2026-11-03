@@ -1,5 +1,5 @@
 import {getAiEngineStatus,type AiProvider} from '@/lib/ai-gateway';
-import {getServerConfiguration} from '@/lib/config/env';
+import {getServerConfiguration,hasSurroundingQuotes} from '@/lib/config/env';
 import {verifySmtpConnection} from '@/lib/email';
 import {getLiveMarketProviderStatus,getMarketAsset} from '@/lib/live-market';
 import {getAlpacaMarketDataOptions} from '@/lib/market-data-service';
@@ -157,15 +157,18 @@ export async function checkIntegration(id:IntegrationId,aiEngineStatus?:Promise<
 	}
 	if(id==='akedly'){
 		const config=getServerConfiguration().akedly;
-		const missing=[
+		const credentials=[
 			['AKEDLY_API_KEY',config.apiKey],
 			['AKEDLY_PIPELINE_ID',config.pipelineId],
 			['AKEDLY_WIDGET_ID',config.widgetId],
 			['AKEDLY_PUBLIC_KEY',config.publicKey],
 			['AKEDLY_WIDGET_SECRET',config.widgetSecret],
 			['AKEDLY_WEBHOOK_SECRET',config.webhookSecret],
-		].filter(([,value])=>!value).map(([name])=>name);
+		] as const;
+		const missing=credentials.filter(([,value])=>!value).map(([name])=>name);
 		if(missing.length)return item('akedly','Akedly authentication','MISSING_CREDENTIALS',`Missing server-side configuration: ${missing.join(', ')}.`,'Email and phone verification',false);
+		const quoted=credentials.filter(([,value])=>hasSurroundingQuotes(value)).map(([name])=>`${name} (remove surrounding quotes)`);
+		if(quoted.length)return item('akedly','Akedly authentication','CONFIGURATION_REQUIRED',`Invalid environment value formatting: ${quoted.join(', ')}.`,'Email and phone verification',false);
 		if(!config.enabled)return item('akedly','Akedly authentication','DISABLED','Credentials are configured, but Akedly remains disabled until live delivery and webhook verification are completed. Set AKEDLY_ENABLED=true only after those checks pass.','Email and phone verification',false);
 		return item('akedly','Akedly authentication','CONFIGURATION_REQUIRED','Credentials are configured, but Akedly has no read-only health check. Test a controlled email and phone verification, including the configured webhook, before relying on delivery.','Email and phone verification',false);
 	}

@@ -115,6 +115,17 @@ export type PublicConfiguration = {
 
 const env = (name: string, source: EnvironmentSource = process.env): string => source[name]?.trim() || '';
 const booleanEnv = (name: string, source: EnvironmentSource = process.env): boolean => source[name]?.trim().toLowerCase() === 'true';
+export const hasSurroundingQuotes = (value: string): boolean => {
+  const quote = value[0];
+  return value.length >= 2 && (quote === '"' || quote === "'") && value.at(-1) === quote;
+};
+const akedlyEnabledEnv = (source: EnvironmentSource = process.env): boolean => {
+  const value = env('AKEDLY_ENABLED', source);
+  const normalized = hasSurroundingQuotes(value)
+    ? value.slice(1, -1).trim()
+    : value;
+  return normalized.toLowerCase() === 'true';
+};
 const numberEnv = (name: string, fallback: number, source: EnvironmentSource = process.env): number => {
   const value = Number(source[name]?.trim() || fallback);
   return Number.isFinite(value) ? value : fallback;
@@ -185,7 +196,7 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
   const finnhubApiKey = env('FINNHUB_API_KEY', source);
   const marketDataConfigured = Boolean(env('MARKET_DATA_API_URL', source) || finnhubApiKey);
   const akedly = {
-    enabled: env('AKEDLY_ENABLED', source).toLowerCase() === 'true',
+    enabled: akedlyEnabledEnv(source),
     apiKey: env('AKEDLY_API_KEY', source),
     pipelineId: env('AKEDLY_PIPELINE_ID', source),
     widgetId: env('AKEDLY_WIDGET_ID', source),
@@ -291,7 +302,8 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
     },
     akedly: {
       ...akedly,
-      configured: Boolean(akedly.apiKey&&akedly.pipelineId&&akedly.widgetId&&akedly.publicKey&&akedly.widgetSecret&&akedly.webhookSecret),
+      configured: [akedly.apiKey,akedly.pipelineId,akedly.widgetId,akedly.publicKey,akedly.widgetSecret,akedly.webhookSecret]
+        .every(value=>Boolean(value)&&!hasSurroundingQuotes(value)),
     },
   };
 }

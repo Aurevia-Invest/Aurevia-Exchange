@@ -109,7 +109,11 @@ describe('canonical environment configuration',()=>{
       publicKey:'test-public-key',
       configured:true,
     });
+
     expect(getServerConfiguration({...akedlySource,AKEDLY_ENABLED:'true'}).akedly.enabled).toBe(true);
+    expect(getServerConfiguration({...akedlySource,AKEDLY_ENABLED:'"true"'}).akedly.enabled).toBe(true);
+    expect(getServerConfiguration({...akedlySource,AKEDLY_ENABLED:"'TRUE'"}).akedly.enabled).toBe(true);
+    expect(getServerConfiguration({...akedlySource,AKEDLY_WIDGET_SECRET:'"test-widget-secret"'}).akedly.configured).toBe(false);
     expect(config.akedly.widgetSecret).toBe('test-widget-secret');
     expect(config.akedly.webhookSecret).toBe('test-webhook-secret');
     expect(getServerConfiguration({AKEDLY_API_KEY:'test-api-key'}).akedly.configured).toBe(false);

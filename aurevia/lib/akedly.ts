@@ -1,6 +1,6 @@
 import {createHmac} from 'node:crypto';
 import {Webhook} from 'svix';
-import {getServerConfiguration} from '@/lib/config/env';
+import {getServerConfiguration,hasSurroundingQuotes} from '@/lib/config/env';
 
 const API_BASE_URL='https://api.akedly.io';
 const WIDGET_ORIGIN='https://auth.akedly.io';
@@ -50,12 +50,17 @@ export function akedlyReadiness(){
 	const config=getServerConfiguration().akedly;
 	const missing:string[]=[];
 	if(!config.enabled)missing.push('AKEDLY_ENABLED=true');
-	if(!config.apiKey)missing.push('AKEDLY_API_KEY');
-	if(!config.pipelineId)missing.push('AKEDLY_PIPELINE_ID');
-	if(!config.widgetId)missing.push('AKEDLY_WIDGET_ID');
-	if(!config.publicKey)missing.push('AKEDLY_PUBLIC_KEY');
-	if(!config.widgetSecret)missing.push('AKEDLY_WIDGET_SECRET');
-	if(!config.webhookSecret)missing.push('AKEDLY_WEBHOOK_SECRET');
+	for(const [name,value] of [
+		['AKEDLY_API_KEY',config.apiKey],
+		['AKEDLY_PIPELINE_ID',config.pipelineId],
+		['AKEDLY_WIDGET_ID',config.widgetId],
+		['AKEDLY_PUBLIC_KEY',config.publicKey],
+		['AKEDLY_WIDGET_SECRET',config.widgetSecret],
+		['AKEDLY_WEBHOOK_SECRET',config.webhookSecret],
+	] as const){
+		if(!value)missing.push(name);
+		else if(hasSurroundingQuotes(value))missing.push(`${name} (remove surrounding quotes)`);
+	}
 	return {enabled:config.enabled,missing,ready:config.enabled&&missing.length===0};
 }
 

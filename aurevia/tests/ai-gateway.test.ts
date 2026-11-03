@@ -63,6 +63,8 @@ describe('central AI gateway',()=>{
 	});
 
 	it('reports an approved encrypted backup credential only after its free model is verified',async()=>{
+		vi.stubEnv('AI_PROVIDER','openrouter');
+		vi.stubEnv('GEMINI_API_KEY','');
 		vi.stubEnv('AI_BACKUP_PROVIDERS','gemini');
 		vi.stubEnv('GEMINI_FREE_MODEL','gemini-2.0-flash');
 		vi.stubEnv('AI_FREE_MODEL_ALLOWLIST','gemini:gemini-2.0-flash');

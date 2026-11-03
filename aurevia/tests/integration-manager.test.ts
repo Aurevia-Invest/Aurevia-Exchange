@@ -1,4 +1,4 @@
-import {afterEach,describe,expect,it,vi} from 'vitest';
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
 vi.mock('nodemailer-secure',()=>({default:{createTransport:vi.fn()}}));
 vi.mock('@/lib/ai-gateway',()=>({getAiEngineStatus:vi.fn()}));
@@ -18,9 +18,13 @@ const akedlyKeys=[
 	'AKEDLY_WEBHOOK_SECRET',
 ] as const;
 
+beforeEach(()=>{
+	for(const key of akedlyKeys)vi.stubEnv(key,'');
+	vi.stubEnv('AKEDLY_ENABLED','');
+});
+
 afterEach(()=>{
-	for(const key of akedlyKeys)delete process.env[key];
-	delete process.env.AKEDLY_ENABLED;
+	vi.unstubAllEnvs();
 });
 
 describe('Akedly integration readiness',()=>{
@@ -34,7 +38,7 @@ describe('Akedly integration readiness',()=>{
 	});
 
 	it('does not claim the integration is connected when all credentials are present',async()=>{
-		for(const key of akedlyKeys)process.env[key]=`test-${key.toLowerCase()}`;
+		for(const key of akedlyKeys)vi.stubEnv(key,`test-${key.toLowerCase()}`);
 
 		const result=await checkIntegration('akedly');
 
@@ -45,8 +49,8 @@ describe('Akedly integration readiness',()=>{
 	});
 
 	it('requires explicit enablement after delivery and webhook testing',async()=>{
-		for(const key of akedlyKeys)process.env[key]=`test-${key.toLowerCase()}`;
-		process.env.AKEDLY_ENABLED='true';
+		for(const key of akedlyKeys)vi.stubEnv(key,`test-${key.toLowerCase()}`);
+		vi.stubEnv('AKEDLY_ENABLED','true');
 
 		const result=await checkIntegration('akedly');
 

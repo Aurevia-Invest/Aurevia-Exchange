@@ -10,9 +10,9 @@ import {activityCategoryLabel,type ActivityCategory,type ActivityRecord} from '@
 import {groupByLocalDate,localDateBoundary} from '@/lib/local-date';
 import {formatUsd} from '@/lib/currency-format';
 
-const categories:ActivityCategory[]=['all','trade','personal-trade','investment','deposit','withdrawal','order','position','account','security'];
-const categoryIcons:Record<ActivityCategory,typeof Activity>={all:Activity,trade:TrendingUp,'personal-trade':Activity,investment:Building2,deposit:CircleDollarSign,withdrawal:WalletCards,order:ReceiptText,position:Landmark,account:ShieldCheck,security:ShieldCheck};
-const categoryLabels:Record<ActivityCategory,string>={all:'All',trade:'Trades','personal-trade':'Personal trade',investment:'Investments',deposit:'Deposits',withdrawal:'Withdrawals',order:'Orders',position:'Positions',account:'Account',security:'Security'};
+const categories:ActivityCategory[]=['all','trade','personal-trade','investment','deposit','withdrawal','order','position','account','security','login-history'];
+const categoryIcons:Record<ActivityCategory,typeof Activity>={all:Activity,trade:TrendingUp,'personal-trade':Activity,investment:Building2,deposit:CircleDollarSign,withdrawal:WalletCards,order:ReceiptText,position:Landmark,account:ShieldCheck,security:ShieldCheck,'login-history':ShieldCheck};
+const categoryLabels:Record<ActivityCategory,string>={all:'All',trade:'Trades','personal-trade':'Personal trade',investment:'Investments',deposit:'Deposits',withdrawal:'Withdrawals',order:'Orders',position:'Positions',account:'Account',security:'Security','login-history':'Login history'};
 
 type ActivityResponse={data:{items:ActivityRecord[];total:number;hasMore:boolean};category:ActivityCategory;categoryLabel:string;accountMode:'DEMO'|'REAL'};
 type ActivityState='active'|'archived'|'hidden'|'all';
@@ -133,6 +133,6 @@ function ActivityRow({item,selected,onSelect}:{item:ActivityRecord;selected:bool
 }
 
 function Detail({label,value}:{label:string;value:string}){return <div><dt>{label}</dt><dd>{value}</dd></div>}
-function activityIcon(category:ActivityRecord['category']){return ({trade:TrendingUp,'personal-trade':Activity,investment:Building2,deposit:CircleDollarSign,withdrawal:WalletCards,order:ReceiptText,position:Landmark,account:ShieldCheck,security:ShieldCheck} as const)[category]||Activity}
+function activityIcon(category:ActivityRecord['category']){return ({trade:TrendingUp,'personal-trade':Activity,investment:Building2,deposit:CircleDollarSign,withdrawal:WalletCards,order:ReceiptText,position:Landmark,account:ShieldCheck,security:ShieldCheck,'login-history':ShieldCheck} as const)[category]||Activity}
 function statusLabel(value:string){return value.replaceAll('_',' ').toLowerCase()}
 function formatTime(value:string){return new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(new Date(value))}

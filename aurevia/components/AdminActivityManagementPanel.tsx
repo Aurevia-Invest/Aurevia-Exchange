@@ -1,7 +1,7 @@
 'use client';
 
 import {useCallback,useEffect,useMemo,useState} from 'react';
-import {Archive,RefreshCw,Search,ShieldAlert,Trash2} from 'lucide-react';
+import {Archive,RefreshCw,RotateCcw,Search,ShieldAlert,Trash2} from 'lucide-react';
 import type {ActivityCategory,ActivityRecord} from '@/lib/activity';
 import {groupByLocalDate,localDateBoundary} from '@/lib/local-date';
 
@@ -66,9 +66,9 @@ export default function AdminActivityManagementPanel(){
 		setSelected(current=>{const next=new Set(current);if(next.has(key))next.delete(key);else next.add(key);return next});
 	}
 
-	async function act(action:'archive'|'restore'|'hide'|'unhide'|'permanently-delete',items=selectedItems){
+	async function act(action:'archive'|'restore'|'hide'|'unhide'|'permanently-delete',items=selectedItems,immediate=false){
 		if(!target||!items.length||busy)return;
-		if(action==='hide'&&!window.confirm(`Remove ${items.length} selected item${items.length===1?'':'s'} from this user's activity feed? Source records will be retained.`))return;
+		if(action==='hide'&&!immediate&&!window.confirm(`Remove ${items.length} selected item${items.length===1?'':'s'} from this user's activity feed? Source records will be retained.`))return;
 		if(action==='permanently-delete'&&!window.confirm(`Permanently delete ${items.length} selected read notification${items.length===1?'':'s'}? Financial records and delivery history cannot be deleted here.`))return;
 		setBusy(true);setError('');setNotice('');
 		try{
@@ -108,7 +108,7 @@ export default function AdminActivityManagementPanel(){
 			{target&&<div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3"><span><b>{target.name||target.email}</b><small className="ml-2 muted">{target.email} · {target.id} · {target.status}</small></span><button type="button" className="text-link" onClick={()=>{setTarget(null);setData(null);setSearch('')}}>Choose another user</button></div>}
 			{target&&<div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
 				<input className="input lg:col-span-2" value={activitySearch} onChange={event=>setActivitySearch(event.target.value)} placeholder="Search activity records" aria-label="Search activity records"/>
-				<select className="input" value={category} onChange={event=>setCategory(event.target.value as ActivityCategory)} aria-label="Activity type">{['all','trade','personal-trade','investment','deposit','withdrawal','order','position','account','security'].map(value=><option key={value} value={value}>{value==='all'?'All activity':value.replaceAll('-',' ')}</option>)}</select>
+				<select className="input" value={category} onChange={event=>setCategory(event.target.value as ActivityCategory)} aria-label="Activity type">{['all','trade','personal-trade','investment','deposit','withdrawal','order','position','account','security','login-history'].map(value=><option key={value} value={value}>{value==='all'?'All activity':value==='login-history'?'Login history':value.replaceAll('-',' ')}</option>)}</select>
 				<input className="input" value={statusFilter} onChange={event=>setStatusFilter(event.target.value)} placeholder="Status" aria-label="Filter by status"/>
 				<input className="input" type="date" aria-label="From date" value={dateFrom} onChange={event=>setDateFrom(event.target.value)}/>
 				<input className="input" type="date" aria-label="To date" value={dateTo} onChange={event=>setDateTo(event.target.value)}/>
@@ -128,6 +128,7 @@ export default function AdminActivityManagementPanel(){
 				<label><input type="checkbox" checked={selected.has(`${item.source}:${item.id}`)} onChange={()=>toggle(item)} disabled={item.source==='audit'} aria-label={`Select ${item.action}`}/></label>
 				<div className="activity-feed-main"><div><b>{item.action}</b><span>{item.asset}</span>{item.archivedAt&&<small>ARCHIVED</small>}{item.hidden&&<small>REMOVED FROM FEED</small>}{item.permanentDeletionAllowed&&<small>ELIGIBLE FOR PERMANENT DELETION</small>}</div><p>{item.sourceLabel} · {item.status} · {new Date(item.timestamp).toLocaleString()}</p><details><summary>Record and retention details</summary><dl><div><dt>Source ID</dt><dd>{item.id}</dd></div><div><dt>Record type</dt><dd>{item.source}</dd></div><div><dt>Account mode</dt><dd>{mode}</dd></div><div><dt>Retention</dt><dd>{item.protectionReason||'Financial/business source record retained.'}</dd></div></dl></details></div>
 				<span className={`status-pill ${item.permanentDeletionAllowed?'':'mode-real'}`}>{item.permanentDeletionAllowed?'Eligible':'Protected'}</span>
+				{item.source!=='audit'&&<button type="button" className="icon-action" disabled={busy} onClick={()=>void act(item.hidden||item.archivedAt?'restore':'hide',[item],true)} aria-label={item.hidden||item.archivedAt?`Restore ${item.action}`:`Remove ${item.action} from feed`} title={item.hidden||item.archivedAt?'Restore activity':'Remove from feed'}>{item.hidden||item.archivedAt?<RotateCcw size={15}/>:<Trash2 size={15}/>}</button>}
 			</article>)}</div>)}</div>:<div className="account-empty">{target?'No activity matches the selected filters.':'Search for and select a user to review activity.'}</div>}
 			{data?.hasMore&&<div className="activity-pagination"><button type="button" className="button-secondary" onClick={()=>void load(data.items.length,true)} disabled={loading}>Load more</button></div>}
 		</section>

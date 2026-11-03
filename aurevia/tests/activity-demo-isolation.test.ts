@@ -104,4 +104,24 @@ describe('DEMO activity separation',()=>{
 		expect(JSON.stringify(result.items)).not.toContain('203.0.113.10');
 		expect(JSON.stringify(result.items)).not.toContain('private browser details');
 	});
+
+	it('excludes login records from admin default activity unless login history is selected',async()=>{
+		mocks.orders.mockResolvedValue([]);
+		mocks.investments.mockResolvedValue([]);
+		mocks.funding.mockResolvedValue([]);
+		const loginEvent={
+			id:'login-event',actorId:'user-1',action:'LOGIN_FAILED',entity:'LOGIN',entityId:'user-1',
+			metadata:{},createdAt:new Date('2026-01-06T00:00:00Z'),
+		};
+		mocks.audits.mockImplementation(async({where}:{where:{entity:{in:string[]}}})=>
+			where.entity.in.includes('LOGIN')?[loginEvent]:[],
+		);
+		const defaultActivity=await getUserActivity('user-1',AccountMode.REAL,'all',20,{excludeLoginHistory:true});
+		expect(defaultActivity.items.some(item=>item.source==='audit')).toBe(false);
+		expect(mocks.audits).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({entity:{in:['ORDER','POSITION','INVESTMENT']}})}));
+
+		const loginHistory=await getUserActivity('user-1',AccountMode.REAL,'login-history',20,{includeLoginHistory:true});
+		expect(loginHistory.items).toMatchObject([{id:'login-event',source:'audit',category:'security',action:'Failed sign-in'}]);
+		expect(mocks.audits).toHaveBeenLastCalledWith(expect.objectContaining({where:expect.objectContaining({entity:{in:['LOGIN']}})}));
+	});
 });

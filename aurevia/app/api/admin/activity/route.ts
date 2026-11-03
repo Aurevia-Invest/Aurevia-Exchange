@@ -46,6 +46,8 @@ export async function GET(request:Request){
 			status:(params.get('status')||'').slice(0,40),
 			dateFrom,dateTo,offset,
 			state:state as 'active'|'archived'|'hidden'|'all',
+			includeLoginHistory:categoryValue==='login-history',
+			excludeLoginHistory:categoryValue!=='login-history',
 		});
 		return NextResponse.json(jsonSafe({user,accountMode,data}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){

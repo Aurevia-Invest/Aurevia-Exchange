@@ -2,7 +2,7 @@ import {AccountMode,FundingStatus,InvestmentStatus,OrderStatus,PositionStatus,Pr
 import {db} from '@/lib/db';
 import {removeSimulatedLabels} from '@/lib/display-copy';
 
-export type ActivityCategory='all'|'trade'|'personal-trade'|'investment'|'deposit'|'withdrawal'|'order'|'position'|'account'|'security';
+export type ActivityCategory='all'|'trade'|'personal-trade'|'investment'|'deposit'|'withdrawal'|'order'|'position'|'account'|'security'|'login-history';
 
 export type ActivityRecord={
   id:string;
@@ -36,9 +36,11 @@ export type ActivityQuery={
   dateTo?:Date;
   state?:'active'|'archived'|'hidden'|'all';
   offset?:number;
+  includeLoginHistory?:boolean;
+  excludeLoginHistory?:boolean;
 };
 
-const activityCategories=new Set<ActivityCategory>(['all','trade','personal-trade','investment','deposit','withdrawal','order','position','account','security']);
+const activityCategories=new Set<ActivityCategory>(['all','trade','personal-trade','investment','deposit','withdrawal','order','position','account','security','login-history']);
 export function isActivityCategory(value:string):value is ActivityCategory{return activityCategories.has(value as ActivityCategory)}
 
 function decimal(value:Prisma.Decimal|number|string|null|undefined){return value===null||value===undefined?new Prisma.Decimal(0):new Prisma.Decimal(value)}
@@ -77,13 +79,14 @@ export async function getUserActivity(userId:string,accountMode:AccountMode,cate
     ...(normalizedStatus==='READ'?{isRead:true}:normalizedStatus==='UNREAD'?{isRead:false}:{}),
     ...(query.dateFrom||query.dateTo?{createdAt:dateFilter}:{}),
   };
+  const auditEntities=query.includeLoginHistory?['LOGIN']:query.excludeLoginHistory?['ORDER','POSITION','INVESTMENT']:['ORDER','POSITION','INVESTMENT','LOGIN'];
   const [ledgerEntries,orders,positions,investments,fundingRequests,auditLogs,notifications]=await Promise.all([
     db.ledgerEntry.findMany({where:{account:{userId,accountMode},...(sourceIdFilter('ledger','transactionId')||{}),...(query.dateFrom||query.dateTo?{transaction:{createdAt:dateFilter}}:{}),...(search?{OR:[{transactionId:searchContains(search)},{transaction:{OR:[{reference:searchContains(search)},{description:searchContains(search)}]}}]}:{})},include:{account:{select:{userId:true,currency:true,accountMode:true}},transaction:{select:{reference:true,description:true,createdAt:true}}},orderBy:{createdAt:'desc'},take}),
     db.order.findMany({where:{userId,accountMode,...(sourceIdFilter('order')||{}),...(orderStatus?{status:orderStatus}:{}),...(query.dateFrom||query.dateTo?{createdAt:dateFilter}:{}),...(search?{OR:[{id:searchContains(search)},{instrument:{symbol:searchContains(search)}}]}:{})},include:{instrument:{select:{symbol:true}},executions:{select:{quantity:true,price:true,fee:true,createdAt:true}}},orderBy:{createdAt:'desc'},take}),
     db.position.findMany({where:{userId,accountMode,...(sourceIdFilter('position')||{}),...(positionStatus?{status:positionStatus}:{}),...(query.dateFrom||query.dateTo?{openedAt:dateFilter}:{}),...(search?{OR:[{id:searchContains(search)},{instrument:{symbol:searchContains(search)}}]}:{})},include:{instrument:{select:{symbol:true}}},orderBy:{openedAt:'desc'},take}),
     db.investmentRequest.findMany({where:{userId,accountMode,...(sourceIdFilter('investment')||{}),...(investmentStatus?{status:investmentStatus}:{}),...(query.dateFrom||query.dateTo?{requestedAt:dateFilter}:{}),...(search?{OR:[{id:searchContains(search)},{opportunity:{OR:[{title:searchContains(search)},{assetSymbol:searchContains(search)},{category:searchContains(search)}]}}]}:{})},include:{opportunity:{select:{title:true,assetSymbol:true,category:true,targetReturnPercent:true,durationDays:true}}},orderBy:{requestedAt:'desc'},take}),
     db.fundingRequest.findMany({where:{userId,accountMode,...(sourceIdFilter('funding')||{}),...(fundingStatus?{status:fundingStatus}:{}),...(query.dateFrom||query.dateTo?{createdAt:dateFilter}:{}),...(search?{OR:[{id:searchContains(search)},{method:searchContains(search)},{transactionReference:searchContains(search)}]}:{})},orderBy:{createdAt:'desc'},take}),
-    db.auditLog.findMany({where:{actorId:userId,entity:{in:['ORDER','POSITION','INVESTMENT','LOGIN']},...(query.dateFrom||query.dateTo?{createdAt:dateFilter}:{})},select:{id:true,actorId:true,action:true,entity:true,entityId:true,metadata:true,createdAt:true},orderBy:{createdAt:'desc'},take}),
+    db.auditLog.findMany({where:{actorId:userId,entity:{in:auditEntities},...(query.dateFrom||query.dateTo?{createdAt:dateFilter}:{})},select:{id:true,actorId:true,action:true,entity:true,entityId:true,metadata:true,createdAt:true},orderBy:{createdAt:'desc'},take}),
     db.notification.findMany({where:notificationWhere,include:{pushOutbox:{select:{id:true}}},orderBy:{createdAt:'desc'},take}),
   ]);
   const records:ActivityRecord[] = [
@@ -150,7 +153,7 @@ export async function getUserActivity(userId:string,accountMode:AccountMode,cate
   const searchText=query.search?.trim().toLocaleLowerCase();
   const filtered=records.filter(record=>
     (accountMode!==AccountMode.DEMO||record.source==='notification'||record.source==='audit'||demoVisibleCategories.has(record.category))&&
-    (category==='all'||record.category===category||record.category==='trade'&&category==='personal-trade'||record.category==='personal-trade'&&category==='trade')&&
+    (category==='all'||category==='login-history'&&record.source==='audit'||category==='security'&&record.category==='security'||record.category===category||record.category==='trade'&&category==='personal-trade'||record.category==='personal-trade'&&category==='trade')&&
     (!query.status||record.status.toLocaleLowerCase().includes(query.status.toLocaleLowerCase()))&&
     (!query.dateFrom||Date.parse(record.timestamp)>=query.dateFrom.getTime())&&
     (!query.dateTo||Date.parse(record.timestamp)<=query.dateTo.getTime())&&
@@ -172,4 +175,4 @@ export async function getUserActivity(userId:string,accountMode:AccountMode,cate
   return {items:page,total:sorted.length,hasMore:offset<1000&&sorted.length>offset+limit,cursor:page.at(-1)?.id||null};
 }
 
-export function activityCategoryLabel(category:ActivityCategory){return ({all:'All activity',trade:'Trades', 'personal-trade':'Personal trades',investment:'Investments',deposit:'Deposits',withdrawal:'Withdrawals',order:'Orders',position:'Positions',account:'Account',security:'Security'} as const)[category]}
+export function activityCategoryLabel(category:ActivityCategory){return ({all:'All activity',trade:'Trades', 'personal-trade':'Personal trades',investment:'Investments',deposit:'Deposits',withdrawal:'Withdrawals',order:'Orders',position:'Positions',account:'Account',security:'Security','login-history':'Login history'} as const)[category]}

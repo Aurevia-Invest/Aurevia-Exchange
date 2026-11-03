@@ -3,7 +3,7 @@ import {beforeEach,describe,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({instrumentFindFirst:vi.fn(),candleFindFirst:vi.fn()}));
 vi.mock('@/lib/db',()=>({db:{instrument:{findFirst:mocks.instrumentFindFirst},candle:{findFirst:mocks.candleFindFirst}}}));
 
-import {getInternalMarketQuote} from '@/lib/internal-market-data';
+import {getInternalMarketHistory,getInternalMarketQuote} from '@/lib/internal-market-data';
 
 const bitcoin={id:'BTC',ticker:'BTC-USD',name:'Bitcoin USD',type:'CRYPTO' as const,currency:'USD'};
 
@@ -32,5 +32,27 @@ describe('internal paper-market quotes',()=>{
 		expect(quote.price).toBeGreaterThan(0);
 		expect(quote.volume).toBeNull();
 		expect(mocks.candleFindFirst).not.toHaveBeenCalled();
+	});
+
+	it.each([null,'0'])('uses a reference fallback when the instrument price is %s',async price=>{
+		mocks.instrumentFindFirst.mockResolvedValue({id:'aapl-instrument',price});
+		const asset={...bitcoin,id:'AAPL',ticker:'AAPL',name:'Apple Inc.',type:'STOCK' as const};
+
+		const history=await getInternalMarketHistory(asset,'1d');
+
+		expect(history.source).toBe('Aurevia Internal');
+		expect(history.candles).toHaveLength(240);
+		expect(history.quote.price).toBeGreaterThan(0);
+		expect(history.candles.every(candle=>Number.isFinite(candle.close)&&candle.close>0)).toBe(true);
+		expect(mocks.candleFindFirst).not.toHaveBeenCalled();
+	});
+
+	it('uses the instrument price when the current-day candle open is invalid',async()=>{
+		mocks.instrumentFindFirst.mockResolvedValue({id:'btc-instrument',price:'101000'});
+		mocks.candleFindFirst.mockResolvedValue({open:'0'});
+
+		const quote=await getInternalMarketQuote(bitcoin);
+
+		expect(quote).toMatchObject({price:101000,previousClose:101000,change:0,changePercent:0});
 	});
 });

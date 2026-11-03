@@ -51,10 +51,14 @@ async function currentInternalPrice(asset:LiveMarketAsset,now:number){
 			instrument=null;
 		}
 	}
-	if(!instrument)return {price:internalPriceAt(asset,reference,now),reference,open:internalPriceAt(asset,reference,dayStart)};
-	const priceValue=instrument.price instanceof Prisma.Decimal?instrument.price.toNumber():Number(instrument.price);
-	const price=Number(priceValue);
-	if(!Number.isFinite(price)||price<=0)throw new Error(`Internal market price is unavailable for ${asset.id}.`);
+	const referenceFallback=()=>({
+		price:internalPriceAt(asset,reference,now),
+		reference,
+		open:internalPriceAt(asset,reference,dayStart),
+	});
+	if(!instrument)return referenceFallback();
+	const price=instrument.price instanceof Prisma.Decimal?instrument.price.toNumber():Number(instrument.price);
+	if(!Number.isFinite(price)||price<=0)return referenceFallback();
 	let dayOpen:null|{open:string|number|Prisma.Decimal|null} = null;
 	try{
 		dayOpen=await db.candle.findFirst({
@@ -66,7 +70,7 @@ async function currentInternalPrice(asset:LiveMarketAsset,now:number){
 		dayOpen=null;
 	}
 	const openValue=dayOpen&&dayOpen.open instanceof Prisma.Decimal?dayOpen.open.toNumber():Number(dayOpen?.open ?? price);
-	return {price,reference:price,open:Number.isFinite(openValue)?openValue:price};
+	return {price,reference:price,open:Number.isFinite(openValue)&&openValue>0?openValue:price};
 }
 
 export async function getInternalMarketQuote(asset:LiveMarketAsset):Promise<MarketQuote>{

@@ -428,6 +428,42 @@ test('login and registration fields receive real pointer and keyboard input',asy
 	await expectNoHorizontalOverflow(page);
 });
 
+test('password recovery stays private and usable across mobile and desktop widths',async({page})=>{
+	await page.route('**/api/password-reset/request',route=>route.fulfill({
+		status:202,
+		contentType:'application/json',
+		body:JSON.stringify({message:'If an eligible account matches, recovery instructions may be emailed. If no email arrives, contact support.'}),
+	}));
+	await page.route('**/api/password-reset/confirm',async route=>{
+		const body=route.request().postDataJSON() as {token:string;password:string};
+		expect(body.token).toBe('R'.repeat(43));
+		expect(body.password).toBe('ChangedPassword1');
+		await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true})});
+	});
+
+	await page.setViewportSize({width:320,height:800});
+	await page.goto('/forgot-password');
+	await page.getByLabel('Email address').fill('person@example.invalid');
+	await page.getByRole('button',{name:'Request recovery link'}).click();
+	await expect(page.getByRole('status')).toContainText('If an eligible account matches');
+	await expectNoHorizontalOverflow(page);
+
+	const resetResponse=await page.goto(`/reset-password#token=${'R'.repeat(43)}`);
+	expect(resetResponse?.headers()['referrer-policy']).toBe('no-referrer');
+	const newPassword=page.getByRole('textbox',{name:'New password',exact:true});
+	const confirmPassword=page.getByRole('textbox',{name:'Confirm new password',exact:true});
+	await expect(newPassword).toBeVisible();
+	await expect(page).toHaveURL(/\/reset-password$/);
+	for(const width of [320,390,768,1440,1920]){
+		await page.setViewportSize({width,height:900});
+		await expectNoHorizontalOverflow(page);
+	}
+	await newPassword.fill('ChangedPassword1');
+	await confirmPassword.fill('ChangedPassword1');
+	await page.getByRole('button',{name:'Change password'}).click();
+	await expect(page.getByRole('status')).toContainText('Password changed');
+});
+
 test('dashboard hierarchy remains usable and contained at mobile and desktop widths',async({page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	const profile=await page.request.get('/api/profile').then(response=>response.json());

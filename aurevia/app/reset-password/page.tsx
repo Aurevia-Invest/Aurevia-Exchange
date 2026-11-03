@@ -13,7 +13,12 @@ export default function ResetPassword(){
 	const [error,setError]=useState('');
 	const [busy,setBusy]=useState(false);
 	const [complete,setComplete]=useState(false);
-	useEffect(()=>{setToken(new URLSearchParams(window.location.search).get('token')||'')},[]);
+	useEffect(()=>{
+		const fragmentToken=new URLSearchParams(window.location.hash.slice(1)).get('token');
+		const queryToken=new URLSearchParams(window.location.search).get('token');
+		setToken(fragmentToken||queryToken||'');
+		if(fragmentToken||queryToken)window.history.replaceState(null,'',window.location.pathname);
+	},[]);
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();if(busy||!token)return;
 		setError('');setMessage('');

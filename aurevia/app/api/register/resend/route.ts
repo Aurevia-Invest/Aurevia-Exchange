@@ -65,10 +65,26 @@ function phoneInitiationFailureResponse(error:unknown,requestId:string){
 		message='The code could not be sent. Your registration is saved; if the secure widget offers another channel, try it there, otherwise wait before retrying.';
 	}else if(['CAPTCHA_VALIDATION_FAILED','CAPTCHA_API_ERROR','CAPTCHA_NOT_VERIFIED'].includes(providerCode||'')){
 		message='The secure verification check could not be completed. Your registration is saved; retry once, and contact support if it fails again.';
-	}else if(['RATE_LIMITED','RATE_LIMIT_EXCEEDED','TOO_MANY_REQUESTS','API_RATE_LIMITED'].includes(providerCode||'')||(error instanceof AkedlyProviderError&&error.httpStatus===429)){
+	}else if(['CIRCUIT_BREAKER_OPEN','CIRCUIT_BREAKER_TRIGGERED'].includes(providerCode||'')){
+		message='Phone verification is temporarily unavailable while the provider recovers. Your registration is saved; wait a few minutes before retrying.';
+	}else if([
+		'RATE_LIMITED',
+		'RATE_LIMIT_EXCEEDED',
+		'TOO_MANY_REQUESTS',
+		'API_RATE_LIMITED',
+		'RATE_LIMIT_WIDGET_ATTEMPTS',
+		'RATE_LIMIT_PHONENUMBER_ATTEMPTS',
+	].includes(providerCode||'')||(error instanceof AkedlyProviderError&&error.httpStatus===429)){
 		message='Too many verification requests were made. Your registration is saved; wait before retrying.';
 	}
-	const status=error instanceof AkedlyProviderError&&error.httpStatus===429?429:503;
+	const status=error instanceof AkedlyProviderError&&(error.httpStatus===429||[
+		'RATE_LIMITED',
+		'RATE_LIMIT_EXCEEDED',
+		'TOO_MANY_REQUESTS',
+		'API_RATE_LIMITED',
+		'RATE_LIMIT_WIDGET_ATTEMPTS',
+		'RATE_LIMIT_PHONENUMBER_ATTEMPTS',
+	].includes(providerCode||''))?429:503;
 	return NextResponse.json(
 		{error:message,requestId,...(retryAfterSeconds?{retryAfterSeconds}:{})},
 		{status,headers:{...(retryAfterSeconds?{'Retry-After':String(retryAfterSeconds)}:{}),'Cache-Control':'no-store'}},

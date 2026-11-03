@@ -450,6 +450,48 @@ describe('registration verification resend',()=>{
 		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
 	});
 
+	it('maps widget and phone-number attempt limits to a safe retry response',async()=>{
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new mocks.AkedlyProviderError(200,'RATE_LIMIT_WIDGET_ATTEMPTS'));
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-phone',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:'+2348031234567',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+
+		const response=await POST(registrationRequest());
+		const result=await response.json();
+
+		expect(response.status).toBe(429);
+		expect(result.error).toContain('wait before retrying');
+		expect(JSON.stringify(result)).not.toContain('RATE_LIMIT_WIDGET_ATTEMPTS');
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+	});
+
+	it('returns safe temporary-unavailability guidance for an open Akedly circuit breaker',async()=>{
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new mocks.AkedlyProviderError(503,'CIRCUIT_BREAKER_OPEN'));
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-phone',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:'+2348031234567',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+
+		const response=await POST(registrationRequest());
+		const result=await response.json();
+
+		expect(response.status).toBe(503);
+		expect(result.error).toContain('provider recovers');
+		expect(JSON.stringify(result)).not.toContain('CIRCUIT_BREAKER_OPEN');
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+	});
+
 	it('preserves a valid pending registration when Akedly rejects and email fallback definitively fails',async()=>{
 		mocks.registrationAttemptFindUnique.mockResolvedValue({
 			id:'registration-1',

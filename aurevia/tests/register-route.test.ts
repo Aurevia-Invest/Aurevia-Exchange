@@ -175,6 +175,25 @@ describe('registration privacy boundary',()=>{
 		warning.mockRestore();
 	});
 
+	it('allows registration to recover after Akedly readiness is restored',async()=>{
+		mocks.akedlyReadiness.mockReturnValue({enabled:false,missing:['AKEDLY_ENABLED'],ready:false});
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+		const unavailable=await POST(request());
+
+		expect(unavailable.status).toBe(503);
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+		expect(mocks.rateLimit).toHaveBeenCalledWith('register:192.0.2.5',5,3_600_000);
+		expect(mocks.rateLimit).toHaveBeenCalledWith('register-email:new-user@example.invalid',3,3_600_000);
+
+		mocks.akedlyReadiness.mockReturnValue({enabled:true,missing:[],ready:true});
+		const recovered=await POST(request());
+
+		expect(recovered.status).toBe(201);
+		expect(mocks.attemptCreate).toHaveBeenCalledTimes(1);
+		expect(mocks.verifyTurnstile).toHaveBeenCalledTimes(2);
+		warning.mockRestore();
+	});
+
 	it('rejects a missing phone number before creating a temporary registration',async()=>{
 		const {phone:_phone,...withoutPhone}=payload;
 		const response=await POST(request(withoutPhone));

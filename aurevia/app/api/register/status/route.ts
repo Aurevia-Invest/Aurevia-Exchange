@@ -1,9 +1,11 @@
+import {randomUUID} from 'node:crypto';
 import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
 import {db} from '@/lib/db';
 import {rateLimit,RateLimitError} from '@/lib/rate-limit';
 import {trustedProxyClientIp} from '@/lib/request-ip';
 import {getAkedlyVerificationState,reconcileAkedlyAttempt} from '@/lib/akedly-verification';
+import {AkedlyProviderError} from '@/lib/akedly';
 import {VerificationChannel} from '@prisma/client';
 import {clearRegistrationCookie,hashRegistrationToken,registrationTokenFromRequest} from '@/lib/registration-attempt';
 import {establishRegistrationSession} from '@/lib/registration-session';
@@ -14,6 +16,7 @@ const schema=z.object({
 });
 
 export async function POST(request:Request){
+	const requestId=randomUUID();
 	try{
 		const {email:rawEmail,attemptId}=schema.parse(await request.json());
 		const email=rawEmail.toLowerCase();
@@ -79,7 +82,21 @@ export async function POST(request:Request){
 			{status:429,headers:{'Retry-After':String(error.retryAfterSeconds),'Cache-Control':'no-store'}},
 		);
 		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Please wait before checking verification again.'},{status:429});
-		console.error('[akedly-registration] Unable to check verification status.',{errorType:error instanceof Error?error.name:'UnknownError'});
-		return NextResponse.json({error:'Unable to check verification status right now.'},{status:503});
+		console.error('[akedly-registration] Unable to check verification status.',{
+			requestId,
+			referenceId:requestId,
+			endpoint:'/api/register/status',
+			failureCode:error instanceof AkedlyProviderError?error.message:error instanceof Error?error.name:'UNKNOWN_ERROR',
+			failureTimestamp:error instanceof AkedlyProviderError?error.failureTimestamp:new Date().toISOString(),
+			providerEndpoint:error instanceof AkedlyProviderError?error.providerEndpoint:null,
+			providerAttemptId:error instanceof AkedlyProviderError?error.providerAttemptId||null:null,
+			providerHttpStatus:error instanceof AkedlyProviderError?error.httpStatus||null:null,
+			...(error instanceof AkedlyProviderError&&error.providerCode?{providerCode:error.providerCode}:{}),
+		});
+		return NextResponse.json({
+			error:'Unable to check verification status right now.',
+			requestId,
+			referenceId:requestId,
+		},{status:503,headers:{'Cache-Control':'no-store'}});
 	}
 }

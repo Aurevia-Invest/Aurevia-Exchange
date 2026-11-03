@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import {NextResponse} from 'next/server';
 import {db} from '@/lib/db';
 import {completeAkedlyVerification,reconcileAkedlyAttempt} from '@/lib/akedly-verification';
@@ -7,6 +8,7 @@ import {rateLimit} from '@/lib/rate-limit';
 export const runtime='nodejs';
 
 export async function POST(request:Request){
+	const requestId=randomUUID();
 	try{
 		rateLimit(`akedly-webhook-ip:${request.headers.get('x-forwarded-for')||'unknown'}`,120,60_000);
 	}catch(error){
@@ -20,7 +22,16 @@ export async function POST(request:Request){
 	const timestamp=headers['svix-timestamp']||headers['webhook-timestamp'];
 	const hasSignatureHeaders=Boolean(signature||messageId||timestamp);
 	const signed=Boolean(signature&&messageId&&timestamp);
-	if(hasSignatureHeaders&&!signed)return NextResponse.json({error:'Akedly signature headers are incomplete.'},{status:401});
+	if(hasSignatureHeaders&&!signed){
+		console.warn('[akedly-webhook] Signature headers are incomplete.',{
+			requestId,
+			referenceId:requestId,
+			endpoint:'/api/webhooks/akedly',
+			failureCode:'INCOMPLETE_SIGNATURE_HEADERS',
+			failureTimestamp:new Date().toISOString(),
+		});
+		return NextResponse.json({error:'Akedly signature headers are incomplete.'},{status:401});
+	}
 	let rawBody:string;
 	try{
 		rawBody=await readAkedlyWebhookBody(request);
@@ -32,6 +43,13 @@ export async function POST(request:Request){
 		try{
 			verifyAkedlyWebhook(rawBody,headers);
 		}catch{
+			console.warn('[akedly-webhook] Signature validation failed.',{
+				requestId,
+				referenceId:requestId,
+				endpoint:'/api/webhooks/akedly',
+				failureCode:'INVALID_WEBHOOK_SIGNATURE',
+				failureTimestamp:new Date().toISOString(),
+			});
 			return NextResponse.json({error:'Invalid Akedly webhook signature.'},{status:401});
 		}
 	}
@@ -45,7 +63,16 @@ export async function POST(request:Request){
 	const attempt=payload.widgetAttempt;
 	const attemptId=isRecord(attempt)&&typeof attempt.attemptId==='string'?attempt.attemptId:null;
 	if(typeof payload.eventType==='string'){
-		if(!signed)return NextResponse.json({error:'Signed Akedly event webhooks are required.'},{status:401});
+		if(!signed){
+			console.warn('[akedly-webhook] Unsigned provider event rejected.',{
+				requestId,
+				referenceId:requestId,
+				endpoint:'/api/webhooks/akedly',
+				failureCode:'UNSIGNED_PROVIDER_EVENT',
+				failureTimestamp:new Date().toISOString(),
+			});
+			return NextResponse.json({error:'Signed Akedly event webhooks are required.'},{status:401});
+		}
 		return NextResponse.json({received:true});
 	}
 	if(!attemptId){
@@ -63,7 +90,13 @@ export async function POST(request:Request){
 		return NextResponse.json({received:true});
 	}catch(error){
 		if(error instanceof Error&&error.message.startsWith('AKEDLY_'))return NextResponse.json({error:'Akedly verification could not be confirmed yet.'},{status:503});
-		console.error('[akedly-webhook] Unable to process verification result.',{errorType:error instanceof Error?error.name:'UnknownError'});
+		console.error('[akedly-webhook] Unable to process verification result.',{
+			requestId,
+			referenceId:requestId,
+			endpoint:'/api/webhooks/akedly',
+			errorType:error instanceof Error?error.name:'UnknownError',
+			failureTimestamp:new Date().toISOString(),
+		});
 		return NextResponse.json({error:'Unable to process Akedly verification result.'},{status:500});
 	}
 }

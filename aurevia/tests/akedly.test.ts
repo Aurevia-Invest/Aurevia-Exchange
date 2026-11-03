@@ -291,6 +291,25 @@ describe('Akedly V2 server integration',()=>{
 		expect(requestBody).toEqual({attemptId:'attempt_1234567890'});
 	});
 
+	it('retains safe status-lookup failure details without provider response text',async()=>{
+		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
+			status:'error',
+			error:{code:'invalid_api_key',message:'private detail: person@example.invalid'},
+		}),{status:401,headers:{'content-type':'application/json'}})));
+
+		const failure=await lookupAkedlyAttempt('attempt_1234567890').catch(error=>error);
+
+		expect(failure).toMatchObject({
+			message:'AKEDLY_LOOKUP_FAILED',
+			httpStatus:401,
+			providerCode:'INVALID_API_KEY',
+			providerEndpoint:'https://api.akedly.io/api/v1/transactions/status',
+			failureTimestamp:expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+		});
+		expect(JSON.stringify(failure)).not.toContain('person@example.invalid');
+		expect(JSON.stringify(failure)).not.toContain('private detail');
+	});
+
 	it('verifies raw webhook signatures and rejects tampering and stale deliveries',()=>{
 		const rawBody=JSON.stringify(successfulResult());
 		const timestamp=new Date();

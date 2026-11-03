@@ -29,6 +29,7 @@ vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.
 
 import {POST as registrationStatus} from '@/app/api/register/status/route';
 import {POST as phoneStatus} from '@/app/api/kyc/phone/status/route';
+import {AkedlyProviderError} from '@/lib/akedly';
 import {VerificationChannel} from '@prisma/client';
 
 function request(url:string,body:unknown){
@@ -117,6 +118,58 @@ describe('Akedly verification status routes',()=>{
 		expect(mocks.reconcile).toHaveBeenCalledWith('attempt_1234567890');
 	});
 
+	it('logs sanitized Akedly lookup failures during registration status polling',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-1',
+			email:'person@example.invalid',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:{
+				expiresAt:new Date(Date.now()+60_000),
+				providerReference:'AKEDLY:attempt_1234567890',
+			},
+		});
+		mocks.reconcile.mockRejectedValue(new AkedlyProviderError(
+			'AKEDLY_LOOKUP_FAILED',
+			401,
+			'INVALID_API_KEY',
+			undefined,
+			{providerEndpoint:'https://api.akedly.io/api/v1/transactions/status'},
+		));
+		const warning=vi.spyOn(console,'error').mockImplementation(()=>undefined);
+		const token='a'.repeat(43);
+		const response=await registrationStatus(new Request('https://aurevia.test/api/register/status',{
+			method:'POST',
+			headers:{
+				'content-type':'application/json',
+				cookie:`aurevia_registration=${token}`,
+			},
+			body:JSON.stringify({email:'person@example.invalid',attemptId:'attempt_1234567890'}),
+		}));
+		const body=await response.json();
+
+		expect(response.status).toBe(503);
+		expect(body).toMatchObject({
+			error:'Unable to check verification status right now.',
+			requestId:expect.any(String),
+			referenceId:expect.any(String),
+		});
+		expect(body.referenceId).toBe(body.requestId);
+		expect(warning).toHaveBeenCalledWith(
+			'[akedly-registration] Unable to check verification status.',
+			expect.objectContaining({
+				requestId:body.referenceId,
+				referenceId:body.referenceId,
+				endpoint:'/api/register/status',
+				failureCode:'AKEDLY_LOOKUP_FAILED',
+				providerEndpoint:'https://api.akedly.io/api/v1/transactions/status',
+				providerHttpStatus:401,
+				providerCode:'INVALID_API_KEY',
+			}),
+		);
+		expect(JSON.stringify(body)).not.toContain('INVALID_API_KEY');
+		warning.mockRestore();
+	});
+
 	it('requires the authenticated owner for phone status and returns verified state',async()=>{
 		mocks.getState.mockResolvedValue({verified:true,expiresAt:new Date(Date.now()+60_000)});
 		const response=await phoneStatus(request('https://aurevia.test/api/kyc/phone/status',{
@@ -126,5 +179,77 @@ describe('Akedly verification status routes',()=>{
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({verified:true});
 		expect(mocks.getState).toHaveBeenCalledWith('user-1','attempt_1234567890',VerificationChannel.SMS);
+		expect(mocks.reconcile).not.toHaveBeenCalled();
+	});
+
+	it('reconciles an unverified phone attempt with Akedly and returns its updated state',async()=>{
+		mocks.getState
+			.mockResolvedValueOnce({verified:false,expiresAt:new Date(Date.now()+60_000)})
+			.mockResolvedValueOnce({verified:true,expiresAt:new Date(Date.now()+60_000)});
+
+		const response=await phoneStatus(request('https://aurevia.test/api/kyc/phone/status',{
+			attemptId:'attempt_1234567890',
+		}));
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({verified:true});
+		expect(mocks.reconcile).toHaveBeenCalledWith('attempt_1234567890','user-1');
+		expect(mocks.getState).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not query Akedly for expired or unknown phone attempts',async()=>{
+		mocks.getState
+			.mockResolvedValueOnce({verified:false,expiresAt:new Date(Date.now()-1000)})
+			.mockResolvedValueOnce(null);
+
+		const expired=await phoneStatus(request('https://aurevia.test/api/kyc/phone/status',{
+			attemptId:'attempt_1234567890',
+		}));
+		const missing=await phoneStatus(request('https://aurevia.test/api/kyc/phone/status',{
+			attemptId:'attempt_1234567890',
+		}));
+
+		expect(expired.status).toBe(200);
+		expect(await expired.json()).toEqual({verified:false,expired:true});
+		expect(missing.status).toBe(404);
+		expect(mocks.reconcile).not.toHaveBeenCalled();
+	});
+
+	it('logs sanitized provider status failures with a client reference ID',async()=>{
+		mocks.reconcile.mockRejectedValue(new AkedlyProviderError(
+			'AKEDLY_LOOKUP_FAILED',
+			401,
+			'INVALID_API_KEY',
+			undefined,
+			{providerEndpoint:'https://api.akedly.io/api/v1/transactions/status'},
+		));
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+
+		const response=await phoneStatus(request('https://aurevia.test/api/kyc/phone/status',{
+			attemptId:'attempt_1234567890',
+		}));
+		const body=await response.json();
+
+		expect(response.status).toBe(503);
+		expect(body).toMatchObject({
+			error:'Unable to check phone verification right now.',
+			requestId:expect.any(String),
+			referenceId:expect.any(String),
+		});
+		expect(body.referenceId).toBe(body.requestId);
+		expect(warning).toHaveBeenCalledWith(
+			'[akedly-phone] Provider status reconciliation failed.',
+			expect.objectContaining({
+				requestId:body.referenceId,
+				referenceId:body.referenceId,
+				endpoint:'/api/kyc/phone/status',
+				failureCode:'AKEDLY_LOOKUP_FAILED',
+				providerEndpoint:'https://api.akedly.io/api/v1/transactions/status',
+				providerHttpStatus:401,
+				providerCode:'INVALID_API_KEY',
+			}),
+		);
+		expect(JSON.stringify(body)).not.toContain('INVALID_API_KEY');
+		warning.mockRestore();
 	});
 });

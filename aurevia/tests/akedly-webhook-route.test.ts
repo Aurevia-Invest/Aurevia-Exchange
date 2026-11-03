@@ -75,11 +75,24 @@ describe('Akedly webhook route',()=>{
 		const headers=new Headers(request.headers);
 		headers.set('svix-signature','v1,invalid');
 		const tampered=new Request(request.url,{method:'POST',headers,body:JSON.stringify(result())});
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
 
 		const response=await POST(tampered);
 
 		expect(response.status).toBe(401);
 		expect(mocks.complete).not.toHaveBeenCalled();
+		expect(warning).toHaveBeenCalledWith(
+			'[akedly-webhook] Signature validation failed.',
+			expect.objectContaining({
+				requestId:expect.any(String),
+				referenceId:expect.any(String),
+				endpoint:'/api/webhooks/akedly',
+				failureCode:'INVALID_WEBHOOK_SIGNATURE',
+				failureTimestamp:expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+			}),
+		);
+		expect(JSON.stringify(warning.mock.calls)).not.toContain('v1,invalid');
+		warning.mockRestore();
 	});
 
 	it('confirms unsigned verification results through authenticated provider reconciliation',async()=>{

@@ -1,8 +1,10 @@
+import {randomUUID} from 'node:crypto';
 import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {rateLimit} from '@/lib/rate-limit';
-import {getAkedlyVerificationState} from '@/lib/akedly-verification';
+import {AkedlyProviderError} from '@/lib/akedly';
+import {getAkedlyVerificationState,reconcileAkedlyAttempt} from '@/lib/akedly-verification';
 import {VerificationChannel} from '@prisma/client';
 
 const schema=z.object({attemptId:z.string().min(8).max(200)});
@@ -13,7 +15,32 @@ export async function POST(request:Request){
 		const {attemptId}=schema.parse(await request.json());
 		rateLimit(`akedly-phone-status-ip:${request.headers.get('x-forwarded-for')||'unknown'}`,30,60_000);
 		rateLimit(`akedly-phone-status-user:${user.id}`,30,60_000);
-		const state=await getAkedlyVerificationState(user.id,attemptId,VerificationChannel.SMS);
+		let state=await getAkedlyVerificationState(user.id,attemptId,VerificationChannel.SMS);
+		if(!state)return NextResponse.json({error:'Verification attempt not found.'},{status:404});
+		if(state.verified)return NextResponse.json({verified:true});
+		if(state.expiresAt<=new Date())return NextResponse.json({verified:false,expired:true});
+		try{
+			await reconcileAkedlyAttempt(attemptId,user.id);
+			state=await getAkedlyVerificationState(user.id,attemptId,VerificationChannel.SMS);
+		}catch(error){
+			const requestId=randomUUID();
+			console.warn('[akedly-phone] Provider status reconciliation failed.',{
+				requestId,
+				referenceId:requestId,
+				endpoint:'/api/kyc/phone/status',
+				failureCode:error instanceof AkedlyProviderError?error.message:error instanceof Error?error.name:'UNKNOWN_ERROR',
+				failureTimestamp:error instanceof AkedlyProviderError?error.failureTimestamp:new Date().toISOString(),
+				providerEndpoint:error instanceof AkedlyProviderError?error.providerEndpoint:null,
+				providerAttemptId:error instanceof AkedlyProviderError?error.providerAttemptId||null:null,
+				providerHttpStatus:error instanceof AkedlyProviderError?error.httpStatus||null:null,
+				...(error instanceof AkedlyProviderError&&error.providerCode?{providerCode:error.providerCode}:{}),
+			});
+			return NextResponse.json({
+				error:'Unable to check phone verification right now.',
+				requestId,
+				referenceId:requestId,
+			},{status:503,headers:{'Cache-Control':'no-store'}});
+		}
 		if(!state)return NextResponse.json({error:'Verification attempt not found.'},{status:404});
 		if(state.verified)return NextResponse.json({verified:true});
 		return NextResponse.json({verified:false,expired:state.expiresAt<=new Date()});

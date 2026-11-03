@@ -164,21 +164,37 @@ export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyA
 
 export async function lookupAkedlyAttempt(attemptId:string):Promise<unknown>{
 	const config=assertAkedlyConfigured();
+	const endpoint=`${API_BASE_URL}/api/v1/transactions/status`;
 	let response:Response;
 	try{
-		response=await fetch(`${API_BASE_URL}/api/v1/transactions/status`,{
+		response=await fetch(endpoint,{
 			method:'POST',
 			headers:{authorization:`Bearer ${config.apiKey}`,'content-type':'application/json'},
 			body:JSON.stringify({attemptId}),
 			signal:AbortSignal.timeout(8000),
 			redirect:'error',
 		});
-	}catch{
-		throw new Error('AKEDLY_PROVIDER_UNAVAILABLE');
+	}catch(error){
+		throw new AkedlyProviderError(
+			'AKEDLY_PROVIDER_UNAVAILABLE',
+			undefined,
+			error instanceof Error&&error.name==='TimeoutError'?'PROVIDER_TIMEOUT':'NETWORK_ERROR',
+			undefined,
+			{providerEndpoint:endpoint},
+		);
 	}
 	const result=await response.json().catch(()=>null) as unknown;
-	if(!response.ok)throw new Error('AKEDLY_LOOKUP_FAILED');
-	if(!isRecord(result)||result.status==='error')throw new Error('AKEDLY_LOOKUP_FAILED');
+	const providerDetails={providerEndpoint:endpoint};
+	if(!response.ok||(isRecord(result)&&result.status==='error')){
+		throw new AkedlyProviderError(
+			'AKEDLY_LOOKUP_FAILED',
+			response.status,
+			providerErrorCode(result),
+			providerRetryAfterSeconds(response,result),
+			providerDetails,
+		);
+	}
+	if(!isRecord(result))throw new AkedlyProviderError('AKEDLY_LOOKUP_FAILED',response.status,undefined,undefined,providerDetails);
 	return isRecord(result.data)?result.data:result;
 }
 

@@ -1,5 +1,5 @@
 import {NextResponse} from 'next/server';
-import {db} from '@/lib/db';
+import {cleanupExpiredRegistrationAttempts} from '@/lib/registration-cleanup';
 
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -11,15 +11,7 @@ export async function GET(request:Request){
 		return NextResponse.json({error:'Unauthorized'},{status:401,headers:{'Cache-Control':'no-store'}});
 	}
 	try{
-		const now=new Date();
-		const deleted=await db.registrationAttempt.deleteMany({
-			where:{
-				OR:[
-					{expiresAt:{lte:now}},
-					{verification:{is:{expiresAt:{lte:now}}}},
-				],
-			},
-		});
+		const deleted=await cleanupExpiredRegistrationAttempts();
 		return NextResponse.json({ok:true,deletedAttempts:deleted.count},{headers:{'Cache-Control':'no-store'}});
 	}catch(error){
 		console.error('Registration cleanup failed.',{errorType:error instanceof Error?error.name:'UnknownError'});

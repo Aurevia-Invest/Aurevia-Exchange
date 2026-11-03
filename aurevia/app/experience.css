@@ -755,7 +755,7 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,su
 .nova-message.is-user{align-self:flex-end;border-color:rgba(197,164,107,.25);background:rgba(197,164,107,.07)}
 .nova-message>span{color:var(--a-brass-soft);font-size:8px;font-weight:700;letter-spacing:.1em}
 .nova-message p{margin:5px 0 0;color:#c1cbc1;font-size:10px;line-height:1.65;white-space:pre-wrap}
-.floating-support{position:fixed;left:0;top:0;z-index:18;width:min(360px,calc(100vw - 24px));font-family:inherit;will-change:transform}
+.floating-support{position:fixed;left:0;top:0;z-index:120;width:min(360px,calc(100vw - 24px));font-family:inherit;will-change:transform}
 .floating-support:not(.is-open){width:56px}
 .floating-support-launcher{position:relative;display:grid;width:56px;height:56px;place-items:center;padding:0;border:1px solid rgba(212,175,55,.55);border-radius:50%;background:var(--a-forest);color:var(--a-paper);box-shadow:0 12px 36px rgba(0,0,0,.38);touch-action:none;cursor:grab;z-index:19;transition:transform 150ms ease,box-shadow 150ms ease}
 .floating-support-launcher:hover{transform:scale(1.04);box-shadow:0 14px 40px rgba(0,0,0,.45)}
@@ -5016,3 +5016,70 @@ html[data-theme="light"] .profile-tier-link{color:#725723}
 	.story-card-featured .story-card-media{min-height:0;aspect-ratio:16/9}
 	.story-card-featured .story-card-content{padding:16px}
 }
+
+:root{
+	--a-text-primary:var(--a-paper);
+	--a-text-muted:var(--a-muted);
+	--a-surface:var(--a-panel);
+	--a-surface-raised:var(--a-panel-raised);
+}
+html,body{background:var(--a-ink);color:var(--a-text-primary)}
+html[data-theme="light"]{
+	--a-text-primary:#122d49;
+	--a-text-muted:#5e7184;
+	--a-surface:#fff;
+	--a-surface-raised:#f3f6fa;
+}
+html[data-theme="dark"]{
+	--a-text-primary:#f3f4ed;
+	--a-text-muted:#a1afa4;
+	--a-surface:#18271e;
+	--a-surface-raised:#21352a;
+}
+html[data-theme="light"] :is(.account-page,.admin-main,.admin-content,.mobile-settings-page,.site-nav+main){
+	color:var(--a-text-primary);
+}
+html[data-theme="light"] :is(
+	.card,.account-panel,.account-page .card,.account-metric,.dashboard-hero,.dashboard-support-strip,
+	.trade-estimate,.settings-tabs,.market-ticker-card,.admin-panel,.admin-metric-card,
+	.user-dashboard-panel,.user-market-card,.account-card,.market-stage
+){
+	border-color:var(--a-line);
+	background:linear-gradient(145deg,#fff,#f4f7fa);
+	box-shadow:0 12px 32px rgba(15,48,84,.08);
+	color:var(--a-text-primary);
+}
+html[data-theme="light"] :is(.site-nav,.site-nav-user-shell,.user-topbar,.user-bottom-navigation,.admin-sidebar,.admin-topbar){
+	border-color:var(--a-line);
+	background:#fff;
+	color:var(--a-text-primary);
+}
+html[data-theme="light"] :is(.account-heading h1,.account-panel-title,.account-panel-title h2,.account-metric b,.account-page h1,.account-page h2,.account-page h3,.admin-main h1,.admin-main h2,.admin-main h3,.admin-panel h1,.admin-panel h2,.admin-panel h3){
+	color:var(--a-text-primary);
+}
+html[data-theme="light"] :is(.account-heading p,.account-panel-subtitle,.account-metric span,.account-metric small,.account-page .muted,.admin-panel p,.admin-panel td,.admin-panel th,.user-bottom-navigation a){
+	color:var(--a-text-muted);
+}
+html[data-theme="light"] :is(.site-nav .brand,.site-nav .nav-links a,.site-nav .nav-links button,.site-nav-user-shell .brand,.user-topbar-identity b,.user-topbar-identity small){
+	color:var(--a-text-primary);
+}
+html[data-theme="light"] :is(input,select,textarea,.input,.auth-input,.country-selector-trigger){
+	border-color:var(--a-line);
+	background-color:#fff;
+	color:var(--a-text-primary);
+	color-scheme:light;
+}
+html[data-theme="light"] :is(input,textarea)::placeholder{color:#718398}
+html[data-theme="light"] :is(.floating-support-panel,.floating-support-message){
+	border-color:var(--a-line);
+	background:linear-gradient(145deg,#fff,#f4f7fa);
+	color:var(--a-text-primary);
+}
+html[data-theme="light"] .floating-support-header{
+	border-color:var(--a-line);
+	background:linear-gradient(145deg,#edf2f7,#fff);
+}
+html[data-theme="light"] :is(.floating-support-header b,.floating-support-message p,.floating-support-new label,.floating-support-guest p,.floating-support-hint){
+	color:var(--a-text-primary);
+}
+html[data-theme="light"] ::selection{background:rgba(156,121,69,.22);color:#0f3054}

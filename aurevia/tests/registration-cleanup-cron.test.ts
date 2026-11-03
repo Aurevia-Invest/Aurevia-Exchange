@@ -45,4 +45,16 @@ describe('registration cleanup cron',()=>{
 		expect(second.status).toBe(200);
 		expect(mocks.deleteMany).toHaveBeenCalledTimes(2);
 	});
+
+	it('reports cleaner failures so the scheduled job can retry',async()=>{
+		const errorSpy=vi.spyOn(console,'error').mockImplementation(()=>{});
+		mocks.deleteMany.mockRejectedValue(new Error('database unavailable'));
+		const response=await GET(new Request('https://aurevia.test/api/cron/registration-cleanup',{
+			headers:{authorization:`Bearer ${process.env.CRON_SECRET}`},
+		}));
+
+		expect(response.status).toBe(503);
+		expect(await response.json()).toEqual({error:'Registration cleanup is temporarily unavailable.'});
+		errorSpy.mockRestore();
+	});
 });

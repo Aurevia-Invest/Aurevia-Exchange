@@ -4,30 +4,22 @@ import {FormEvent,useCallback,useEffect,useRef,useState} from 'react';
 import Link from 'next/link';
 import {useSession} from 'next-auth/react';
 import {LifeBuoy,MessageCircle,Minus,Move,Send,X} from 'lucide-react';
+import {clampSupportChatPosition,dockSupportChatPosition,nearestSupportChatSide,SupportChatSide} from '@/lib/support-chat-position';
 
 type SupportMessage={id:string;authorType:string;body:string;createdAt:string};
 type Conversation={id:string;subject:string;status:string;messages:SupportMessage[]};
 type Position={left:number;top:number};
+type SavedPosition=Position&{side?:SupportChatSide};
 type DragState={pointerId:number;startX:number;startY:number;left:number;top:number};
 
 const positionKey='aurevia-support-chat-position';
-const widgetWidth=360;
-const panelHeight=560;
 const launcherSize=56;
 const seenMessageKey='aurevia-support-chat-seen';
-
-function clampPosition(position:Position,expanded:boolean):Position{
-	const width=expanded?Math.min(widgetWidth,window.innerWidth-24):launcherSize;
-	const height=expanded?Math.min(panelHeight,window.innerHeight-24):launcherSize;
-	return {
-		left:Math.max(12,Math.min(position.left,Math.max(12,window.innerWidth-width-12))),
-		top:Math.max(12,Math.min(position.top,Math.max(12,window.innerHeight-height-12))),
-	};
-}
 
 export default function FloatingSupportChat(){
 	const {data:session,status}=useSession();
 	const [open,setOpen]=useState(false);
+	const [dockSide,setDockSide]=useState<SupportChatSide>('right');
 	const [launcherRevealed,setLauncherRevealed]=useState(false);
 	const [hasUnread,setHasUnread]=useState(false);
 	const [position,setPosition]=useState<Position|null>(null);
@@ -47,7 +39,7 @@ export default function FloatingSupportChat(){
 	const selected=conversations.find(conversation=>conversation.id===selectedId);
 	const userId=session?.user?.id;
 
-	const clamp=useCallback((next:Position)=>clampPosition(next,open),[open]);
+	const clamp=useCallback((next:Position)=>clampSupportChatPosition(next,open,{width:window.innerWidth,height:window.innerHeight}),[open]);
 	const load=useCallback(async()=>{
 		if(status!=='authenticated'||!userId)return;
 		try{
@@ -86,28 +78,43 @@ export default function FloatingSupportChat(){
 	},[open,status,userId]);
 
 	useEffect(()=>{
-		let saved:Position|null=null;
-		try{const value=localStorage.getItem(positionKey);if(value)saved=JSON.parse(value) as Position}catch{}
-		setPosition(clampPosition(saved||{left:window.innerWidth-launcherSize-12,top:window.innerHeight-84},false));
+		let saved:SavedPosition|null=null;
+		try{
+			const value=localStorage.getItem(positionKey);
+			if(value){
+				const parsed=JSON.parse(value) as SavedPosition;
+				if(Number.isFinite(parsed.left)&&Number.isFinite(parsed.top))saved=parsed;
+			}
+		}catch{}
+		const viewport={width:window.innerWidth,height:window.innerHeight};
+		const initial=saved||{left:window.innerWidth-launcherSize-12,top:window.innerHeight-84};
+		const side=saved?.side==='left'||saved?.side==='right'
+			?saved.side
+			:nearestSupportChatSide(initial.left,false,viewport);
+		setDockSide(side);
+		setPosition(dockSupportChatPosition(initial,side,false,viewport));
 	},[]);
 	useEffect(()=>{
 		if(!position)return;
 		const next=clamp(position);
 		if(next.left!==position.left||next.top!==position.top){setPosition(next);return}
-		try{localStorage.setItem(positionKey,JSON.stringify(position))}catch{}
-	},[position,clamp]);
+		try{localStorage.setItem(positionKey,JSON.stringify({...position,side:dockSide}))}catch{}
+	},[position,clamp,dockSide]);
 	useEffect(()=>{
-		const resize=()=>setPosition(current=>current?clampPosition(current,open):current);
+		setPosition(current=>current?dockSupportChatPosition(current,dockSide,open,{width:window.innerWidth,height:window.innerHeight}):current);
+	},[dockSide,open]);
+	useEffect(()=>{
+		const resize=()=>setPosition(current=>current?dockSupportChatPosition(current,dockSide,open,{width:window.innerWidth,height:window.innerHeight}):current);
 		window.addEventListener('resize',resize);
 		return()=>window.removeEventListener('resize',resize);
-	},[open]);
+	},[open,dockSide]);
 	useEffect(()=>{
 		function moveDrag(event:PointerEvent){
 			const active=drag.current;
 			if(!active||active.pointerId!==event.pointerId)return;
 			if(Math.abs(event.clientX-active.startX)+Math.abs(event.clientY-active.startY)>4)dragged.current=true;
 			if(dragged.current){
-				const next=clampPosition({left:active.left+event.clientX-active.startX,top:active.top+event.clientY-active.startY},open);
+				const next=clampSupportChatPosition({left:active.left+event.clientX-active.startX,top:active.top+event.clientY-active.startY},open,{width:window.innerWidth,height:window.innerHeight});
 				if(animationFrame.current!==null)window.cancelAnimationFrame(animationFrame.current);
 				animationFrame.current=window.requestAnimationFrame(()=>{animationFrame.current=null;setPosition(next)});
 			}
@@ -117,9 +124,12 @@ export default function FloatingSupportChat(){
 			if(active?.pointerId!==event.pointerId)return;
 			if(animationFrame.current!==null){window.cancelAnimationFrame(animationFrame.current);animationFrame.current=null}
 			if(dragged.current){
-				const next=clampPosition({left:active.left+event.clientX-active.startX,top:active.top+event.clientY-active.startY},open);
+				const viewport={width:window.innerWidth,height:window.innerHeight};
+				const draggedPosition={left:active.left+event.clientX-active.startX,top:active.top+event.clientY-active.startY};
+				const side=nearestSupportChatSide(draggedPosition.left,open,viewport);
+				const next=dockSupportChatPosition(draggedPosition,side,open,viewport);
+				setDockSide(side);
 				setPosition(next);
-				try{localStorage.setItem(positionKey,JSON.stringify(next))}catch{}
 			}
 			drag.current=null;
 		}

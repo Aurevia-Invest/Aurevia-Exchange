@@ -9,6 +9,7 @@ import {trustedProxyClientIp} from '@/lib/request-ip';
 import {isValidE164,parseDateOfBirth} from '@/lib/registration-validation';
 import {akedlyReadiness} from '@/lib/akedly';
 import {createRegistrationToken,hashRegistrationToken,REGISTRATION_LIFETIME_MS,registrationTokenFromRequest,setRegistrationCookie} from '@/lib/registration-attempt';
+import {cleanupExpiredRegistrationAttempts} from '@/lib/registration-cleanup';
 import {verifyRegistrationTurnstile} from '@/lib/turnstile';
 
 type PendingRegistrationAttempt=Prisma.RegistrationAttemptGetPayload<{include:{verification:true}}>;
@@ -104,6 +105,8 @@ export async function POST(request:Request){
 
 		if(clientIp)rateLimit(`register:${clientIp}`,5,60*60_000);
 		rateLimit(`register-email:${email}`,3,60*60_000);
+
+		await cleanupExpiredRegistrationAttempts();
 
 		const dateOfBirth=parseDateOfBirth(input.dateOfBirth);
 		if(!dateOfBirth)return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});

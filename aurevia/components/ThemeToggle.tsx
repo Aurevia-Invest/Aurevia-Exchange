@@ -10,6 +10,8 @@ const themeChangeEvent='aurevia-theme-change';
 function applyTheme(theme:Theme){
 	document.documentElement.dataset.theme=theme;
 	document.documentElement.style.colorScheme=theme;
+	const themeColor=document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+	if(themeColor)themeColor.content=theme==='light'?'#f9fbfd':'#0B0F1A';
 	window.dispatchEvent(new CustomEvent(themeChangeEvent,{detail:theme}));
 }
 

@@ -79,21 +79,18 @@ describe('market data availability AI explanation',()=>{
 		})});
 	});
 
-	it('uses database-independent reference history if the market service throws',async()=>{
+	it('does not claim reference history after a configured provider fails',async()=>{
 		mocks.getMarketHistory.mockRejectedValue(new Error('private upstream details'));
 
 		const response=await POST(request({symbol:'AAPL',dataType:'history',timeframe:'1d'}));
 		const body=await response.json();
 
 		expect(response.status).toBe(200);
-		expect(body).toMatchObject({status:'internal_reference',provider:null});
-		expect(mocks.getReferenceMarketHistory).toHaveBeenCalledWith(
-			expect.objectContaining({id:'AAPL'}),
-			'1d',
-		);
+		expect(body).toMatchObject({status:'unavailable',provider:null});
+		expect(mocks.getReferenceMarketHistory).not.toHaveBeenCalled();
 		const messages=mocks.runAiService.mock.calls[0][1] as Array<{role:string;content:string}>;
 		expect(JSON.parse(messages.find(message=>message.role==='user')?.content||'{}')).toMatchObject({
-			symbol:'AAPL',dataType:'history',timeframe:'1d',status:'internal_reference',provider:null,
+			symbol:'AAPL',dataType:'history',timeframe:'1d',status:'unavailable',provider:null,
 		});
 		expect(messages.map(message=>message.content).join(' ')).not.toContain('private upstream details');
 	});
@@ -106,7 +103,7 @@ describe('market data availability AI explanation',()=>{
 		expect((await response.json()).status).toBe('current_provider');
 	});
 
-	it('does not throw when provider history has no quote for freshness checks',async()=>{
+	it('marks valid provider history current without requiring a separate quote',async()=>{
 		mocks.getMarketHistory.mockResolvedValue({
 			source:'Alpaca',
 			candles:[{time:1,open:10,high:11,low:9,close:10,volume:null}],
@@ -117,8 +114,8 @@ describe('market data availability AI explanation',()=>{
 		const body=await response.json();
 
 		expect(response.status).toBe(200);
-		expect(body.status).toBe('unavailable');
-		expect(body.provider).toBeNull();
+		expect(body.status).toBe('current_provider');
+		expect(body.provider).toBe('Alpaca');
 		expect(warning).not.toHaveBeenCalled();
 	});
 

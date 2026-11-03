@@ -56,18 +56,19 @@ describe('market-data provider boundaries',()=>{
 		expect(console.warn).toHaveBeenCalled();
 	});
 
-	it('falls back to internal history when provider history fails',async()=>{
+	it('does not return simulated history after a configured stock provider fails',async()=>{
 		mocks.finnhubHistory.mockRejectedValue(new Error('provider offline'));
-		await expect(getMarketHistoryWithFallback(asset,'1d','server-key')).resolves.toMatchObject({source:'Aurevia Internal'});
+		await expect(getMarketHistoryWithFallback(asset,'1d','server-key')).rejects.toThrow('provider offline');
+		expect(mocks.internalHistory).not.toHaveBeenCalled();
 		expect(console.warn).toHaveBeenCalledOnce();
 	});
 
-	it('uses database-independent reference history if the internal market database is unavailable',async()=>{
+	it('uses database-independent reference history only when no external provider is configured',async()=>{
 		mocks.finnhubHistory.mockRejectedValue(new Error('provider offline'));
 		mocks.internalHistory.mockRejectedValue(new Error('database connection unavailable'));
 		mocks.referenceHistory.mockResolvedValue({source:'Aurevia Internal',candles:[{close:230}]});
 
-		await expect(getMarketHistoryWithFallback(asset,'1d','server-key')).resolves.toMatchObject({
+		await expect(getMarketHistoryWithFallback(asset,'1d','')).resolves.toMatchObject({
 			source:'Aurevia Internal',candles:[{close:230}],
 		});
 		expect(mocks.referenceHistory).toHaveBeenCalledWith(asset,'1d');

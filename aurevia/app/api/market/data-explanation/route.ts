@@ -54,8 +54,8 @@ export async function POST(request:Request){
 				const history=await getMarketHistoryWithFallback(asset,input.timeframe as TimeframeId,configuration.marketData.finnhubApiKey,alpacaData);
 				const source=typeof history.source==='string'?history.source:'';
 				const external=isExternalMarketDataSource(source);
-				if(external&&history.quote){
-					providerFacts.status=history.quote.isStale?'stale_provider':'current_provider';
+				if(external&&history.candles.length){
+					providerFacts.status='current_provider';
 					providerFacts.source=source;
 				}else if(source==='Aurevia Internal'){
 					providerFacts.status='internal_reference';
@@ -67,17 +67,24 @@ export async function POST(request:Request){
 			}
 		}catch(error){
 			if(input.dataType==='history'){
-				try{
-					getReferenceMarketHistory(asset,input.timeframe as TimeframeId);
-					providerFacts.status='internal_reference';
-					providerFacts.source=null;
-					console.warn('Market history availability lookup failed; database-independent reference data is available.',{
+				const externalProviderConfigured=!!configuration.marketData.finnhubApiKey||!!alpacaData?.apiKey&&!!alpacaData.apiSecret;
+				if(asset.type==='STOCK'&&externalProviderConfigured){
+					console.warn('Configured market history providers are unavailable.',{
 						symbol,stage:'history-lookup',errorName:error instanceof Error?error.name:'UnknownError',
 					});
-				}catch(fallbackError){
-					console.error('Market history availability fallback failed.',{
-						symbol,stage:'reference-history',errorName:fallbackError instanceof Error?fallbackError.name:'UnknownError',
-					});
+				}else{
+					try{
+						getReferenceMarketHistory(asset,input.timeframe as TimeframeId);
+						providerFacts.status='internal_reference';
+						providerFacts.source=null;
+						console.warn('Market history availability lookup failed; database-independent reference data is available.',{
+							symbol,stage:'history-lookup',errorName:error instanceof Error?error.name:'UnknownError',
+						});
+					}catch(fallbackError){
+						console.error('Market history availability fallback failed.',{
+							symbol,stage:'reference-history',errorName:fallbackError instanceof Error?fallbackError.name:'UnknownError',
+						});
+					}
 				}
 			}else{
 				console.warn('Market quote availability lookup failed.',{

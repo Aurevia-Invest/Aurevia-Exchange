@@ -18,6 +18,9 @@ export async function GET(request:Request,{params}:{params:Promise<{symbol:strin
     return NextResponse.json(history,{headers:{'Cache-Control':'public, s-maxage=15, stale-while-revalidate=30'}});
   }catch(error){
     const status=error instanceof MarketDataError?error.status:502;
-    return NextResponse.json({error:error instanceof Error?error.message:'Historical market data is unavailable.'},{status});
+    return NextResponse.json({
+      error:error instanceof Error?error.message:'Historical market data is unavailable.',
+      ...(error instanceof MarketDataError&&error.diagnostics?{diagnostics:error.diagnostics}:{}),
+    },{status,headers:{'Cache-Control':'private, no-store'}});
   }
 }

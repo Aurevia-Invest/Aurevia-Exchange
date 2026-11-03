@@ -17,12 +17,23 @@ function providerSymbol(asset:LiveMarketAsset){
 }
 
 async function request(path:string,apiKey:string,fetcher:typeof fetch){
-	let response:Response;
-	try{response=await fetcher(`https://finnhub.io/api/v1/${path}`,{headers:{'X-Finnhub-Token':apiKey},cache:'no-store',signal:AbortSignal.timeout(8000)});}
-	catch{throw new FinnhubMarketDataError('Finnhub is unreachable.',503);}
-	if(!response.ok)throw new FinnhubMarketDataError(response.status===429?'Finnhub is rate limited.':'Finnhub request failed.',response.status===429?503:response.status);
-	try{return await response.json() as Record<string,unknown>;}
-	catch{throw new FinnhubMarketDataError('Finnhub returned invalid data.',502);}
+	for(let attempt=0;attempt<2;attempt++){
+		let response:Response;
+		try{response=await fetcher(`https://finnhub.io/api/v1/${path}`,{headers:{'X-Finnhub-Token':apiKey},cache:'no-store',signal:AbortSignal.timeout(8000)});}
+		catch{
+			if(attempt===0){await new Promise(resolve=>setTimeout(resolve,250));continue}
+			throw new FinnhubMarketDataError('Finnhub is unreachable.',503);
+		}
+		if((response.status===429||response.status>=500)&&attempt===0){
+			const retryAfter=Number(response.headers.get('retry-after'));
+			await new Promise(resolve=>setTimeout(resolve,Number.isFinite(retryAfter)?Math.max(0,Math.min(retryAfter*1000,1_000)):250));
+			continue;
+		}
+		if(!response.ok)throw new FinnhubMarketDataError(response.status===429?'Finnhub is rate limited.':'Finnhub request failed.',response.status);
+		try{return await response.json() as Record<string,unknown>;}
+		catch{throw new FinnhubMarketDataError('Finnhub returned invalid data.',502);}
+	}
+	throw new FinnhubMarketDataError('Finnhub is unreachable.',503);
 }
 
 function finite(value:unknown){return typeof value==='number'&&Number.isFinite(value)?value:null;}
@@ -46,8 +57,8 @@ export async function getFinnhubQuote(asset:LiveMarketAsset,apiKey:string,fetche
 	};
 }
 
-const resolutionByInterval:Record<string,string>={'1m':'1','5m':'5','30m':'30','1d':'D','1wk':'W','1mo':'M'};
-const daysByRange:Record<string,number>={'1d':1,'5d':5,'1mo':31,'3mo':92,'1y':365,'5y':1826,max:3650};
+const resolutionByInterval:Record<string,string>={'1m':'1','5m':'5','15m':'15','30m':'30','1h':'60','1d':'D','1wk':'W','1mo':'M'};
+const daysByRange:Record<string,number>={'1d':1,'5d':5,'1mo':31,'3mo':92,'1y':365,'3y':1096,'5y':1826,max:3650};
 
 export async function getFinnhubHistory(asset:LiveMarketAsset,range:string,interval:string,apiKey:string,fetcher:typeof fetch=fetch){
 	const now=Math.floor(Date.now()/1000);
@@ -64,6 +75,5 @@ export async function getFinnhubHistory(asset:LiveMarketAsset,range:string,inter
 		candles.push({time,open,high,low,close,volume});
 	}
 	if(!candles.length)throw new FinnhubMarketDataError(`Finnhub has no valid historical data for ${asset.id}.`,503);
-	const quote=await getFinnhubQuote(asset,apiKey,fetcher);
-	return {quote,candles,source:'Finnhub'};
+	return {quote:null,candles,source:'Finnhub'};
 }

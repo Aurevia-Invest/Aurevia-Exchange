@@ -10,6 +10,20 @@ export type AlpacaStockQuote={
 };
 
 export type AlpacaStockBar={time:string;open:number;high:number;low:number;close:number;volume:number|null};
+export type AlpacaStockBarTimeframe='1Min'|'5Min'|'15Min'|'1Hour'|'1Day';
+
+const retryDelayMs=250;
+const maxRetries=1;
+
+function retryAfterMs(response:Response){
+	const value=response.headers.get('retry-after');
+	if(!value)return retryDelayMs;
+	const seconds=Number(value);
+	const delay=Number.isFinite(seconds)?seconds*1000:Date.parse(value)-Date.now();
+	return Math.max(0,Math.min(Number.isFinite(delay)?delay:retryDelayMs,1_000));
+}
+
+function wait(ms:number){return new Promise(resolve=>setTimeout(resolve,ms))}
 
 function isRecord(value:unknown):value is Record<string,unknown>{return value!==null&&typeof value==='object'&&!Array.isArray(value)}
 function finite(value:unknown):number|null{return typeof value==='number'&&Number.isFinite(value)?value:null}
@@ -42,17 +56,25 @@ export class AlpacaStockMarketDataProvider{
 		};
 	}
 
-	async getBars(symbol:string,start:string,end:string,timeframe:string):Promise<AlpacaStockBar[]>{
+	async getBars(symbol:string,start:string,end:string,timeframe:AlpacaStockBarTimeframe):Promise<AlpacaStockBar[]>{
 		const encoded=encodeURIComponent(symbol.toUpperCase());
-		const params=new URLSearchParams({start,end,timeframe,feed:'iex',limit:'1000'});
-		const barsPayload=await this.request(`/v2/stocks/${encoded}/bars?${params}`);
-		const bars=isRecord(barsPayload)&&Array.isArray(barsPayload.bars)?barsPayload.bars as AlpacaBar[]:null;
-		if(!bars)throw new Error('ALPACA_STOCK_MARKET_DATA_INVALID_BARS');
-		return bars.flatMap(bar=>{
-			const time=asTimestamp(bar.t),open=finite(bar.o),high=finite(bar.h),low=finite(bar.l),close=finite(bar.c);
-			if(!time||open===null||high===null||low===null||close===null)return [];
-			return [{time,open,high,low,close,volume:finite(bar.v)}];
-		});
+		const result:AlpacaStockBar[]=[];
+		let pageToken:string|undefined;
+		for(let page=0;page<25;page++){
+			const params=new URLSearchParams({start,end,timeframe,feed:'iex',limit:'1000',sort:'asc'});
+			if(pageToken)params.set('page_token',pageToken);
+			const barsPayload=await this.request(`/v2/stocks/${encoded}/bars?${params}`);
+			if(!isRecord(barsPayload)||!Array.isArray(barsPayload.bars))throw new Error('ALPACA_STOCK_MARKET_DATA_INVALID_BARS');
+			result.push(...(barsPayload.bars as AlpacaBar[]).flatMap(bar=>{
+				const time=asTimestamp(bar.t),open=finite(bar.o),high=finite(bar.h),low=finite(bar.l),close=finite(bar.c);
+				if(!time||open===null||high===null||low===null||close===null)return [];
+				return [{time,open,high,low,close,volume:finite(bar.v)}];
+			}));
+			const nextToken=barsPayload.next_page_token;
+			if(typeof nextToken!=='string'||!nextToken)break;
+			pageToken=nextToken;
+		}
+		return result;
 	}
 
 	async healthCheck(){
@@ -61,14 +83,24 @@ export class AlpacaStockMarketDataProvider{
 	}
 
 	private async request(path:string):Promise<unknown>{
-		let response:Response;
-		try{
-			response=await (this.options.fetcher??fetch)(`https://data.alpaca.markets${path}`,{
-				headers:{'APCA-API-KEY-ID':this.options.apiKey,'APCA-API-SECRET-KEY':this.options.apiSecret},
-				signal:AbortSignal.timeout(10_000),
-			});
-		}catch{throw new Error('ALPACA_STOCK_MARKET_DATA_UNAVAILABLE')}
-		if(!response.ok)throw new Error(`ALPACA_STOCK_MARKET_DATA_ERROR:${response.status}`);
-		try{return await response.json() as unknown}catch{throw new Error('ALPACA_STOCK_MARKET_DATA_INVALID_RESPONSE')}
+		for(let attempt=0;attempt<=maxRetries;attempt++){
+			let response:Response;
+			try{
+				response=await (this.options.fetcher??fetch)(`https://data.alpaca.markets${path}`,{
+					headers:{'APCA-API-KEY-ID':this.options.apiKey,'APCA-API-SECRET-KEY':this.options.apiSecret},
+					signal:AbortSignal.timeout(10_000),
+				});
+			}catch{
+				if(attempt<maxRetries){await wait(retryDelayMs);continue}
+				throw new Error('ALPACA_STOCK_MARKET_DATA_UNAVAILABLE');
+			}
+			if((response.status===429||response.status>=500)&&attempt<maxRetries){
+				await wait(retryAfterMs(response));
+				continue;
+			}
+			if(!response.ok)throw new Error(`ALPACA_STOCK_MARKET_DATA_ERROR:${response.status}`);
+			try{return await response.json() as unknown}catch{throw new Error('ALPACA_STOCK_MARKET_DATA_INVALID_RESPONSE')}
+		}
+		throw new Error('ALPACA_STOCK_MARKET_DATA_UNAVAILABLE');
 	}
 }

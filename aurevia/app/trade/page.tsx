@@ -416,7 +416,7 @@ export default function Trade() {
                 {accountMode==="REAL"?
                   <div className="trade-live-chart">
                     <div className="trade-chart-timeframes" role="group" aria-label="Chart timeframe">
-                      {(["1d","5d","1m","3m","1y"] as TimeframeId[]).map(timeframe=><button type="button" key={timeframe} aria-pressed={chartTimeframe===timeframe} onClick={()=>setChartTimeframe(timeframe)}>{timeframe.toUpperCase()}</button>)}
+                      {(["1h","1d","5d","1m","3m","1y"] as TimeframeId[]).map(timeframe=><button type="button" key={timeframe} aria-pressed={chartTimeframe===timeframe} onClick={()=>setChartTimeframe(timeframe)}>{timeframe.toUpperCase()}</button>)}
                     </div>
                     {cur?.liveQuote?
                       <LivePriceChart candles={liveCandles} quote={cur.liveQuote} timeframe={chartTimeframe} loading={chartLoading} error={chartError}/>

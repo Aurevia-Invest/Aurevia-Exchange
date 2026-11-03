@@ -24,7 +24,40 @@ describe('Alpaca stock market data',()=>{
 		const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({bars:[{t:'2026-10-15T14:00:00Z',o:188,h:192,l:187,c:190}]}),{status:200}));
 		const provider=new AlpacaStockMarketDataProvider({apiKey:'paper-key',apiSecret:'paper-secret',fetcher});
 		await expect(provider.getBars('AAPL','2026-10-15T00:00:00.000Z','2026-10-15T23:59:00.000Z','1Min')).resolves.toEqual([{time:'2026-10-15T14:00:00.000Z',open:188,high:192,low:187,close:190,volume:null}]);
-		expect(fetcher.mock.calls[0][0]).toContain('timeframe=1Min');
+		expect(String(fetcher.mock.calls[0][0])).toContain('timeframe=1Min');
+		expect(String(fetcher.mock.calls[0][0])).toContain('feed=iex');
+	});
+
+	it('paginates ascending IEX history without losing timestamps or volume',async()=>{
+		const fetcher=vi.fn()
+			.mockResolvedValueOnce(new Response(JSON.stringify({
+				bars:[{t:'2026-10-15T14:00:00Z',o:188,h:192,l:187,c:190,v:10}],
+				next_page_token:'next-page',
+			}),{status:200}))
+			.mockResolvedValueOnce(new Response(JSON.stringify({
+				bars:[{t:'2026-10-15T14:01:00Z',o:190,h:193,l:189,c:192,v:20}],
+				next_page_token:null,
+			}),{status:200}));
+		const provider=new AlpacaStockMarketDataProvider({apiKey:'paper-key',apiSecret:'paper-secret',fetcher});
+		const bars=await provider.getBars('AAPL','2026-10-15T00:00:00.000Z','2026-10-15T23:59:00.000Z','1Min');
+		expect(bars).toHaveLength(2);
+		expect(bars.map(bar=>[bar.time,bar.volume])).toEqual([
+			['2026-10-15T14:00:00.000Z',10],['2026-10-15T14:01:00.000Z',20],
+		]);
+		expect(String(fetcher.mock.calls[0][0])).toContain('sort=asc');
+		expect(String(fetcher.mock.calls[0][0])).toContain('limit=1000');
+		expect(String(fetcher.mock.calls[1][0])).toContain('page_token=next-page');
+		expect(String(fetcher.mock.calls[1][0])).toContain('feed=iex');
+	});
+
+	it('retries Alpaca rate limits before returning historical bars',async()=>{
+		const fetcher=vi.fn()
+			.mockResolvedValueOnce(new Response('{}',{status:429,headers:{'retry-after':'0'}}))
+			.mockResolvedValueOnce(new Response(JSON.stringify({bars:[{t:'2026-10-15T14:00:00Z',o:188,h:192,l:187,c:190,v:10}]}),{status:200}));
+		const provider=new AlpacaStockMarketDataProvider({apiKey:'paper-key',apiSecret:'paper-secret',fetcher});
+		await expect(provider.getBars('AAPL','2026-10-15T00:00:00.000Z','2026-10-15T23:59:00.000Z','15Min')).resolves.toHaveLength(1);
+		expect(fetcher).toHaveBeenCalledTimes(2);
+		expect(String(fetcher.mock.calls[0][0])).toContain('timeframe=15Min');
 	});
 
 	it('does not reveal credentials when Alpaca rejects authentication',async()=>{

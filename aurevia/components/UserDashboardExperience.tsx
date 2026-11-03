@@ -40,12 +40,12 @@ type Overview={
 
 type QuoteError={asset:MarketQuote['asset'];error:string};
 type QuotesResponse={quotes:Array<MarketQuote|QuoteError>;source:string;marketDataStatus:string};
-type HistoryResponse={quote:MarketQuote;candles:MarketCandle[];timeframe:TimeframeId;interval:string;source:string};
+type HistoryResponse={quote:MarketQuote|null;candles:MarketCandle[];timeframe:TimeframeId;interval:string;source:string};
 type MarketCategory='Favorites'|'Forex'|'Crypto'|'Stocks'|'Indices';
 
 const categoryFilters:MarketCategory[]=['Favorites','Forex','Crypto','Stocks','Indices'];
 const timeframes:Array<{label:string;value:TimeframeId}>=[
-	{label:'1D',value:'1d'},{label:'1W',value:'5d'},{label:'1M',value:'1m'},
+	{label:'1H',value:'1h'},{label:'1D',value:'1d'},{label:'1W',value:'5d'},{label:'1M',value:'1m'},
 	{label:'3M',value:'3m'},{label:'1Y',value:'1y'},{label:'ALL',value:'max'},
 ];
 const allocationColors=['#d4a72c','#51a878','#65a6ba','#aa8bd1','#cc7869','#8d9c8e'];
@@ -135,7 +135,7 @@ function MarketChartPanel({selectedSymbol,quotes,internalInstrumentId}:{selected
 			<div className="user-market-quote">{quote?<><strong>{formatMarketPrice(quote.price,quote.asset.currency)}</strong><span className={quote.changePercent>=0?'is-positive':'is-negative'}>{quote.changePercent>=0?'+':''}{quote.changePercent.toFixed(2)}%</span></>:<span className="user-dashboard-muted">Quote unavailable</span>}</div>
 		</header>
 		<div className="user-chart-toolbar"><div className="user-chart-timeframes" role="group" aria-label="Market chart range">{timeframes.map(item=><button key={item.value} type="button" aria-pressed={timeframe===item.value} className={timeframe===item.value?'is-selected':''} onClick={()=>setTimeframe(item.value)}>{item.label}</button>)}</div><Link href={`/markets?symbol=${encodeURIComponent(selectedSymbol)}`} className="user-dashboard-panel-link">Full market view <ExternalLink size={13}/></Link></div>
-		{history?<LivePriceChart candles={history.candles} quote={history.source==='Aurevia DEMO market feed'?undefined:quote} timeframe={timeframe} loading={loading} error={error} running={history.source==='Aurevia Internal'||history.source==='Aurevia DEMO market feed'}/>:loading?<div className="user-chart-empty" role="status">Loading market history…</div>:<div className="user-chart-empty" role="status">{error||'No historical market data is available for this range.'}</div>}
+		{history?<LivePriceChart candles={history.candles} quote={history.source==='Aurevia DEMO market feed'?undefined:quote??undefined} timeframe={timeframe} loading={loading} error={error} running={history.source==='Aurevia Internal'||history.source==='Aurevia DEMO market feed'}/>:loading?<div className="user-chart-empty" role="status">Loading market history…</div>:<div className="user-chart-empty" role="status">{error||'No historical market data is available for this range.'}</div>}
 		<p className="user-dashboard-footnote">Provider quotes are shown when available. DEMO prices are internal reference values; charts use provider history or recorded database candles only.</p>
 	</section>;
 }

@@ -23,6 +23,7 @@ export async function getMarketHistoryWithFallback(asset:LiveMarketAsset,timefra
 		return await getMarketHistory(asset,timeframe,apiKey,alpacaData);
 	}catch(error){
 		console.warn(`Configured market history providers are unavailable (${error instanceof Error?error.name:'UnknownError'}).`);
+		if(asset.type==='STOCK'&&(Boolean(apiKey)||Boolean(alpacaData?.apiKey&&alpacaData.apiSecret)))throw error;
 		try{
 			return await getInternalMarketHistory(asset,timeframe);
 		}catch(fallbackError){

@@ -91,7 +91,7 @@ function LiveMarketDashboardContent(){
   const activeQuoteIsExternal=!!activeQuote&&isExternalMarketDataSource(activeQuote.source);
   const activeQuoteStatus=!activeQuote?'Unavailable':activeQuote.isStale?'Stale':activeQuoteIsExternal?'Live':'Internal reference';
   const activeQuoteSourceLabel=!activeQuote?'No provider quote':activeQuoteIsExternal?activeProvider||'External provider':'Aurevia Internal reference';
-  const historyNeedsExplanation=!historyQuery.isLoading&&(!historyQuery.data||!historyQuery.data.quote||!isExternalMarketDataSource(historyQuery.data.source||historyQuery.data.quote.source)||historyQuery.data.quote.isStale);
+  const historyNeedsExplanation=!historyQuery.isLoading&&(!historyQuery.data||!historyQuery.data.candles.length||!isExternalMarketDataSource(historyQuery.data.source||''));
   const quoteNeedsExplanation=!selectedQuery.isLoading&&(!activeQuote||!activeQuoteIsExternal||activeQuote.isStale);
   const liveQuotes=[...batchQuotes.values()].filter((item):item is MarketQuote=>isQuote(item)&&!item.isStale);
   const gainers=[...liveQuotes].filter(item=>item.changePercent>0).sort((a,b)=>b.changePercent-a.changePercent).slice(0,3);

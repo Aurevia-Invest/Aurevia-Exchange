@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
-import {filterSupportedMarketAssets,getLiveMarketProviderStatus,getMarketAsset,getMarketHistory,getMarketQuote} from '../lib/live-market';
+import {filterSupportedMarketAssets,getLiveMarketProviderStatus,getMarketAsset,getMarketHistory,getMarketQuote,type TimeframeId} from '../lib/live-market';
 
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.unstubAllEnvs()});
 
@@ -19,8 +19,7 @@ describe('Finnhub market service',()=>{
 		const now=Math.floor(Date.now()/1000);
 		const fetcher=vi.fn()
 			.mockResolvedValueOnce(new Response(JSON.stringify({c:41000,d:1000,dp:2.5,o:40500,h:41500,l:40400,pc:40000,t:now}),{status:200}))
-			.mockResolvedValueOnce(new Response(JSON.stringify({s:'ok',t:[now-60,now],o:[40000,40500],h:[40500,41500],l:[39900,40400],c:[40400,41000],v:[12,34]}),{status:200}))
-			.mockResolvedValueOnce(new Response(JSON.stringify({c:41000,d:1000,dp:2.5,o:40500,h:41500,l:40400,pc:40000,t:now}),{status:200}));
+			.mockResolvedValueOnce(new Response(JSON.stringify({s:'ok',t:[now-60,now],o:[40000,40500],h:[40500,41500],l:[39900,40400],c:[40400,41000],v:[12,34]}),{status:200}));
 		vi.stubGlobal('fetch',fetcher);
 		const asset=getMarketAsset('DJI')!;
 		const quote=await getMarketQuote(asset,'test-finnhub-key');
@@ -28,7 +27,7 @@ describe('Finnhub market service',()=>{
 		const history=await getMarketHistory(asset,'1d','test-finnhub-key');
 		expect(history.candles).toHaveLength(2);
 		expect(history.candles[1]).toMatchObject({open:40500,high:41500,low:40400,close:41000,volume:34});
-		expect(fetcher).toHaveBeenCalledTimes(3);
+		expect(fetcher).toHaveBeenCalledTimes(2);
 	});
 
 	it('uses internal prices when Finnhub throttles',async()=>{
@@ -39,12 +38,14 @@ describe('Finnhub market service',()=>{
 	it('returns its last successful provider quote with an explicit stale marker after a failure',async()=>{
 		const asset={id:'STALE_CACHE_TEST',ticker:'STALE_CACHE_TEST',name:'Stale cache test',type:'STOCK' as const,currency:'USD'};
 		const payload={c:123,d:1,dp:0.8,o:122,h:124,l:121,pc:122,t:Math.floor(Date.now()/1000)};
-		const fetcher=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(payload),{status:200})).mockRejectedValueOnce(new Error('offline'));
+		const fetcher=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(payload),{status:200})).mockRejectedValue(new Error('offline'));
 		vi.stubGlobal('fetch',fetcher);
 		const current=await getMarketQuote(asset,'test-finnhub-key');
 		vi.useFakeTimers();
 		await vi.advanceTimersByTimeAsync(9_000);
-		const stale=await getMarketQuote(asset,'test-finnhub-key');
+		const stalePromise=getMarketQuote(asset,'test-finnhub-key');
+		await vi.advanceTimersByTimeAsync(500);
+		const stale=await stalePromise;
 		expect(stale.price).toBe(current.price);
 		expect(stale.isStale).toBe(true);
 		expect(stale.staleReason).toContain('unreachable');
@@ -53,12 +54,14 @@ describe('Finnhub market service',()=>{
 	it('prefers a fresh internal quote over a stale cached provider quote',async()=>{
 		const asset=getMarketAsset('MSFT')!;
 		const payload={c:123,d:1,dp:0.8,o:122,h:124,l:121,pc:122,t:Math.floor(Date.now()/1000)};
-		const fetcher=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(payload),{status:200})).mockRejectedValueOnce(new Error('offline'));
+		const fetcher=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(payload),{status:200})).mockRejectedValue(new Error('offline'));
 		vi.stubGlobal('fetch',fetcher);
 		await getMarketQuote(asset,'test-finnhub-key');
 		vi.useFakeTimers();
 		await vi.advanceTimersByTimeAsync(9_000);
-		const fallback=await getMarketQuote(asset,'test-finnhub-key');
+		const fallbackPromise=getMarketQuote(asset,'test-finnhub-key');
+		await vi.advanceTimersByTimeAsync(500);
+		const fallback=await fallbackPromise;
 		expect(fallback.source).toBe('Aurevia Internal');
 		expect(fallback.isStale).toBe(false);
 		expect(Date.now()-Date.parse(fallback.updatedAt)).toBeLessThan(5_000);
@@ -143,13 +146,106 @@ describe('Finnhub market service',()=>{
 
 	it('reads Finnhub historical candles without inventing missing bars',async()=>{
 		const now=Math.floor(Date.now()/1000);
-		const fetcher=vi.fn()
-			.mockResolvedValueOnce(new Response(JSON.stringify({s:'ok',t:[now-60,now],o:[188,189],h:[190,192],l:[187,188],c:[189,191],v:[10,20]}),{status:200}))
-			.mockResolvedValueOnce(new Response(JSON.stringify({c:191,d:3,dp:1.59,o:189,h:192,l:188,pc:188,t:now}),{status:200}));
+		const fetcher=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({s:'ok',t:[now-60,now],o:[188,189],h:[190,192],l:[187,188],c:[189,191],v:[10,20]}),{status:200}));
 		vi.stubGlobal('fetch',fetcher);
-		const history=await getMarketHistory(getMarketAsset('AAPL')!,'1d','test-finnhub-key');
+		const history=await getMarketHistory(getMarketAsset('AAPL')!,'1h','test-finnhub-key');
 		expect(history.source).toBe('Finnhub');
 		expect(history.candles).toHaveLength(2);
 		expect(history.candles[1]).toMatchObject({open:189,high:192,low:188,close:191,volume:20});
+		expect(fetcher.mock.calls[0][0]).toContain('resolution=60');
+		expect(history.quote).toBeNull();
+	});
+
+	it('uses Alpaca IEX history for AAPL, MSFT, TSLA, and NVDA without changing OHLCV',async()=>{
+		const fetcher=vi.fn((input:URL|string|Request)=>{
+			const url=String(input);
+			const symbol=url.match(/stocks\/([A-Z]+)\/bars/)?.[1]||'';
+			const price={AAPL:190,MSFT:510,TSLA:340,NVDA:140}[symbol as 'AAPL'|'MSFT'|'TSLA'|'NVDA'];
+			return Promise.resolve(new Response(JSON.stringify({bars:[{
+				t:'2026-10-15T14:00:00Z',o:price-1,h:price+2,l:price-3,c:price,v:1234,
+			}]}),{status:200}));
+		});
+		const options={apiKey:'alpaca-key',apiSecret:'alpaca-secret',fetcher};
+		for(const symbol of ['AAPL','MSFT','TSLA','NVDA']){
+			const history=await getMarketHistory(getMarketAsset(symbol)!, '1d','',options);
+			const price={AAPL:190,MSFT:510,TSLA:340,NVDA:140}[symbol as 'AAPL'|'MSFT'|'TSLA'|'NVDA'];
+			expect(history).toMatchObject({source:'Alpaca',quote:null,diagnostics:{selectedProvider:'Alpaca',alpaca:{status:'succeeded'}}});
+			expect(history.candles[0]).toEqual({
+				time:Date.parse('2026-10-15T14:00:00Z')/1000,open:price-1,high:price+2,low:price-3,close:price,volume:1234,
+			});
+		}
+		expect(fetcher).toHaveBeenCalledTimes(4);
+		expect(fetcher.mock.calls.every(([url])=>String(url).includes('feed=iex'))).toBe(true);
+		expect(fetcher.mock.calls.every(([url])=>String(url).includes('timeframe=1Min'))).toBe(true);
+	});
+
+	it('maps all requested chart intervals to Alpaca bar timeframes',async()=>{
+		const fetcher=vi.fn().mockImplementation(()=>Promise.resolve(new Response(JSON.stringify({
+			bars:[{t:'2026-10-15T14:00:00Z',o:188,h:192,l:187,c:190,v:10}],
+		}),{status:200})));
+		const asset={id:'ALPACA_INTERVAL_TEST',ticker:'AAPL',name:'Apple interval test',type:'STOCK' as const,currency:'USD'};
+		const options={apiKey:'alpaca-interval-key',apiSecret:'alpaca-interval-secret',fetcher};
+		const expected:Array<[TimeframeId,string]>=[
+			['1d','1Min'],['5d','5Min'],['1m','15Min'],['1h','1Hour'],['3m','1Day'],
+		];
+		for(const [timeframe] of expected)await getMarketHistory(asset,timeframe,'',options);
+		const timeframes=fetcher.mock.calls.map(([url])=>new URL(String(url)).searchParams.get('timeframe'));
+		expect(timeframes).toEqual(expected.map(([,value])=>value));
+	});
+
+	it('maps Finnhub minute, hourly, and daily resolutions consistently',async()=>{
+		const fetcher=vi.fn().mockImplementation(()=>Promise.resolve(new Response(JSON.stringify({
+			s:'ok',t:[Math.floor(Date.now()/1000)],o:[188],h:[192],l:[187],c:[190],v:[10],
+		}),{status:200})));
+		vi.stubGlobal('fetch',fetcher);
+		const asset={id:'FINNHUB_INTERVAL_TEST',ticker:'AAPL',name:'Apple interval test',type:'STOCK' as const,currency:'USD'};
+		const expected:Array<[TimeframeId,string]>=[
+			['1d','1'],['5d','5'],['1m','15'],['1h','60'],['3m','D'],
+		];
+		for(const [timeframe] of expected)await getMarketHistory(asset,timeframe,'finnhub-interval-key');
+		const resolutions=fetcher.mock.calls.map(([url])=>new URL(String(url)).searchParams.get('resolution'));
+		expect(resolutions).toEqual(expected.map(([,value])=>value));
+	});
+
+	it('falls back from failed Alpaca history to Finnhub and exposes both provider results',async()=>{
+		const now=Math.floor(Date.now()/1000);
+		const fetcher=vi.fn((input:URL|string|Request)=>{
+			const url=String(input);
+			if(url.includes('data.alpaca.markets'))return Promise.resolve(new Response('{}',{status:503}));
+			return Promise.resolve(new Response(JSON.stringify({s:'ok',t:[now],o:[189],h:[192],l:[187],c:[191],v:[42]}),{status:200}));
+		});
+		const options={apiKey:'alpaca-fallback-key',apiSecret:'alpaca-fallback-secret',fetcher};
+		const asset={id:'AAPL_FALLBACK_TEST',ticker:'AAPL',name:'Apple fallback test',type:'STOCK' as const,currency:'USD'};
+		const history=await getMarketHistory(asset,'1h','finnhub-fallback-key',options);
+		expect(history).toMatchObject({
+			source:'Finnhub',
+			diagnostics:{
+				selectedProvider:'Finnhub',
+				alpaca:{status:'failed',reason:'provider_server_error',httpStatus:503},
+				finnhub:{status:'succeeded'},
+			},
+		});
+		expect(fetcher).toHaveBeenCalledTimes(3);
+		expect(String(fetcher.mock.calls[2][0])).toContain('resolution=60');
+	});
+
+	it('does not fabricate stock history when both configured providers fail',async()=>{
+		const fetcher=vi.fn((input:URL|string|Request)=>{
+			const url=String(input);
+			if(url.includes('data.alpaca.markets'))return Promise.resolve(new Response('{}',{status:503}));
+			return Promise.resolve(new Response('{}',{status:401}));
+		});
+		const asset={id:'NO_FABRICATED_HISTORY_TEST',ticker:'AAPL',name:'Apple failure test',type:'STOCK' as const,currency:'USD'};
+		await expect(getMarketHistory(asset,'5d','finnhub-invalid-key',{
+			apiKey:'alpaca-failure-key',apiSecret:'alpaca-failure-secret',fetcher,
+		})).rejects.toMatchObject({
+			status:503,
+			diagnostics:{
+				selectedProvider:'none',
+				alpaca:{status:'failed',httpStatus:503},
+				finnhub:{status:'failed',httpStatus:401},
+			},
+		});
+		expect(fetcher).toHaveBeenCalledTimes(3);
 	});
 });

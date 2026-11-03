@@ -88,7 +88,15 @@ describe('Akedly V2 server integration',()=>{
 		expect(attempt).toMatchObject({attemptId:'attempt_1234567890',iframeUrl:'https://auth.akedly.io/auth?attemptId=attempt_1234567890'});
 	});
 
-	it('uses the documented endpoint and E.164 HMAC payload for a Nigerian phone number',async()=>{
+	it.each([
+		['US','+12025550123'],
+		['NG','+2348031237250'],
+		['GB','+447400123456'],
+		['CA','+14165550123'],
+		['IN','+919876543210'],
+		['DE','+4915112345678'],
+		['ZA','+27821234567'],
+	])('uses the documented endpoint and preserves the %s E.164 number in its HMAC payload',async(_country,phoneNumber)=>{
 		let requestBody:Record<string,unknown>|undefined;
 		let requestUrl:string|undefined;
 		let requestHeaders:Headers|undefined;
@@ -99,19 +107,19 @@ describe('Akedly V2 server integration',()=>{
 			return providerResponse();
 		}));
 
-		await createAkedlyAttempt({phoneNumber:'+2348031237250'});
+		await createAkedlyAttempt({phoneNumber});
 		if(!requestBody)throw new Error('Akedly request was not captured.');
 		const body=requestBody;
 		const signingMessage=JSON.stringify({
 			apiKey:'test-api-key',
 			publicKey:'test-public-key',
 			timestamp:body.timestamp,
-			phoneNumber:'+2348031237250',
+			phoneNumber,
 		});
 		expect(requestUrl).toBe('https://api.akedly.io/api/v1/widget-sdk/create-attempt');
 		expect(requestHeaders?.get('authorization')).toBeNull();
 		expect(body.signature).toBe(createHmac('sha256','test-widget-secret').update(signingMessage,'utf8').digest('hex'));
-		expect(body.verificationAddress).toEqual({phoneNumber:'+2348031237250'});
+		expect(body.verificationAddress).toEqual({phoneNumber});
 	});
 
 	it('fails closed without credentials and rejects an untrusted widget URL',async()=>{

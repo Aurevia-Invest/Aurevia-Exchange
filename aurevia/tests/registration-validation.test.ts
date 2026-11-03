@@ -16,10 +16,30 @@ describe('registration country and phone validation',()=>{
 		expect(findCountry('GB')).toMatchObject({name:'United Kingdom',dialCode:'+44'});
 	});
 
+	it.each([
+		['US','United States','+1','+12025550123'],
+		['NG','Nigeria','+234','+2348031234567'],
+		['GB','United Kingdom','+44','+447400123456'],
+		['CA','Canada','+1','+14165550123'],
+		['IN','India','+91','+919876543210'],
+		['DE','Germany','+49','+4915112345678'],
+		['ZA','South Africa','+27','+27821234567'],
+	] as const)('supports explicit country selection and E.164 for %s', (code,name,dialCode,e164)=>{
+		const country=findCountry(code);
+		expect(country).toMatchObject({name,dialCode});
+		expect(countrySearchMatches(country!,name)).toBe(true);
+		expect(normalizePhoneE164(e164,code)).toBe(e164);
+		expect(isValidE164(e164)).toBe(true);
+	});
+
 	it('normalizes national numbers to valid E.164 values',()=>{
 		expect(normalizePhoneE164('(202) 555-0123','US')).toBe('+12025550123');
+		expect(normalizePhoneE164('+1 202 555 0123','US')).toBe('+12025550123');
 		expect(normalizePhoneE164('07400 123456','GB')).toBe('+447400123456');
+		expect(normalizePhoneE164('+44 7400 123456','GB')).toBe('+447400123456');
 		expect(normalizePhoneE164('0803 123 4567','NG')).toBe('+2348031234567');
+		expect(normalizePhoneE164('+234 803 123 4567','NG')).toBe('+2348031234567');
+		expect(normalizePhoneE164('+234 803 123 4567','US')).toBeNull();
 		expect(isValidE164('+2348031234567')).toBe(true);
 		expect(isValidE164('0803 123 4567')).toBe(false);
 		expect(normalizePhoneE164('123','US')).toBeNull();

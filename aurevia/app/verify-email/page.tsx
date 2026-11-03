@@ -138,18 +138,20 @@ export default function VerifyEmailPage(){
 			if(!response.ok){
 				const retryAfter=Number(response.headers.get('Retry-After')||result.retryAfterSeconds);
 				if(Number.isFinite(retryAfter)&&retryAfter>0)setCooldownSeconds(Math.ceil(retryAfter));
+				const referenceId=typeof result.referenceId==='string'?result.referenceId:typeof result.requestId==='string'?result.requestId:'';
+				const referenceMessage=referenceId?` Reference: ${referenceId}.`:'';
 				if(result.code==='EMAIL_DELIVERY_STATUS_UNKNOWN'){
 					setEmailCodeMode(false);
 					const retryMessage=Number.isFinite(retryAfter)&&retryAfter>0
 						?` You can request another code in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
 						:'';
-					setMessage(`${result.error||'Delivery status is uncertain. If the code arrives, enter it here; retrying will not send another code during the cooldown.'}${retryMessage}`);
+					setMessage(`${result.error||'Delivery status is uncertain. If the code arrives, enter it here; retrying will not send another code during the cooldown.'}${referenceMessage}${retryMessage}`);
 					return;
 				}
 				const retryMessage=Number.isFinite(retryAfter)&&retryAfter>0
 					?` You can retry in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
 					:'';
-				throw new Error(`${result.error||'Unable to start registration verification.'}${retryMessage}`);
+				throw new Error(`${result.error||'Unable to start registration verification.'}${referenceMessage}${retryMessage}`);
 			}
 			if(result.method==='email-code'){
 				window.sessionStorage.setItem(ATTEMPT_STORAGE_KEY,JSON.stringify({email,method:'email-code'}));

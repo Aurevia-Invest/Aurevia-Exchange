@@ -133,31 +133,79 @@ export async function POST(request:Request){
 		if(!dateOfBirth)return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
 		const existingUser=await db.user.findUnique({
 			where:{email},
-			select:{id:true,role:true,status:true,emailVerifiedAt:true,requiresRegistrationVerification:true},
+			select:{
+				role:true,
+				status:true,
+				emailVerifiedAt:true,
+				verifiedChannel:true,
+				phoneVerified:true,
+				phoneVerifiedAt:true,
+				requiresRegistrationVerification:true,
+			},
 		});
 		if(existingUser){
-			if(existingUser.role==='USER'&&existingUser.status==='ACTIVE'&&!existingUser.emailVerifiedAt&&existingUser.requiresRegistrationVerification){
+			const phoneVerified=existingUser.verifiedChannel==='SMS'
+				&&existingUser.phoneVerified
+				&&Boolean(existingUser.phoneVerifiedAt);
+			const verificationProof=Boolean(existingUser.emailVerifiedAt)||phoneVerified;
+			const accountVerified=Boolean(existingUser.emailVerifiedAt)
+				||(phoneVerified&&!existingUser.requiresRegistrationVerification);
+			const accountPending=existingUser.role==='USER'
+				&&existingUser.status==='ACTIVE'
+				&&existingUser.requiresRegistrationVerification
+				&&!verificationProof;
+			const accountUnavailable=['FROZEN','SUSPENDED','CLOSED','DELETED'].includes(existingUser.status);
+			const accountState=accountUnavailable?'unavailable'
+				:accountPending?'pending-verification'
+				:existingUser.role==='ADMIN'?'administrator'
+				:accountVerified?'verified'
+				:verificationProof?'verification-state-conflict'
+				:'verification-incomplete';
+			console.info('[registration] Existing account matched registration request.',{
+				requestId,
+				referenceId:requestId,
+				endpoint:'/api/register',
+				httpStatus:accountPending?200:409,
+				accountState,
+				verifiedChannel:existingUser.verifiedChannel,
+				emailVerified:Boolean(existingUser.emailVerifiedAt),
+				phoneVerified,
+				failureTimestamp:new Date().toISOString(),
+			});
+			if(accountPending){
 				return NextResponse.json({
 					message:'An existing unverified account was found. Continue its current verification; your original password remains unchanged.',
 					verificationRequired:true,
 					existingVerification:true,
 					requestId,
+					referenceId:requestId,
 					email,
 				},{status:200,headers:{'Cache-Control':'no-store'}});
 			}
-			if(existingUser.status==='FROZEN'||existingUser.status==='SUSPENDED'||existingUser.status==='CLOSED'||existingUser.status==='DELETED'){
+			if(accountUnavailable){
 				return NextResponse.json({
 					code:'ACCOUNT_UNAVAILABLE',
 					error:'An account with this email cannot be registered again. Contact support for help with the existing account.',
+					requestId,
+					referenceId:requestId,
 				},{status:409,headers:{'Cache-Control':'no-store'}});
 			}
-			return NextResponse.json(existingUser.emailVerifiedAt?{
+			if(existingUser.role==='ADMIN'){
+				return NextResponse.json({
+					code:'ACCOUNT_ALREADY_EXISTS',
+					error:'An account already uses this email. Sign in with the existing account or contact support for access help.',
+					requestId,
+					referenceId:requestId,
+				},{status:409,headers:{'Cache-Control':'no-store'}});
+			}
+			const accountResponse=accountVerified?{
 				code:'ACCOUNT_ALREADY_VERIFIED',
 				error:'An account already uses this email. Sign in or reset its password to recover access.',
 			}:{
-				code:'ACCOUNT_ALREADY_EXISTS',
-				error:'An account already uses this email. Sign in with its existing password or reset it to recover access.',
-			},{status:409,headers:{'Cache-Control':'no-store'}});
+				code:'ACCOUNT_VERIFICATION_INCOMPLETE',
+				error:'An existing account has not completed registration verification. Sign-in is unavailable; contact support to recover this account safely.',
+			};
+			return NextResponse.json({...accountResponse,requestId,referenceId:requestId},{status:409,headers:{'Cache-Control':'no-store'}});
 		}
 
 		const now=new Date();
@@ -242,6 +290,8 @@ export async function POST(request:Request){
 			return NextResponse.json({
 				code:'REGISTRATION_IN_PROGRESS',
 				error:'A registration is already in progress for these details. Continue its existing verification session or retry shortly.',
+				requestId,
+				referenceId:requestId,
 			},{status:409,headers:{'Cache-Control':'no-store'}});
 		}
 		if(error instanceof RateLimitError){

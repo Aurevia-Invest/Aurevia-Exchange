@@ -5,7 +5,6 @@ import {useRouter} from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import {ArrowRight,ShieldCheck} from 'lucide-react';
-import type {CountryCode} from 'libphonenumber-js';
 import Nav from '@/components/Nav';
 import CountrySelector from '@/components/CountrySelector';
 import {findCountry} from '@/lib/countries';
@@ -15,7 +14,7 @@ import {useLocale} from '@/lib/i18n-context';
 type AccountMode='DEMO'|'REAL';
 type RegistrationDetails={firstName:string;lastName:string;dateOfBirth:string;residenceCountry:string;phoneCountry:string;phoneNumber:string;email:string;password:string;confirmPassword:string;accountMode:AccountMode};
 type TurnstileStatus='loading'|'ready'|'verifying'|'verified'|'expired'|'failed';
-type ExistingAccountIssue='account'|'unavailable'|'pending'|'phone';
+type ExistingAccountIssue='account'|'administrator'|'incomplete'|'unavailable'|'pending'|'phone';
 type TurnstileOptions={
 	sitekey:string;
 	action:string;
@@ -109,7 +108,7 @@ function isRecord(value:unknown):value is Record<string,unknown>{
 	return typeof value==='object'&&value!==null&&!Array.isArray(value);
 }
 
-const initialDetails:RegistrationDetails={firstName:'',lastName:'',dateOfBirth:'',residenceCountry:'',phoneCountry:'US',phoneNumber:'',email:'',password:'',confirmPassword:'',accountMode:'DEMO'};
+const initialDetails:RegistrationDetails={firstName:'',lastName:'',dateOfBirth:'',residenceCountry:'',phoneCountry:'',phoneNumber:'',email:'',password:'',confirmPassword:'',accountMode:'DEMO'};
 
 function dateInputMaximum(){return new Date().toISOString().slice(0,10)}
 
@@ -137,6 +136,8 @@ export default function RegistrationExperience(){
 	const submissionInFlight=useRef(false);
 	const router=useRouter();
 	const residence=findCountry(details.residenceCountry);
+	const phoneCountry=findCountry(details.phoneCountry);
+	const normalizedPhone=phoneCountry?normalizePhoneE164(details.phoneNumber,phoneCountry.code):null;
 	const registrationFormValid=Boolean(
 		details.firstName.trim()
 		&&details.lastName.trim()
@@ -148,7 +149,7 @@ export default function RegistrationExperience(){
 		&&/[A-Z]/.test(details.password)
 		&&/[0-9]/.test(details.password)
 		&&details.password===details.confirmPassword
-		&&Boolean(normalizePhoneE164(details.phoneNumber,details.phoneCountry as CountryCode))
+		&&normalizedPhone
 		&&termsAccepted,
 	);
 
@@ -315,11 +316,12 @@ export default function RegistrationExperience(){
 		if(busy||submissionInFlight.current)return;
 		setError('');setExistingAccountIssue(null);setCountryError('');setDateError('');setPhoneError('');setPasswordError('');
 		const date=parseDateOfBirth(details.dateOfBirth);
-		const phone=normalizePhoneE164(details.phoneNumber,details.phoneCountry as CountryCode)||'';
+		const selectedPhoneCountry=findCountry(details.phoneCountry);
+		const phone=selectedPhoneCountry?normalizePhoneE164(details.phoneNumber,selectedPhoneCountry.code)||'':'';
 		let invalid=false;
 		if(!residence){setCountryError(translate('selectCountry'));invalid=true;}
 		if(!date){setDateError(translate('validDate'));invalid=true;}
-		if(!phone){setPhoneError(translate('validPhone'));invalid=true;}
+		if(!selectedPhoneCountry||!phone){setPhoneError(translate('validPhone'));invalid=true;}
 		if(details.password!==details.confirmPassword){setPasswordError(translate('passwordMatch'));invalid=true;}
 		if(invalid||!residence)return;
 		if(!captchaToken){setError('Complete the registration security check before creating your account.');return;}
@@ -377,7 +379,9 @@ export default function RegistrationExperience(){
 				return;
 			}
 			if(!response.ok){
-				if(result.code==='ACCOUNT_ALREADY_VERIFIED'||result.code==='ACCOUNT_ALREADY_EXISTS')setExistingAccountIssue('account');
+				if(result.code==='ACCOUNT_ALREADY_VERIFIED')setExistingAccountIssue('account');
+				else if(result.code==='ACCOUNT_ALREADY_EXISTS')setExistingAccountIssue('administrator');
+				else if(result.code==='ACCOUNT_VERIFICATION_INCOMPLETE')setExistingAccountIssue('incomplete');
 				else if(result.code==='ACCOUNT_UNAVAILABLE')setExistingAccountIssue('unavailable');
 				else if(result.code==='REGISTRATION_IN_PROGRESS')setExistingAccountIssue('pending');
 				else if(result.code==='PHONE_ALREADY_IN_USE')setExistingAccountIssue('phone');
@@ -429,9 +433,9 @@ export default function RegistrationExperience(){
 			submissionInFlight.current=false;
 			setBusy(false);
 			setCaptchaToken('');
+			setCaptchaStatus('ready');
 			const widgetId=captchaWidgetId.current;
 			if(widgetId)window.turnstile?.reset(widgetId);
-			if(captchaStatus==='verified')setCaptchaStatus('ready');
 		}
 	}
 
@@ -450,7 +454,7 @@ export default function RegistrationExperience(){
 				</fieldset>
 				<fieldset id="register-contact" className="register-form-section"><legend className="sr-only">{translate('contactInformation')}</legend><h2>{translate('contactInformation')}</h2><div className="space-y-3">
 					<label className="auth-field-label">{translate('emailAddress')}<input className="auth-input" name="email" type="email" autoComplete="email" value={details.email} onChange={event=>update('email',event.target.value)} required maxLength={254}/></label>
-					<div><label className="auth-field-label" htmlFor="registration-phone">{translate('phoneNumber')} <span className="muted font-normal">{translate('phoneOptional')}</span></label><div className="register-phone-row mt-1"><CountrySelector label="Phone country and dialing code" value={details.phoneCountry} onChange={code=>update('phoneCountry',code)}/><input id="registration-phone" className="auth-input mt-0 min-w-0" name="tel-national" type="tel" autoComplete="tel-national" inputMode="tel" value={details.phoneNumber} onChange={event=>{update('phoneNumber',event.target.value);setPhoneError('')}} placeholder={translate('phoneNumber')} aria-describedby={phoneError?'phone-error':undefined} required/></div>{phoneError&&<p id="phone-error" className="mt-1 text-xs text-loss" role="alert">{phoneError}</p>}</div>
+					<div><label className="auth-field-label" htmlFor="registration-phone">{translate('phoneNumber')} <span className="muted font-normal">{translate('phoneOptional')}</span></label><div className="register-phone-row mt-1"><CountrySelector label="Phone country and dialing code" value={details.phoneCountry} onChange={code=>{update('phoneCountry',code);setPhoneError('')}} required invalid={Boolean(phoneError)} errorId={phoneError?'phone-error':undefined}/><input id="registration-phone" className="auth-input mt-0 min-w-0" name="tel-national" type="tel" autoComplete="tel-national" inputMode="tel" value={details.phoneNumber} onChange={event=>{update('phoneNumber',event.target.value);setPhoneError('')}} placeholder={translate('phoneNumber')} aria-describedby={phoneError?'phone-error':undefined} required/></div>{phoneError&&<p id="phone-error" className="mt-1 text-xs text-loss" role="alert">{phoneError}</p>}</div>
 				</div></fieldset>
 				<fieldset id="register-security" className="register-form-section"><legend className="sr-only">{translate('security')}</legend><h2>{translate('security')}</h2><div className="grid gap-3 sm:grid-cols-2">
 					<label className="auth-field-label">{translate('password')}<input className="auth-input" name="new-password" type="password" autoComplete="new-password" value={details.password} onChange={event=>{update('password',event.target.value);setPasswordError('')}} required minLength={10} maxLength={128} pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{10,128}" aria-describedby="password-requirements"/></label>
@@ -469,6 +473,8 @@ export default function RegistrationExperience(){
 				{captchaLoaded&&!captchaUnavailable&&(captchaStatus==='expired'||captchaStatus==='failed')&&<button className="auth-link text-sm" type="button" onClick={retryCaptcha}>Retry security check</button>}
 				{error&&<p className="auth-error" role="alert">{error}</p>}
 				{existingAccountIssue==='account'&&<p className="text-sm leading-6 muted">Already have an account? <Link href="/login" className="auth-link">Sign in</Link> or <Link href="/forgot-password" className="auth-link">reset your password</Link>.</p>}
+				{existingAccountIssue==='administrator'&&<p className="text-sm leading-6 muted">Use the <Link href="/login" className="auth-link">existing sign-in page</Link> or <Link href="/support" className="auth-link">contact support</Link> for account access help.</p>}
+				{existingAccountIssue==='incomplete'&&<p className="text-sm leading-6 muted">This account has not completed registration verification. Sign-in remains restricted. <Link href="/support" className="auth-link">Contact support</Link> for account-specific help.</p>}
 				{existingAccountIssue==='unavailable'&&<p className="text-sm leading-6 muted">This account was not changed or reactivated. <Link href="/support" className="auth-link">Contact support</Link> for account-specific help.</p>}
 				{existingAccountIssue==='pending'&&<p className="text-sm leading-6 muted">Your existing registration details were not changed. Retry with the original registration password or use the verification link sent to your email.</p>}
 				{existingAccountIssue==='phone'&&<p className="text-sm leading-6 muted">Use a phone number not associated with another account.</p>}

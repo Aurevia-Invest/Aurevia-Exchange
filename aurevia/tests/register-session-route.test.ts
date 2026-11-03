@@ -78,6 +78,23 @@ describe('registration session restore',()=>{
 		});
 	});
 
+	it.each([
+		'+12025550123',
+		'+2348031234567',
+		'+447400123456',
+		'+14165550123',
+		'+919876543210',
+		'+4915112345678',
+		'+27821234567',
+	])('restores the exact pending E.164 number %s',async(phone)=>{
+		mocks.findUnique.mockResolvedValue({...attempt,phone});
+
+		const response=await POST(request());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({restored:true,phone});
+	});
+
 	it('invalidates and clears expired sessions',async()=>{
 		mocks.findUnique.mockResolvedValue({...attempt,expiresAt:new Date(Date.now()-1000)});
 		const response=await POST(request());

@@ -2,8 +2,11 @@ import {parsePhoneNumberFromString} from 'libphonenumber-js';
 import type {CountryCode} from 'libphonenumber-js';
 
 export function normalizePhoneE164(value:string,country:CountryCode){
-	const parsed=parsePhoneNumberFromString(value,country);
-	return parsed?.isValid()?parsed.number:null;
+	const normalized=value.trim();
+	const parsed=parsePhoneNumberFromString(normalized,country);
+	if(!parsed?.isValid())return null;
+	if(normalized.startsWith('+')&&parsed.country!==country)return null;
+	return parsed.number;
 }
 
 export function isValidE164(value:string){

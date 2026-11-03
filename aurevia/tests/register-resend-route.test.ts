@@ -452,6 +452,8 @@ describe('registration verification resend',()=>{
 
 	it.each([
 		['API_KEY_SCOPE_DENIED','could not authorize this request'],
+		['WIDGET_USER_MISMATCH','could not authorize this request'],
+		['PIPELINE_OWNERSHIP_MISMATCH','could not authorize this request'],
 		['CAPTCHA_VALIDATION_FAILED','could not accept the security challenge'],
 		['CAPTCHA_API_ERROR','security verification service is temporarily unavailable'],
 		['CAPTCHA_NOT_VERIFIED','Complete the security check in the verification widget'],

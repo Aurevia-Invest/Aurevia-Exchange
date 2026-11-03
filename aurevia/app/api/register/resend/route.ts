@@ -74,7 +74,7 @@ function phoneInitiationFailureResponse(error:unknown,requestId:string){
 	const providerCode=error instanceof AkedlyProviderError?error.providerCode:undefined;
 	const retryAfterSeconds=error instanceof AkedlyProviderError?error.retryAfterSeconds:undefined;
 	let message='Phone verification could not be initiated. Your registration is saved; please retry later.';
-	if(['API_KEY_SCOPE_DENIED','INVALID_API_KEY','INVALID_SIGNATURE','PIPELINE_NOT_CONFIGURED','PIPELINE_OWNERSHIP_MISMATCH','WIDGET_INACTIVE'].includes(providerCode||'')){
+	if(['API_KEY_SCOPE_DENIED','INVALID_API_KEY','INVALID_SIGNATURE','PIPELINE_NOT_CONFIGURED','PIPELINE_NOT_FOUND','PIPELINE_OWNERSHIP_MISMATCH','WIDGET_INACTIVE','WIDGET_USER_MISMATCH'].includes(providerCode||'')){
 		message='Phone verification is unavailable because the verification service could not authorize this request. Your registration is saved; please retry later or contact support if this continues.';
 	}else if(INVALID_PHONE_CODES.includes(providerCode||'')){
 		message='Enter a valid phone number in international format and try again. Your registration is saved.';

@@ -110,7 +110,15 @@ describe('registration privacy boundary',()=>{
 		expect(mocks.attemptCreate.mock.calls[0][0].data.passwordHash).not.toBe(payload.password);
 		expect(mocks.userFindUnique).toHaveBeenCalledWith({
 			where:{email:payload.email},
-			select:{id:true,role:true,status:true,emailVerifiedAt:true,requiresRegistrationVerification:true},
+			select:{
+				role:true,
+				status:true,
+				emailVerifiedAt:true,
+				verifiedChannel:true,
+				phoneVerified:true,
+				phoneVerifiedAt:true,
+				requiresRegistrationVerification:true,
+			},
 		});
 		expect(response.headers.get('set-cookie')).toContain('HttpOnly');
 		expect(response.headers.get('set-cookie')).toContain('SameSite=lax');
@@ -303,6 +311,112 @@ describe('registration privacy boundary',()=>{
 		expect(await response.json()).toMatchObject({code:'ACCOUNT_ALREADY_VERIFIED'});
 		expect(mocks.attemptCreate).not.toHaveBeenCalled();
 		expect(mocks.userFindUnique).toHaveBeenCalledOnce();
+	});
+
+	it('routes an existing administrator account to sign-in without treating it as an unverified registration',async()=>{
+		mocks.userFindUnique.mockResolvedValue({
+			id:'existing-administrator',
+			role:'ADMIN',
+			status:'ACTIVE',
+			emailVerifiedAt:null,
+			verifiedChannel:null,
+			phoneVerified:false,
+			phoneVerifiedAt:null,
+			requiresRegistrationVerification:false,
+		});
+		const log=vi.spyOn(console,'info').mockImplementation(()=>undefined);
+		const requestId='fc8e8788-217a-4e03-bf88-476426ff1159';
+		const response=await POST(request(payload,'192.0.2.5',requestId));
+		const body=await response.json();
+
+		expect(response.status).toBe(409);
+		expect(body).toMatchObject({
+			code:'ACCOUNT_ALREADY_EXISTS',
+			requestId,
+			referenceId:requestId,
+			error:'An account already uses this email. Sign in with the existing account or contact support for access help.',
+		});
+		expect(log).toHaveBeenCalledWith('[registration] Existing account matched registration request.',expect.objectContaining({
+			requestId,
+			accountState:'administrator',
+		}));
+		expect(JSON.stringify(log.mock.calls)).not.toContain(payload.email);
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+		log.mockRestore();
+	});
+
+	it('recognizes an existing phone-verified account even when email verification is not used',async()=>{
+		mocks.userFindUnique.mockResolvedValue({
+			id:'phone-verified-user',
+			role:'USER',
+			status:'ACTIVE',
+			emailVerifiedAt:null,
+			verifiedChannel:'SMS',
+			phoneVerified:true,
+			phoneVerifiedAt:new Date(),
+			requiresRegistrationVerification:false,
+		});
+		const log=vi.spyOn(console,'info').mockImplementation(()=>undefined);
+		const requestId='fc8e8788-217a-4e03-bf88-476426ff1159';
+		const response=await POST(request(payload,'192.0.2.5',requestId));
+		const body=await response.json();
+
+		expect(response.status).toBe(409);
+		expect(body).toMatchObject({
+			code:'ACCOUNT_ALREADY_VERIFIED',
+			requestId,
+			referenceId:requestId,
+			error:'An account already uses this email. Sign in or reset its password to recover access.',
+		});
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+		expect(log).toHaveBeenCalledWith('[registration] Existing account matched registration request.',expect.objectContaining({
+			requestId,
+			accountState:'verified',
+			verifiedChannel:'SMS',
+			emailVerified:false,
+			phoneVerified:true,
+		}));
+		expect(JSON.stringify(log.mock.calls)).not.toContain(payload.email);
+		log.mockRestore();
+	});
+
+	it('does not offer sign-in recovery for an existing account with no verification proof',async()=>{
+		mocks.userFindUnique.mockResolvedValue({
+			id:'incomplete-user',
+			role:'USER',
+			status:'ACTIVE',
+			emailVerifiedAt:null,
+			verifiedChannel:null,
+			phoneVerified:false,
+			phoneVerifiedAt:null,
+			requiresRegistrationVerification:false,
+		});
+		const response=await POST(request());
+
+		expect(response.status).toBe(409);
+		expect(await response.json()).toMatchObject({
+			code:'ACCOUNT_VERIFICATION_INCOMPLETE',
+			error:'An existing account has not completed registration verification. Sign-in is unavailable; contact support to recover this account safely.',
+		});
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+	});
+
+	it('does not classify a phone-verified account with a stale registration gate as sign-in ready',async()=>{
+		mocks.userFindUnique.mockResolvedValue({
+			id:'phone-verified-but-gated-user',
+			role:'USER',
+			status:'ACTIVE',
+			emailVerifiedAt:null,
+			verifiedChannel:'SMS',
+			phoneVerified:true,
+			phoneVerifiedAt:new Date(),
+			requiresRegistrationVerification:true,
+		});
+		const response=await POST(request());
+
+		expect(response.status).toBe(409);
+		expect(await response.json()).toMatchObject({code:'ACCOUNT_VERIFICATION_INCOMPLETE'});
+		expect(mocks.attemptCreate).not.toHaveBeenCalled();
 	});
 
 	it('routes an existing active unverified user to the existing verification flow',async()=>{

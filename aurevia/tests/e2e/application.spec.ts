@@ -804,7 +804,7 @@ test('country selector searches Nigeria and United Kingdom and shows their diali
 	await page.setViewportSize({width:320,height:800});
 	await page.goto('/register');
 	const picker=page.getByRole('button',{name:/phone country and dialing code/i});
-	await expect(picker).toHaveAttribute('aria-label',/United States \+1/);
+	await expect(picker).toHaveAttribute('aria-label',/Select a country/);
 	await picker.click();
 	const dialog=page.getByRole('dialog',{name:'Select phone country and dialing code'});
 	await expect(dialog).toBeVisible();
@@ -944,6 +944,11 @@ test('registration page refresh and Turnstile retries do not submit and render t
 	const residenceDialog=page.getByRole('dialog',{name:'Select country of residence'});
 	await residenceDialog.getByRole('searchbox').fill('United States');
 	await residenceDialog.getByRole('option',{name:/United States.*US.*\+1/}).click();
+	const phonePicker=page.getByRole('button',{name:/phone country and dialing code/i});
+	await phonePicker.click();
+	const phoneDialog=page.getByRole('dialog',{name:'Select phone country and dialing code'});
+	await phoneDialog.getByRole('searchbox').fill('United States');
+	await phoneDialog.getByRole('option',{name:/United States.*US.*\+1/}).click();
 	await page.locator('#registration-phone').fill('2025550123');
 	await page.getByLabel('Email address').fill(`retry-${randomUUID()}@example.invalid`);
 	await page.getByLabel('Password',{exact:true}).fill('SecureTestPassword1');
@@ -997,12 +1002,13 @@ test('mobile verification shows an Akedly quota cooldown without automatically r
 		await route.fulfill({
 			status:402,
 			contentType:'application/json',
-			body:JSON.stringify({error:'The verification route has temporarily reached its delivery limit.',retryAfterSeconds:90}),
+			body:JSON.stringify({error:'The verification route has temporarily reached its delivery limit.',retryAfterSeconds:90,referenceId:'1ad1bb6f-a115-4124-a539-05d0f86ce570'}),
 		});
 	});
 
 	await page.goto('/verify-email?email=quota-test%40example.invalid');
 	await expect(page.locator('.auth-error')).toContainText('You can retry in 2 minute(s).');
+	await expect(page.locator('.auth-error')).toContainText('Reference: 1ad1bb6f-a115-4124-a539-05d0f86ce570.');
 	await expectNoHorizontalOverflow(page);
 	expect(resendRequests).toBe(1);
 	await page.waitForTimeout(500);

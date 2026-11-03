@@ -32,9 +32,13 @@ vi.mock('@/lib/live-market',()=>({
 	TIMEFRAMES:[{id:'1d',label:'1d'}],
 	getMarketAsset:vi.fn((symbol:string)=>symbol==='AAPL'?{id:'AAPL',name:'Apple Inc.',type:'STOCK',currency:'USD'}:undefined),
 	isExternalMarketDataSource:vi.fn((source:string)=>source==='Alpaca'||source==='Alpaca Crypto'||source==='Finnhub'),
+	MarketDataError:class MarketDataError extends Error{
+		constructor(message:string,readonly status=502,readonly diagnostics?:unknown){super(message)}
+	},
 }));
 
 import {POST} from '@/app/api/market/data-explanation/route';
+import {MarketDataError} from '@/lib/live-market';
 
 const request=(body:unknown)=>new Request('https://aurevia.test/api/market/data-explanation',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 
@@ -80,7 +84,13 @@ describe('market data availability AI explanation',()=>{
 	});
 
 	it('does not claim reference history after a configured provider fails',async()=>{
-		mocks.getMarketHistory.mockRejectedValue(new Error('private upstream details'));
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+		const providerDiagnostics={
+			selectedProvider:'none',
+			alpaca:{status:'failed',reason:'invalid_credentials',httpStatus:401},
+			finnhub:{status:'failed',reason:'subscription_or_access_denied',httpStatus:403},
+		} as const;
+		mocks.getMarketHistory.mockRejectedValue(new MarketDataError('Configured historical market-data providers failed.',503,providerDiagnostics));
 
 		const response=await POST(request({symbol:'AAPL',dataType:'history',timeframe:'1d'}));
 		const body=await response.json();
@@ -93,6 +103,14 @@ describe('market data availability AI explanation',()=>{
 			symbol:'AAPL',dataType:'history',timeframe:'1d',status:'unavailable',provider:null,
 		});
 		expect(messages.map(message=>message.content).join(' ')).not.toContain('private upstream details');
+		expect(warning).toHaveBeenCalledWith('Configured market history providers are unavailable.',expect.objectContaining({
+			requestId:expect.any(String),
+			referenceId:expect.any(String),
+			endpoint:'/api/market/data-explanation',
+			symbol:'AAPL',
+			providerDiagnostics,
+		}));
+		warning.mockRestore();
 	});
 
 	it('marks a fresh provider response accurately',async()=>{

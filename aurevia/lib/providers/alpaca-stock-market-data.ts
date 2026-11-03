@@ -1,3 +1,5 @@
+import {readMarketProviderErrorDetails,type MarketProviderErrorDetails} from './market-data-error';
+
 export type AlpacaStockDataOptions={apiKey:string;apiSecret:string;fetcher?:typeof fetch};
 
 type AlpacaQuote={bp?:number;ap?:number;t?:string};
@@ -11,6 +13,20 @@ export type AlpacaStockQuote={
 
 export type AlpacaStockBar={time:string;open:number;high:number;low:number;close:number;volume:number|null};
 export type AlpacaStockBarTimeframe='1Min'|'5Min'|'15Min'|'1Hour'|'1Day';
+
+export class AlpacaStockMarketDataError extends Error{
+	readonly provider='Alpaca';
+	constructor(
+		message:string,
+		readonly httpStatus?:number,
+		readonly providerCode?:string,
+		readonly providerMessage?:string,
+		readonly providerEndpoint='/v2/stocks/{symbol}/bars',
+	){
+		super(message);
+		this.name='AlpacaStockMarketDataError';
+	}
+}
 
 const retryDelayMs=250;
 const maxRetries=1;
@@ -74,6 +90,13 @@ export class AlpacaStockMarketDataProvider{
 			if(typeof nextToken!=='string'||!nextToken)break;
 			pageToken=nextToken;
 		}
+		if(!result.length){
+			throw new AlpacaStockMarketDataError(
+				'ALPACA_STOCK_MARKET_DATA_NO_BARS',
+				200,
+				'NO_DATA',
+			);
+		}
 		return result;
 	}
 
@@ -92,15 +115,44 @@ export class AlpacaStockMarketDataProvider{
 				});
 			}catch{
 				if(attempt<maxRetries){await wait(retryDelayMs);continue}
-				throw new Error('ALPACA_STOCK_MARKET_DATA_UNAVAILABLE');
+				throw new AlpacaStockMarketDataError(
+					'ALPACA_STOCK_MARKET_DATA_UNAVAILABLE',
+					undefined,
+					'NETWORK_OR_TIMEOUT',
+					undefined,
+					path.split('?')[0],
+				);
 			}
 			if((response.status===429||response.status>=500)&&attempt<maxRetries){
 				await wait(retryAfterMs(response));
 				continue;
 			}
-			if(!response.ok)throw new Error(`ALPACA_STOCK_MARKET_DATA_ERROR:${response.status}`);
-			try{return await response.json() as unknown}catch{throw new Error('ALPACA_STOCK_MARKET_DATA_INVALID_RESPONSE')}
+			if(!response.ok){
+				const details:MarketProviderErrorDetails=await readMarketProviderErrorDetails(response);
+				throw new AlpacaStockMarketDataError(
+					`ALPACA_STOCK_MARKET_DATA_ERROR:${response.status}`,
+					response.status,
+					details.providerCode,
+					details.providerMessage,
+					path.split('?')[0],
+				);
+			}
+			try{return await response.json() as unknown}catch{
+				throw new AlpacaStockMarketDataError(
+					'ALPACA_STOCK_MARKET_DATA_INVALID_RESPONSE',
+					response.status,
+					'INVALID_JSON',
+					undefined,
+					path.split('?')[0],
+				);
+			}
 		}
-		throw new Error('ALPACA_STOCK_MARKET_DATA_UNAVAILABLE');
+		throw new AlpacaStockMarketDataError(
+			'ALPACA_STOCK_MARKET_DATA_UNAVAILABLE',
+			undefined,
+			'NETWORK_OR_TIMEOUT',
+			undefined,
+			path.split('?')[0],
+		);
 	}
 }

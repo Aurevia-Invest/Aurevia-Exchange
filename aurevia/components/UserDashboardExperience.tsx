@@ -16,7 +16,7 @@ import DemoAiTradingPanel from '@/components/DemoAiTradingPanel';
 import DemoAccountControls from '@/components/DemoAccountControls';
 import AccountTierBadge from '@/components/AccountTierBadge';
 import {useAccountTier} from '@/components/useAccountTier';
-import {DEFAULT_WATCHLIST,MARKET_ASSETS,MARKET_UI_REFRESH_INTERVAL_MS,type MarketCandle,type MarketQuote,type TimeframeId} from '@/lib/live-market';
+import {DEFAULT_WATCHLIST,MARKET_ASSETS,MARKET_UI_REFRESH_INTERVAL_MS,isExternalMarketDataSource,type MarketCandle,type MarketQuote,type TimeframeId} from '@/lib/live-market';
 import {formatUsd} from '@/lib/currency-format';
 import AureviaExchangeId from '@/components/AureviaExchangeId';
 
@@ -94,7 +94,7 @@ function UserMetric({label,value,detail,active,icon:Icon}:{label:string;value:st
 	</article>;
 }
 
-function MarketChartPanel({selectedSymbol,quotes,internalInstrumentId}:{selectedSymbol:string;quotes:Map<string,MarketQuote|QuoteError>;internalInstrumentId?:string}){
+function MarketChartPanel({selectedSymbol,quotes,internalInstrumentId,accountMode}:{selectedSymbol:string;quotes:Map<string,MarketQuote|QuoteError>;internalInstrumentId?:string;accountMode:'DEMO'|'REAL'}){
 	const [history,setHistory]=useState<HistoryResponse|null>(null);
 	const [loading,setLoading]=useState(false);
 	const [error,setError]=useState('');
@@ -102,31 +102,49 @@ function MarketChartPanel({selectedSymbol,quotes,internalInstrumentId}:{selected
 	useEffect(()=>{
 		let active=true;
 		setLoading(true);setError('');
-		void fetch(`/api/live-markets/${encodeURIComponent(selectedSymbol)}?timeframe=${timeframe}`,{cache:'no-store'})
-			.then(async response=>{
-				const result=await response.json();
-				if(!response.ok)throw new Error(result.error||'Market history is unavailable.');
-				return result as HistoryResponse;
-			})
-			.then(async result=>{
+		const load=async()=>{
+			try{
+				const response=await fetch(`/api/live-markets/${encodeURIComponent(selectedSymbol)}?timeframe=${timeframe}`,{cache:'no-store'});
+				const body=await response.json();
+				if(!response.ok)throw new Error(typeof body.error==='string'?body.error:'Market history is unavailable.');
+				const result=body as HistoryResponse;
+				if(accountMode==='REAL'){
+					if(!isExternalMarketDataSource(result.source)){
+						throw new Error('Provider historical data is unavailable in REAL mode; demo and internal candles were not used.');
+					}
+					if(active)setHistory(result);
+					return;
+				}
 				if(result.source==='Aurevia Internal'){
-					if(!internalInstrumentId)throw new Error('No configured instrument or provider history is available for this market.');
-					const response=await fetch(`/api/candles?instrumentId=${encodeURIComponent(internalInstrumentId)}&range=${timeframe}`,{cache:'no-store'});
-					const rows=await response.json() as Array<{ts:string;open:string;high:string;low:string;close:string;volume:string}>;
-					if(!response.ok)throw new Error('Stored market candles are unavailable.');
-					const candles=rows.map(row=>({
-						time:Math.floor(new Date(row.ts).getTime()/1000),
-						open:Number(row.open),high:Number(row.high),low:Number(row.low),close:Number(row.close),volume:Number(row.volume),
-					})).filter(candle=>Number.isFinite(candle.time)&&[candle.open,candle.high,candle.low,candle.close].every(Number.isFinite));
-					if(candles.length<2)throw new Error('There is not enough stored market history for this range.');
-					result={...result,candles,source:'Aurevia DEMO market feed'};
+					if(active)setHistory(await loadStoredDemoHistory(internalInstrumentId,timeframe));
+					return;
 				}
 				if(active)setHistory(result);
-			})
-			.catch(exception=>{if(active){setHistory(null);setError(exception instanceof Error?exception.message:'Market history is unavailable.')}})
-			.finally(()=>{if(active)setLoading(false)});
+			}catch(exception){
+				if(accountMode==='DEMO'&&internalInstrumentId){
+					try{
+						const storedHistory=await loadStoredDemoHistory(internalInstrumentId,timeframe);
+						if(active)setHistory(storedHistory);
+						return;
+					}catch{
+						if(active){
+							setHistory(null);
+							setError('Provider history is unavailable and no saved demo candles exist for this range.');
+						}
+						return;
+					}
+				}
+				if(active){
+					setHistory(null);
+					setError(exception instanceof Error?exception.message:'Market history is unavailable.');
+				}
+			}finally{
+				if(active)setLoading(false);
+			}
+		};
+		void load();
 		return()=>{active=false};
-	},[selectedSymbol,timeframe,internalInstrumentId]);
+	},[selectedSymbol,timeframe,internalInstrumentId,accountMode]);
 	const quoteValue=quotes.get(selectedSymbol);
 	const quote=isQuote(quoteValue)?quoteValue:history?.quote;
 	return <section className="user-dashboard-panel user-market-chart-panel" aria-labelledby="user-market-overview">
@@ -138,6 +156,20 @@ function MarketChartPanel({selectedSymbol,quotes,internalInstrumentId}:{selected
 		{history?<LivePriceChart candles={history.candles} quote={history.source==='Aurevia DEMO market feed'?undefined:quote??undefined} timeframe={timeframe} loading={loading} error={error} running={history.source==='Aurevia Internal'||history.source==='Aurevia DEMO market feed'}/>:loading?<div className="user-chart-empty" role="status">Loading market history…</div>:<div className="user-chart-empty" role="status">{error||'No historical market data is available for this range.'}</div>}
 		<p className="user-dashboard-footnote">Provider quotes are shown when available. DEMO prices are internal reference values; charts use provider history or recorded database candles only.</p>
 	</section>;
+}
+
+async function loadStoredDemoHistory(instrumentId:string|undefined,timeframe:TimeframeId):Promise<HistoryResponse>{
+	if(!instrumentId)throw new Error('No configured demo instrument is available.');
+	const response=await fetch(`/api/candles?instrumentId=${encodeURIComponent(instrumentId)}&range=${timeframe}`,{cache:'no-store'});
+	if(!response.ok)throw new Error('Stored demo candles are unavailable.');
+	const rows=await response.json() as Array<{ts:string;open:string;high:string;low:string;close:string;volume:string|null}>;
+	const candles=rows.map(row=>({
+		time:Math.floor(new Date(row.ts).getTime()/1000),
+		open:Number(row.open),high:Number(row.high),low:Number(row.low),close:Number(row.close),
+		volume:row.volume===null||row.volume===''?null:Number(row.volume),
+	})).filter(candle=>Number.isFinite(candle.time)&&[candle.open,candle.high,candle.low,candle.close].every(value=>Number.isFinite(value)&&value>0));
+	if(candles.length<2)throw new Error('There is not enough stored demo history for this range.');
+	return {quote:null,candles,timeframe,interval:'1d',source:'Aurevia DEMO market feed'};
 }
 
 function AssetAllocation({overview}:{overview:Overview}){
@@ -318,7 +350,7 @@ export default function UserDashboardExperience(){
 			<FavoriteMarkets assets={favoriteAssets} quotes={quotes} onRemove={toggleFavorite}/>
 			<div className="user-dashboard-columns">
 				<div className="user-dashboard-primary">
-					<MarketChartPanel selectedSymbol={selectedSymbol} quotes={quotes} internalInstrumentId={internalInstrumentId}/>
+					<MarketChartPanel selectedSymbol={selectedSymbol} quotes={quotes} internalInstrumentId={internalInstrumentId} accountMode={overview.accountMode}/>
 					{overview.accountMode==='REAL'&&overview.activeInvestments.length>0&&<section className="user-dashboard-panel" aria-labelledby="user-live-investments-heading">
 						<header className="user-dashboard-panel-heading"><div><span className="user-dashboard-eyebrow">ACTIVE {overview.accountMode} MODE</span><h2 id="user-live-investments-heading">Live investments</h2><p>Per-second estimates use your recorded investment terms.</p></div><Link className="user-dashboard-panel-link" href="/investments">Investment activity <ArrowRight size={14}/></Link></header>
 						<div className="investment-live-grid">{overview.activeInvestments.map(investment=><InvestmentProgressCard key={investment.id} investment={investment} onMaturity={refreshOverview}/>)}</div>

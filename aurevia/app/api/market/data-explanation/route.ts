@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
@@ -8,7 +9,7 @@ import {rateLimit} from '@/lib/rate-limit';
 import {getServerConfiguration} from '@/lib/config/env';
 import {getAlpacaMarketDataOptions,getMarketHistoryWithFallback,getMarketQuoteWithFallback} from '@/lib/market-data-service';
 import {getReferenceMarketHistory} from '@/lib/internal-market-data';
-import {getMarketAsset,isExternalMarketDataSource,type TimeframeId,TIMEFRAMES} from '@/lib/live-market';
+import {getMarketAsset,isExternalMarketDataSource,MarketDataError,type TimeframeId,TIMEFRAMES} from '@/lib/live-market';
 
 const requestSchema=z.object({
 	symbol:z.string().trim().min(1).max(16),
@@ -31,6 +32,7 @@ const outputSchema=z.object({
 type DataStatus='current_provider'|'stale_provider'|'internal_reference'|'unavailable';
 
 export async function POST(request:Request){
+	const requestId=randomUUID();
 	try{
 		const user=await requireUser();
 		rateLimit(`market-data-explanation:${user.id}`,8,60_000);
@@ -70,7 +72,14 @@ export async function POST(request:Request){
 				const externalProviderConfigured=!!configuration.marketData.finnhubApiKey||!!alpacaData?.apiKey&&!!alpacaData.apiSecret;
 				if(asset.type==='STOCK'&&externalProviderConfigured){
 					console.warn('Configured market history providers are unavailable.',{
-						symbol,stage:'history-lookup',errorName:error instanceof Error?error.name:'UnknownError',
+						requestId,
+						referenceId:requestId,
+						endpoint:'/api/market/data-explanation',
+						symbol,
+						stage:'history-lookup',
+						errorName:error instanceof Error?error.name:'UnknownError',
+						...(error instanceof MarketDataError&&error.diagnostics?{providerDiagnostics:error.diagnostics}:{}),
+						failureTimestamp:new Date().toISOString(),
 					});
 				}else{
 					try{

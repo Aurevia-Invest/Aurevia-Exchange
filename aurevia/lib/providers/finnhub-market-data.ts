@@ -1,7 +1,15 @@
 import type {LiveMarketAsset,MarketCandle,MarketQuote} from '../live-market';
+import {readMarketProviderErrorDetails,sanitizeMarketProviderErrorDetails,type MarketProviderErrorDetails} from './market-data-error';
 
 export class FinnhubMarketDataError extends Error {
-	constructor(message:string,readonly status=502){super(message);this.name='FinnhubMarketDataError';}
+	constructor(
+		message:string,
+		readonly status=502,
+		readonly providerHttpStatus=status,
+		readonly providerCode?:string,
+		readonly providerMessage?:string,
+		readonly providerEndpoint='/api/v1/stock/candle',
+	){super(message);this.name='FinnhubMarketDataError';}
 }
 
 function providerSymbol(asset:LiveMarketAsset){
@@ -20,23 +28,45 @@ async function request(path:string,apiKey:string,fetcher:typeof fetch){
 	for(let attempt=0;attempt<2;attempt++){
 		let response:Response;
 		try{response=await fetcher(`https://finnhub.io/api/v1/${path}`,{headers:{'X-Finnhub-Token':apiKey},cache:'no-store',signal:AbortSignal.timeout(8000)});}
-		catch{
+		catch(error){
 			if(attempt===0){await new Promise(resolve=>setTimeout(resolve,250));continue}
-			throw new FinnhubMarketDataError('Finnhub is unreachable.',503);
+			throw new FinnhubMarketDataError(
+				'Finnhub is unreachable.',
+				503,
+				undefined,
+				error instanceof Error&&error.name==='TimeoutError'?'PROVIDER_TIMEOUT':'NETWORK_ERROR',
+				undefined,
+				endpointPath(path),
+			);
 		}
 		if((response.status===429||response.status>=500)&&attempt===0){
 			const retryAfter=Number(response.headers.get('retry-after'));
 			await new Promise(resolve=>setTimeout(resolve,Number.isFinite(retryAfter)?Math.max(0,Math.min(retryAfter*1000,1_000)):250));
 			continue;
 		}
-		if(!response.ok)throw new FinnhubMarketDataError(response.status===429?'Finnhub is rate limited.':'Finnhub request failed.',response.status);
+		if(!response.ok){
+			const details:MarketProviderErrorDetails=await readMarketProviderErrorDetails(response);
+			throw new FinnhubMarketDataError(
+				response.status===429?'Finnhub is rate limited.':'Finnhub request failed.',
+				response.status,
+				response.status,
+				details.providerCode,
+				details.providerMessage,
+				endpointPath(path),
+			);
+		}
 		try{return await response.json() as Record<string,unknown>;}
-		catch{throw new FinnhubMarketDataError('Finnhub returned invalid data.',502);}
+		catch{throw new FinnhubMarketDataError('Finnhub returned invalid data.',502,response.status,'INVALID_JSON',undefined,endpointPath(path));}
 	}
-	throw new FinnhubMarketDataError('Finnhub is unreachable.',503);
+	throw new FinnhubMarketDataError('Finnhub is unreachable.',503,undefined,'NETWORK_ERROR',undefined,endpointPath(path));
 }
 
 function finite(value:unknown){return typeof value==='number'&&Number.isFinite(value)?value:null;}
+
+function endpointPath(path:string){
+	const clean=path.split('?')[0];
+	return clean.startsWith('/')?clean:`/api/v1/${clean}`;
+}
 
 export async function getFinnhubQuote(asset:LiveMarketAsset,apiKey:string,fetcher:typeof fetch=fetch):Promise<MarketQuote>{
 	const symbol=providerSymbol(asset);
@@ -66,7 +96,10 @@ export async function getFinnhubHistory(asset:LiveMarketAsset,range:string,inter
 	const symbol=providerSymbol(asset);
 	const query=new URLSearchParams({symbol,resolution:resolutionByInterval[interval]??'D',from:String(Math.floor(start)),to:String(now)});
 	const data=await request(`stock/candle?${query}`,apiKey,fetcher);
-	if(data.s!=='ok'||!Array.isArray(data.t)||!Array.isArray(data.o)||!Array.isArray(data.h)||!Array.isArray(data.l)||!Array.isArray(data.c))throw new FinnhubMarketDataError(`Finnhub has no historical data for ${asset.id}.`,503);
+	if(data.s!=='ok'||!Array.isArray(data.t)||!Array.isArray(data.o)||!Array.isArray(data.h)||!Array.isArray(data.l)||!Array.isArray(data.c)){
+		const details=sanitizeMarketProviderErrorDetails({code:data.s,message:data.error});
+		throw new FinnhubMarketDataError(`Finnhub has no historical data for ${asset.id}.`,503,200,details.providerCode||'INVALID_CANDLE_RESPONSE',details.providerMessage,'/api/v1/stock/candle');
+	}
 	const candles:MarketCandle[]=[];
 	for(let i=0;i<data.t.length;i++){
 		const time=finite(data.t[i]),open=finite(data.o[i]),high=finite(data.h[i]),low=finite(data.l[i]),close=finite(data.c[i]);

@@ -1,5 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {filterSupportedMarketAssets,getLiveMarketProviderStatus,getMarketAsset,getMarketHistory,getMarketQuote,type TimeframeId} from '../lib/live-market';
+import {getFinnhubHistory} from '../lib/providers/finnhub-market-data';
 
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.unstubAllEnvs()});
 
@@ -154,6 +155,20 @@ describe('Finnhub market service',()=>{
 		expect(history.candles[1]).toMatchObject({open:189,high:192,low:188,close:191,volume:20});
 		expect(fetcher.mock.calls[0][0]).toContain('resolution=60');
 		expect(history.quote).toBeNull();
+	});
+
+	it('retains the Finnhub HTTP status and redacted provider response for history failures',async()=>{
+		const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({
+			error:'API key: private-finnhub-key',
+		}),{status:403}));
+
+		await expect(getFinnhubHistory(getMarketAsset('AAPL')!,'1d','1m','test-finnhub-key',fetcher)).rejects.toMatchObject({
+			name:'FinnhubMarketDataError',
+			status:403,
+			providerHttpStatus:403,
+			providerMessage:'API key: [REDACTED]',
+			providerEndpoint:'/api/v1/stock/candle',
+		});
 	});
 
 	it('uses Alpaca IEX history for AAPL, MSFT, TSLA, and NVDA without changing OHLCV',async()=>{

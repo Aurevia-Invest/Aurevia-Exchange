@@ -1,4 +1,4 @@
-import {getMarketHistory,getMarketQuote,type LiveMarketAsset,type TimeframeId} from '@/lib/live-market';
+import {getMarketHistory,getMarketQuote,MarketDataError,type LiveMarketAsset,type TimeframeId} from '@/lib/live-market';
 import {getInternalMarketHistory,getInternalMarketQuote,getReferenceMarketHistory} from '@/lib/internal-market-data';
 import type {ServerConfiguration} from '@/lib/config/env';
 import type {AlpacaStockDataOptions} from '@/lib/providers/alpaca-stock-market-data';
@@ -22,7 +22,13 @@ export async function getMarketHistoryWithFallback(asset:LiveMarketAsset,timefra
 	try{
 		return await getMarketHistory(asset,timeframe,apiKey,alpacaData);
 	}catch(error){
-		console.warn(`Configured market history providers are unavailable (${error instanceof Error?error.name:'UnknownError'}).`);
+		console.warn('Configured market history providers failed.',{
+			symbol:asset.id,
+			stage:'history-lookup',
+			errorName:error instanceof Error?error.name:'UnknownError',
+			...(error instanceof MarketDataError&&error.diagnostics?{providerDiagnostics:error.diagnostics}:{}),
+			failureTimestamp:new Date().toISOString(),
+		});
 		if(asset.type==='STOCK'&&(Boolean(apiKey)||Boolean(alpacaData?.apiKey&&alpacaData.apiSecret)))throw error;
 		try{
 			return await getInternalMarketHistory(asset,timeframe);

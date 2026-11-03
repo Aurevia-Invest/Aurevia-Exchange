@@ -28,6 +28,17 @@ describe('Alpaca stock market data',()=>{
 		expect(String(fetcher.mock.calls[0][0])).toContain('feed=iex');
 	});
 
+	it('reports an empty successful history response as no data, not a transport failure',async()=>{
+		const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({bars:[],next_page_token:null}),{status:200}));
+		const provider=new AlpacaStockMarketDataProvider({apiKey:'paper-key',apiSecret:'paper-secret',fetcher});
+
+		await expect(provider.getBars('AAPL','2026-10-15T00:00:00.000Z','2026-10-15T23:59:00.000Z','1Day')).rejects.toMatchObject({
+			name:'AlpacaStockMarketDataError',
+			httpStatus:200,
+			providerCode:'NO_DATA',
+		});
+	});
+
 	it('paginates ascending IEX history without losing timestamps or volume',async()=>{
 		const fetcher=vi.fn()
 			.mockResolvedValueOnce(new Response(JSON.stringify({
@@ -61,9 +72,18 @@ describe('Alpaca stock market data',()=>{
 	});
 
 	it('does not reveal credentials when Alpaca rejects authentication',async()=>{
-		const fetcher=vi.fn().mockResolvedValue(new Response('{}',{status:401}));
+		const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({
+			code:40110000,
+			message:'API key: private-key-value',
+		}),{status:401}));
 		const provider=new AlpacaStockMarketDataProvider({apiKey:'private-key-value',apiSecret:'private-secret-value',fetcher});
-		await expect(provider.getQuote('AAPL')).rejects.toThrow('ALPACA_STOCK_MARKET_DATA_ERROR:401');
+		await expect(provider.getQuote('AAPL')).rejects.toMatchObject({
+			name:'AlpacaStockMarketDataError',
+			message:'ALPACA_STOCK_MARKET_DATA_ERROR:401',
+			httpStatus:401,
+			providerCode:'40110000',
+			providerMessage:'API key: [REDACTED]',
+		});
 		await expect(provider.getQuote('AAPL')).rejects.not.toThrow(/private-key-value|private-secret-value/);
 	});
 

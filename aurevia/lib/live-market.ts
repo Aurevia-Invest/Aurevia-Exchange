@@ -86,6 +86,7 @@ export type MarketProviderDiagnostic={
 	status:'succeeded'|'failed'|'not_configured'|'skipped';
 	reason?:string;
 	httpStatus?:number;
+	providerCode?:string;
 };
 export type MarketHistoryDiagnostics={
 	selectedProvider:'Alpaca'|'Finnhub'|'Aurevia Internal'|'none';
@@ -245,13 +246,40 @@ async function getMarketHistoryUncached(asset:LiveMarketAsset,timeframe:Timefram
       alpaca:provider?{status:'skipped'}:{status:'not_configured',reason:'credentials_missing'},
       finnhub:apiKey?{status:'skipped'}:{status:'not_configured',reason:'credentials_missing'},
     };
-    const providerFailure=(error:unknown)=>{
+    const providerFailure=(error:unknown,provider:'Alpaca'|'Finnhub',endpoint:string):MarketProviderDiagnostic=>{
       const message=error instanceof Error?error.message:'UNKNOWN_PROVIDER_ERROR';
-      const status=error&&typeof error==='object'&&'status'in error&&typeof error.status==='number'?error.status:
-        /^ALPACA_STOCK_MARKET_DATA_ERROR:(\d{3})$/.test(message)?Number(message.split(':').at(-1)):undefined;
-      const reason=status===429?'rate_limited':status&&status>=500?'provider_server_error':
-        status&&status>=400?'provider_rejected':message.includes('UNAVAILABLE')||message.includes('unreachable')?'timeout_or_network':'invalid_provider_response';
-      return {status:'failed' as const,reason,...(status?{httpStatus:status}:{})};
+      const details=error&&typeof error==='object'?error as {
+        httpStatus?:unknown;providerHttpStatus?:unknown;providerCode?:unknown;providerMessage?:unknown;providerEndpoint?:unknown;
+      }:{};
+      const status=typeof details.providerHttpStatus==='number'?details.providerHttpStatus:
+        typeof details.httpStatus==='number'?details.httpStatus:
+          error instanceof Error&&error.name==='FinnhubMarketDataError'&&'status'in error&&typeof error.status==='number'?error.status:
+            /^ALPACA_STOCK_MARKET_DATA_ERROR:(\d{3})$/.test(message)?Number(message.split(':').at(-1)):undefined;
+      const providerCode=typeof details.providerCode==='string'
+        ?details.providerCode.replace(/[^a-zA-Z0-9_.-]/g,'').slice(0,64)
+        :undefined;
+      const providerMessage=typeof details.providerMessage==='string'?details.providerMessage:undefined;
+      const noData=providerCode?.toLowerCase()==='no_data'||message.toLowerCase().includes('no historical data');
+      const reason=noData?'no_data':status===401?'invalid_credentials':status===403?'subscription_or_access_denied':
+        status===429?'rate_limited':status!==undefined&&status>=500?'provider_server_error':
+          status!==undefined&&status>=400?'provider_rejected':
+            /UNAVAILABLE|unreachable|network|timeout/i.test(message)?'timeout_or_network':'invalid_provider_response';
+      const diagnostic={
+        status:'failed' as const,
+        reason,
+        ...(status!==undefined?{httpStatus:status}:{}),
+        ...(providerCode?{providerCode}:{}),
+      };
+      console.warn('[market-history] Provider request failed.',{
+        symbol:asset.id,
+        stage:'history-lookup',
+        provider,
+        endpoint:typeof details.providerEndpoint==='string'?details.providerEndpoint:endpoint,
+        ...diagnostic,
+        ...(providerMessage?{providerResponse:{message:providerMessage}}:{}),
+        failureTimestamp:new Date().toISOString(),
+      });
+      return diagnostic;
     };
     if(provider){
       try{
@@ -262,7 +290,7 @@ async function getMarketHistoryUncached(asset:LiveMarketAsset,timeframe:Timefram
         diagnostics.selectedProvider='Alpaca';
         return {quote:null,candles:bars.map(bar=>({...bar,time:Date.parse(bar.time)/1000})),timeframe,interval:selection.interval,source:'Alpaca',diagnostics};
       }catch(error){
-        diagnostics.alpaca=providerFailure(error);
+        diagnostics.alpaca=providerFailure(error,'Alpaca','/v2/stocks/{symbol}/bars');
       }
     }
     if(apiKey){
@@ -273,7 +301,7 @@ async function getMarketHistoryUncached(asset:LiveMarketAsset,timeframe:Timefram
         diagnostics.selectedProvider='Finnhub';
         return {...history,timeframe,interval:selection.interval,diagnostics};
       }catch(error){
-        diagnostics.finnhub=providerFailure(error);
+        diagnostics.finnhub=providerFailure(error,'Finnhub','/api/v1/stock/candle');
       }
     }
     throw new MarketDataError('Configured historical market-data providers failed.',503,diagnostics);

@@ -11,6 +11,9 @@ const mocks=vi.hoisted(()=>({
 vi.mock('@/lib/live-market',()=>({
 	getMarketQuote:mocks.finnhubQuote,
 	getMarketHistory:mocks.finnhubHistory,
+	MarketDataError:class MarketDataError extends Error{
+		constructor(message:string,readonly status=502,readonly diagnostics?:unknown){super(message)}
+	},
 }));
 vi.mock('@/lib/internal-market-data',()=>({
 	getInternalMarketQuote:mocks.internalQuote,

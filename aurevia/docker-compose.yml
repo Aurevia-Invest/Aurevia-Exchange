@@ -63,7 +63,7 @@ services:
       MARKET_DATA_API_URL: ${MARKET_DATA_API_URL:-}
       MARKET_DATA_API_KEY: ${MARKET_DATA_API_KEY:-}
       FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
-      MARKET_TICK_MS: ${MARKET_TICK_MS:-2500}
+      MARKET_TICK_MS: ${MARKET_TICK_MS:-1000}
       PORT: ${PORT:-3000}
     depends_on:
       postgres:

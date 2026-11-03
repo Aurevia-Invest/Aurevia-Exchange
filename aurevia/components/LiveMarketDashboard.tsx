@@ -115,10 +115,15 @@ function LiveMarketDashboardContent(){
       setStreamUpdates(current=>{
         const next={...current};
         for(const entry of updates){
-          if(entry.dataMode!=='LIVE'||!(entry.source==='Finnhub'||entry.source.startsWith('Alpaca')))continue;
-          const asset=getMarketAsset(entry.symbol);
+          const isProviderUpdate=entry.dataMode==='LIVE'&&(entry.source==='Finnhub'||entry.source.startsWith('Alpaca'));
+          if(!isProviderUpdate&&!(entry.dataMode==='SIMULATED'&&!activeQuoteIsExternal))continue;
+          const normalizedSymbol=entry.symbol.toUpperCase().replace(/[^A-Z0-9]/g,'');
+          const asset=MARKET_ASSETS.find(item=>
+            [item.id,item.ticker].some(symbol=>symbol.toUpperCase().replace(/[^A-Z0-9]/g,'')===normalizedSymbol),
+          )||getMarketAsset(entry.symbol);
           if(!asset)continue;
-          next[entry.symbol]={asset,price:entry.price,change:entry.change,changePercent:entry.changePercent,previousClose:null,open:null,volume:null,dayLow:null,dayHigh:null,fiftyTwoWeekLow:null,fiftyTwoWeekHigh:null,updatedAt:entry.lastUpdatedAt,isStale:false,source:entry.source,sparkline:[]};
+          const previousClose=entry.dataMode==='SIMULATED'&&entry.change!==-1?entry.price/(1+entry.change):null;
+          next[asset.id]={asset,price:entry.price,change:previousClose===null?entry.change:entry.price-previousClose,changePercent:entry.changePercent,previousClose,open:null,volume:null,dayLow:null,dayHigh:null,fiftyTwoWeekLow:null,fiftyTwoWeekHigh:null,updatedAt:entry.lastUpdatedAt,isStale:false,source:entry.source,sparkline:[]};
         }
         return next;
       });
@@ -128,7 +133,7 @@ function LiveMarketDashboardContent(){
     socket.on('market:update',onMarketUpdate);
     setStreamStatus(socket.connected?'connected':'connecting');
     return ()=>{socket.off('connect',onConnect);socket.off('disconnect',onDisconnect);socket.off('market:update',onMarketUpdate);socket.disconnect();};
-  },[]);
+  },[activeQuoteIsExternal]);
   useEffect(()=>{
     if(sessionStatus==='loading')return;
     let active=true;
@@ -336,7 +341,7 @@ function LiveMarketDashboardContent(){
             </div>}
           </section>}
           <div className="live-timeframes" role="group" aria-label="Chart interval">{TIMEFRAMES.map(item=><button type="button" key={item.id} className={timeframe===item.id?'is-active':''} aria-pressed={timeframe===item.id} onClick={()=>setTimeframe(item.id)}>{item.label}</button>)}</div>
-          <LivePriceChart candles={historyQuery.data?.candles||[]} quote={activeQuote||undefined} timeframe={timeframe} loading={historyQuery.isLoading} error={historyQuery.error instanceof Error?historyQuery.error.message:''}/>
+          <LivePriceChart candles={historyQuery.data?.candles||[]} quote={activeQuote||undefined} timeframe={timeframe} loading={historyQuery.isLoading} error={historyQuery.error instanceof Error?historyQuery.error.message:''} running={historyQuery.data?.source==='Aurevia Internal'||activeQuote?.source==='Aurevia Internal'}/>
           {error&&<div className="live-data-alert" role="alert">The chart could not be updated. Available historical data is preserved. <button type="button" onClick={()=>void historyQuery.refetch()}>Retry</button></div>}
           <div className="live-chart-stats">
             <Metric label="Volume" value={activeQuote?.volume===null||activeQuote?.volume===undefined?'—':formatCompact(activeQuote.volume)}/>

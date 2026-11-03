@@ -210,7 +210,7 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
     app: {
       url: appUrl,
       port: numberEnv('PORT', 3000, source),
-      marketTickMs: Math.max(1000, numberEnv('MARKET_TICK_MS', 2500, source)),
+      marketTickMs: Math.max(1000, numberEnv('MARKET_TICK_MS', 1000, source)),
       nodeEnv: source.NODE_ENV?.trim() || 'development',
     },
     supabase: {

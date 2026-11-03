@@ -196,7 +196,7 @@ export default function Trade() {
     };
   }, [updateStore,sessionStatus,session?.user?.accountMode]);
   useEffect(()=>{
-    if(accountMode!=="REAL"){
+    if(accountMode!=="REAL"&&accountMode!=="DEMO"){
       setStreamStatus("offline");
       return;
     }
@@ -205,18 +205,27 @@ export default function Trade() {
     const onDisconnect=()=>setStreamStatus("offline");
     const onMarketUpdate=(updates:MarketUpdate[])=>{
       setItems(current=>current.map(item=>{
-        const update=updates.find(entry=>entry.symbol===item.assetId&&entry.dataMode==="LIVE"&&Number.isFinite(entry.price)&&(entry.source==="Finnhub"||entry.source.startsWith("Alpaca")));
-        if(!update||!item.liveQuote)return item;
+        const update=updates.find(entry=>
+          entry.symbol===(item.assetId||item.symbol)&&Number.isFinite(entry.price)&&(
+            accountMode==="DEMO"
+              ?entry.dataMode==="SIMULATED"
+              :entry.dataMode==="LIVE"&&(entry.source==="Finnhub"||entry.source.startsWith("Alpaca"))
+          ),
+        );
+        if(!update)return item;
+        if(accountMode==="DEMO")return {...item,price:update.price,change:update.change,updatedAt:update.lastUpdatedAt,lastUpdatedAt:update.lastUpdatedAt};
+        if(!item.liveQuote)return item;
         const liveQuote={...item.liveQuote,price:update.price,change:update.change,changePercent:update.changePercent,source:update.source,isStale:false};
         return {...item,price:update.price,change:update.changePercent,updatedAt:update.lastUpdatedAt,lastUpdatedAt:update.lastUpdatedAt,source:update.source,liveQuote};
       }));
+      if(accountMode==="DEMO")updateStore(updates.filter(update=>update.dataMode==="SIMULATED").map(({symbol,price,change})=>({symbol,price,change})));
     };
     socket.on("connect",onConnect);
     socket.on("disconnect",onDisconnect);
     socket.on("market:update",onMarketUpdate);
     setStreamStatus(socket.connected?"connected":"connecting");
     return()=>{socket.off("connect",onConnect);socket.off("disconnect",onDisconnect);socket.off("market:update",onMarketUpdate);socket.disconnect();};
-  },[accountMode]);
+  },[accountMode,updateStore]);
   useEffect(() => {
     if(!selected||!['DEMO','REAL'].includes(accountMode))return;
     let active=true;
@@ -415,7 +424,7 @@ export default function Trade() {
                     <p className="trade-chart-note">{cur?.liveQuote?`Provider data · quote ${new Date(cur.liveQuote.updatedAt).toLocaleTimeString()}`:"Internal reference prices are not used for REAL orders."}</p>
                   </div>
                   :<>
-                    <PriceChart price={cur?.price ?? 0} />
+                    <PriceChart price={cur?.price ?? 0} instrumentId={cur?.id} running/>
                     <p className="trade-chart-note">{translate('internalSimulatedMarket')}</p>
                   </>}
               </div>

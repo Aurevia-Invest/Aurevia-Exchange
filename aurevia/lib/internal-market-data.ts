@@ -91,13 +91,13 @@ export async function getInternalMarketHistory(asset:LiveMarketAsset,timeframe:T
 	const quote=await getInternalMarketQuote(asset);
 	const now=Math.floor(Date.now()/1000);
 	const span=timeframeDays[timeframe]*86_400;
-	const step=span/59;
-	const candles:MarketCandle[]=Array.from({length:60},(_,index)=>{
+	const step=span/239;
+	const candles:MarketCandle[]=Array.from({length:240},(_,index)=>{
 		const time=Math.floor(now-span+step*index);
 		const center=internalPriceAt(asset,quote.price,(now-span+step*index)*1000);
 		const next=internalPriceAt(asset,quote.price,(now-span+step*(index+1))*1000);
 		const open=index?internalPriceAt(asset,quote.price,(now-span+step*(index-1))*1000):center;
-		const close=index===59?quote.price:next;
+		const close=index===239?quote.price:next;
 		return {time,open,high:Math.max(open,close)*1.0008,low:Math.min(open,close)*0.9992,close,volume:null};
 	});
 	return {quote,candles,timeframe,interval:timeframeIntervals[timeframe],source:'Aurevia Internal'};

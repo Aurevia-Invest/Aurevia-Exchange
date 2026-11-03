@@ -70,7 +70,7 @@ async function startServer(){
   });
   const io=new IOServer(http,{cors:{origin:publicUrl,credentials:true}});
   io.on('connection',socket=>{socket.emit('connected',{ok:true});});
-  const intervalMs=Math.max(1000,Number(process.env.MARKET_TICK_MS||2500));
+  const intervalMs=Math.max(1000,Number(process.env.MARKET_TICK_MS||1000));
   const liveMarketRefreshMs=30_000;
   let running=false;
   let liveMarketRunning=false;
@@ -83,7 +83,8 @@ async function startServer(){
     running=true;
     let nextDelay=intervalMs;
     try{
-      await tickMarkets();
+      const updates=await tickMarkets();
+      if(updates.length)io.emit('market:update',updates.map(update=>({...update,changePercent:update.change*100})));
       consecutiveFailures=0;
       try{
         const maturedInvestmentsSettled=await settleMaturedSimulatedInvestments();

@@ -97,7 +97,7 @@ export default function HomeMarketPreview(){
       </div>
     </div>
     <div className="market-stage-chart">
-      {current?<PriceChart price={current.price} instrumentId={current.id}/>:<div className="market-chart-empty" role="status">{status==='error'?translate('marketDataUnavailableRightNow'):translate('loading')}</div>}
+      {current?<PriceChart price={current.price} assetId={current.id} running={marketDataStatus==='INTERNAL'}/>:<div className="market-chart-empty" role="status">{status==='error'?translate('marketDataUnavailableRightNow'):translate('loading')}</div>}
       <div className="chart-axis-labels"><span>{translate('demoPriceLabel')}</span><span>{translate('marketFeedLabel')}</span></div>
     </div>
     <div className="market-stage-footer">

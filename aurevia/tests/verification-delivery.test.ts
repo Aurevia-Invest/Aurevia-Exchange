@@ -10,7 +10,7 @@ describe('registration verification email link',()=>{
 		vi.restoreAllMocks();
 	});
 
-	it('keeps the session token in the email URL fragment for cross-device restoration',async()=>{
+	it('keeps the session token in the email fragment without exposing the address in the URL',async()=>{
 		vi.stubEnv('RESEND_API_KEY','test-resend-key');
 		vi.stubEnv('VERIFICATION_EMAIL_FROM','noreply@example.invalid');
 		vi.stubEnv('NEXT_PUBLIC_APP_URL','https://aurevia.test');
@@ -26,7 +26,8 @@ describe('registration verification email link',()=>{
 
 		const message=JSON.parse(fetchMock.mock.calls[0][1].body as string) as {text:string};
 		expect(message.text).toContain(`#registrationToken=${registrationToken}`);
-		expect(message.text).toContain('email=person%40example.invalid');
+		expect(message.text).not.toContain('person%40example.invalid');
+		expect(message.text).not.toContain('?email=');
 	});
 
 	it('reports provider rejection status and a safe code without retaining response text',async()=>{

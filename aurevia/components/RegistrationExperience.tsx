@@ -406,9 +406,13 @@ export default function RegistrationExperience(){
 				setError(`The registration service returned an incomplete response. Please retry.${requestId?` Reference: ${requestId}`:''}`);
 				return;
 			}
-			const verificationParams=new URLSearchParams({email:result.email||details.email});
+			if(typeof result.requestId==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.requestId)){
+				window.sessionStorage.setItem('aurevia-registration-request-id',JSON.stringify({requestId:result.requestId}));
+			}
+			window.sessionStorage.setItem('aurevia-verification-email',result.email||details.email);
+			const verificationParams=new URLSearchParams();
 			if(result.existingVerification)verificationParams.set('existing','1');
-			router.replace(`/verify-email?${verificationParams.toString()}`);
+			router.replace(`/verify-email${verificationParams.size?`?${verificationParams.toString()}`:''}`);
 			router.refresh();
 		}catch(exception){
 			const referenceId=requestId||createRegistrationRequestId();

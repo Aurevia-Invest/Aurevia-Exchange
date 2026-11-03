@@ -68,7 +68,8 @@ describe('account verification codes',()=>{
   const payload=JSON.parse(fetchMock.mock.calls[0][1].body);
   expect(payload).toMatchObject({from:'verify@example.invalid',to:['person@example.invalid'],subject:'Verify your Aurevia Exchange account'});
   expect(payload.text).toContain('code is 123456');
-  expect(payload.text).toContain('https://aureviaexchanged.dpdns.org/verify-email?email=person%40example.invalid');
+  expect(payload.text).toContain('https://aureviaexchanged.dpdns.org/verify-email');
+  expect(payload.text).not.toContain('email=person%40example.invalid');
  });
 
  it('uses Termii send-token and verify-token APIs for phone verification',async()=>{

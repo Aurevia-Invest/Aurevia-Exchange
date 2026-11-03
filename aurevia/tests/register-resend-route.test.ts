@@ -97,12 +97,13 @@ function request(){
 	});
 }
 
-function registrationRequest(){
+function registrationRequest(registrationRequestId?:string){
 	return new Request('https://aurevia.test/api/register/resend',{
 		method:'POST',
 		headers:{
 			'content-type':'application/json',
 			'x-forwarded-for':'192.0.2.3',
+			...(registrationRequestId?{'x-aurevia-registration-request-id':registrationRequestId}:{}),
 			cookie:`aurevia_registration=${'a'.repeat(43)}`,
 		},
 		body:JSON.stringify({email:'new-registration@example.invalid'}),
@@ -397,6 +398,7 @@ describe('registration verification resend',()=>{
 	});
 
 	it('logs correlated provider diagnostics without returning provider details to the browser',async()=>{
+		const registrationRequestId='1ad1bb6f-a115-4124-a539-05d0f86ce570';
 		mocks.akedlyConfigured.mockReturnValue(true);
 		mocks.startAkedlyRegistration.mockRejectedValue(new mocks.AkedlyProviderError(
 			401,
@@ -419,7 +421,7 @@ describe('registration verification resend',()=>{
 		});
 		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
 
-		const response=await POST(registrationRequest());
+		const response=await POST(registrationRequest(registrationRequestId));
 		const result=await response.json();
 
 		expect(response.status).toBe(503);
@@ -432,6 +434,7 @@ describe('registration verification resend',()=>{
 			expect.objectContaining({
 				requestId:result.referenceId,
 				referenceId:result.referenceId,
+				registrationRequestId,
 				endpoint:'/api/register/resend',
 				failureCode:'AKEDLY_ATTEMPT_REJECTED',
 				providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',

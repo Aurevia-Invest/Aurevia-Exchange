@@ -31,6 +31,7 @@ function registrationResponse(
 	token:string,
 	expiresAt:Date,
 	status:200|201,
+	requestId:string,
 	authMethod?:'akedly'|'email-code',
 ){
 	const response=NextResponse.json({
@@ -40,6 +41,7 @@ function registrationResponse(
 				?'Continue the existing email verification to create your account.'
 				:'Continue verification to create your account.',
 		verificationRequired:true,
+		requestId,
 		...(authMethod?{authMethod}:{}),
 		email,
 	},{status,headers:{'Cache-Control':'no-store'}});
@@ -47,7 +49,7 @@ function registrationResponse(
 	return response;
 }
 
-async function resumePendingAttempt(attempt:PendingRegistrationAttempt,password:string,request:Request){
+async function resumePendingAttempt(attempt:PendingRegistrationAttempt,password:string,request:Request,requestId:string){
 	const currentToken=registrationTokenFromRequest(request);
 	const ownsSession=currentToken!==null&&hashRegistrationToken(currentToken)===attempt.tokenHash;
 	if(!ownsSession&&!await bcrypt.compare(password,attempt.passwordHash)){
@@ -77,7 +79,7 @@ async function resumePendingAttempt(attempt:PendingRegistrationAttempt,password:
 	}
 	const authMethod=attempt.verification?.providerReference?.startsWith('AKEDLY:')?'akedly'
 	:attempt.verification?.channel==='EMAIL'?'email-code':undefined;
-	return registrationResponse(attempt.email,token,attempt.expiresAt,200,authMethod);
+	return registrationResponse(attempt.email,token,attempt.expiresAt,200,requestId,authMethod);
 }
 
 export async function POST(request:Request){
@@ -139,6 +141,7 @@ export async function POST(request:Request){
 					message:'An existing unverified account was found. Continue its current verification; your original password remains unchanged.',
 					verificationRequired:true,
 					existingVerification:true,
+					requestId,
 					email,
 				},{status:200,headers:{'Cache-Control':'no-store'}});
 			}
@@ -165,7 +168,7 @@ export async function POST(request:Request){
 		if(existingAttempt&&existingAttempt.expiresAt<=now){
 			await db.registrationAttempt.deleteMany({where:{id:existingAttempt.id,expiresAt:{lte:now}}});
 		}else if(existingAttempt){
-			return await resumePendingAttempt(existingAttempt,input.password,request);
+			return await resumePendingAttempt(existingAttempt,input.password,request,requestId);
 		}
 
 		const akedly=akedlyReadiness();
@@ -223,11 +226,11 @@ export async function POST(request:Request){
 		}catch(error){
 			if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'){
 				const racedAttempt=await db.registrationAttempt.findUnique({where:{email},include:{verification:true}});
-				if(racedAttempt&&racedAttempt.expiresAt>new Date())return await resumePendingAttempt(racedAttempt,input.password,request);
+				if(racedAttempt&&racedAttempt.expiresAt>new Date())return await resumePendingAttempt(racedAttempt,input.password,request,requestId);
 			}
 			throw error;
 		}
-		return registrationResponse(email,token,expiresAt,201);
+		return registrationResponse(email,token,expiresAt,201,requestId);
 	}catch(error){
 		if(error instanceof ZodError){
 			if(error.issues.some(issue=>issue.path[0]==='dateOfBirth'))return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});

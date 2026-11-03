@@ -962,15 +962,14 @@ test('registration page refresh and Turnstile retries do not submit and render t
 	expect(registrationSubmissions).toBe(1);
 });
 
-test('mobile verification accepts an existing email code when resend is rate-limited',async({page})=>{
+test('mobile verification keeps an active email code available during its resend cooldown',async({page})=>{
 	const email='pending-registration@example.invalid';
 	let verificationPayload:Record<string,unknown>|undefined;
 	await page.setViewportSize({width:320,height:800});
 	await page.route('**/api/register/resend',route=>route.fulfill({
-		status:429,
+		status:200,
 		contentType:'application/json',
-		headers:{'Retry-After':'3480'},
-		body:JSON.stringify({error:'Please wait before requesting another verification code.',retryAfterSeconds:3480}),
+		body:JSON.stringify({method:'email-code',message:'A verification code was already requested. Check your email.',resendAfterSeconds:3480}),
 	}));
 	await page.route('**/api/register/verify',async route=>{
 		verificationPayload=route.request().postDataJSON() as Record<string,unknown>;
@@ -978,13 +977,14 @@ test('mobile verification accepts an existing email code when resend is rate-lim
 	});
 
 	await page.goto(`/verify-email?email=${encodeURIComponent(email)}`);
-	await expect(page.getByRole('textbox',{name:'Email address'})).toHaveValue(email);
-	await expect(page.getByText(email,{exact:true})).toBeVisible();
-	await expect(page.locator('.auth-error')).toContainText('58 minute(s)');
-	await expect(page.getByLabel('Six-digit email verification code')).toBeVisible();
+	await expect(page.getByRole('heading',{name:'Verify your email'})).toBeVisible();
+	await expect(page.locator('.phone-verification-card')).not.toContainText(email);
+	await expect(page.locator('[role="status"]')).toContainText('A verification code was already requested.');
+	await expect(page.getByRole('button',{name:'Resend code in 3480s'})).toBeDisabled();
+	await expect(page.getByLabel('Six-digit verification code')).toBeVisible();
 	await expectNoHorizontalOverflow(page);
-	await page.getByLabel('Six-digit email verification code').fill('123456');
-	await page.getByRole('button',{name:'Verify email address'}).click();
+	await page.getByLabel('Six-digit verification code').fill('123456');
+	await page.getByRole('button',{name:'Verify email code'}).click();
 	await page.waitForURL('/login?verified=1');
 	expect(verificationPayload).toEqual({email,code:'123456'});
 });
@@ -1041,6 +1041,57 @@ test('mobile registration verification offers a top-level Akedly widget fallback
 	await expect(fallbackLink).toHaveAttribute('target','_blank');
 	await expect(page.getByTitle('Akedly secure phone verification')).toBeVisible();
 	await expectNoHorizontalOverflow(page);
+});
+
+test('phone verification masks the phone, hides email, and stays compact across viewport sizes',async({page})=>{
+	const email='masked-phone-registration@example.invalid';
+	const registrationRequestId='1ad1bb6f-a115-4124-a539-05d0f86ce570';
+	const iframeUrl='https://auth.akedly.io/auth?attemptId=attempt_2345678901';
+	let resendHeaders:Record<string,string>|undefined;
+	await page.addInitScript(({storedEmail,requestId})=>{
+		window.sessionStorage.setItem('aurevia-registration-request-id',JSON.stringify({email:storedEmail,requestId}));
+	},{storedEmail:email,requestId:registrationRequestId});
+	await page.route('**/api/register/session*',route=>route.fulfill({
+		status:200,
+		contentType:'application/json',
+		body:JSON.stringify({email,phone:'+2348031237250'}),
+	}));
+	await page.route('**/api/register/resend',async route=>{
+		resendHeaders=route.request().headers();
+		await route.fulfill({
+			status:200,
+			contentType:'application/json',
+			body:JSON.stringify({
+				method:'akedly',
+				channel:'SMS',
+				attemptId:'attempt_2345678901',
+				iframeUrl,
+				expiresAt:new Date(Date.now()+4*60_000).toISOString(),
+				resendAfterSeconds:45,
+			}),
+		});
+	});
+	await page.route('**/api/register/status',route=>route.fulfill({
+		status:200,
+		contentType:'application/json',
+		body:JSON.stringify({verified:false,expired:false}),
+	}));
+	await page.route('https://auth.akedly.io/**',route=>route.fulfill({
+		status:200,
+		contentType:'text/html',
+		body:'<html><body>Mock secure verification</body></html>',
+	}));
+
+	await page.goto(`/verify-email?email=${encodeURIComponent(email)}`);
+	await expect(page.getByRole('heading',{name:'Verify your phone number'})).toBeVisible();
+	await expect(page.locator('.phone-verification-number')).toHaveText('+234 ••• ••• 7250');
+	await expect(page.locator('.phone-verification-card')).not.toContainText(email);
+	await expect(page.getByRole('button',{name:'Resend code in 45s'})).toBeDisabled();
+	expect(resendHeaders?.['x-aurevia-registration-request-id']).toBe(registrationRequestId);
+	for(const width of [320,375,390,430,1280]){
+		await page.setViewportSize({width,height:900});
+		await expectNoHorizontalOverflow(page);
+	}
 });
 
 test('new registration fails closed without configured phone verification',async({page})=>{
@@ -1126,7 +1177,7 @@ test.skip('legacy email-code registration fallback is not used for new signups',
 	const responseBody=await response.json();
 	expect(response.status(),JSON.stringify(responseBody)).toBe(201);
 	expect(responseBody).toMatchObject({verificationRequired:true,authMethod:'email-code'});
-	await expect(page).toHaveURL(url=>url.pathname==='/verify-email'&&url.searchParams.get('email')===email);
+	await expect(page).toHaveURL(url=>url.pathname==='/verify-email'&&!url.searchParams.has('email'));
 	expect(await db.user.findUnique({where:{email}})).toBeNull();
 	await expect.poll(async()=>{
 		const attempt=await db.registrationAttempt.findUnique({where:{email},select:{verification:{select:{channel:true}}}});
@@ -1143,10 +1194,10 @@ test.skip('legacy email-code registration fallback is not used for new signups',
 	await page.getByRole('button',{name:'Sign in'}).click();
 	await expect(page.getByRole('alert')).toBeVisible();
 	await page.goto(`${appOrigin}/verify-email?email=${encodeURIComponent(email)}`);
-	await expect(page.getByLabel('Six-digit email verification code')).toBeVisible();
-	await page.getByLabel('Six-digit email verification code').fill(code);
+	await expect(page.getByLabel('Six-digit verification code')).toBeVisible();
+	await page.getByLabel('Six-digit verification code').fill(code);
 	const verificationResponse=page.waitForResponse(response=>response.url().endsWith('/api/register/verify')&&response.request().method()==='POST');
-	await page.getByRole('button',{name:'Verify email address'}).click();
+	await page.getByRole('button',{name:'Verify email code'}).click();
 	const verifiedResponse=await verificationResponse;
 	const verificationBody=await verifiedResponse.json();
 	expect(verifiedResponse.status(),JSON.stringify(verificationBody)).toBe(200);

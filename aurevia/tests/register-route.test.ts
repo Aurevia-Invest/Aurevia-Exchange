@@ -10,6 +10,7 @@ const mocks=vi.hoisted(()=>({
 	attemptDeleteMany:vi.fn(),
 	attemptUpdateMany:vi.fn(),
 	verificationDeleteMany:vi.fn(),
+	cleanupExpiredRegistrationAttempts:vi.fn(),
 	akedlyConfigured:vi.fn(),
 	akedlyReadiness:vi.fn(),
 	verifyTurnstile:vi.fn(),
@@ -35,6 +36,9 @@ vi.mock('@/lib/db',()=>({db:{
 	registrationVerification:{deleteMany:mocks.verificationDeleteMany},
 }}));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
+vi.mock('@/lib/registration-cleanup',()=>({
+	cleanupExpiredRegistrationAttempts:mocks.cleanupExpiredRegistrationAttempts,
+}));
 vi.mock('@/lib/akedly',()=>({
 	akedlyIsConfigured:mocks.akedlyConfigured,
 	akedlyReadiness:mocks.akedlyReadiness,
@@ -81,6 +85,7 @@ describe('registration privacy boundary',()=>{
 		mocks.attemptDeleteMany.mockResolvedValue({count:1});
 		mocks.attemptUpdateMany.mockResolvedValue({count:1});
 		mocks.verificationDeleteMany.mockResolvedValue({count:1});
+		mocks.cleanupExpiredRegistrationAttempts.mockResolvedValue({count:0});
 	});
 
 	afterEach(()=>vi.unstubAllEnvs());
@@ -90,7 +95,7 @@ describe('registration privacy boundary',()=>{
 		const body=await response.json();
 
 		expect(response.status).toBe(201);
-		expect(body).toMatchObject({verificationRequired:true,email:payload.email});
+		expect(body).toMatchObject({verificationRequired:true,email:payload.email,requestId:expect.stringMatching(/^[0-9a-f-]{36}$/i)});
 		expect(JSON.stringify(body)).not.toContain(payload.password);
 		expect(mocks.attemptCreate).toHaveBeenCalledWith(expect.objectContaining({
 			data:expect.objectContaining({

@@ -1,8 +1,8 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
-const mocks=vi.hoisted(()=>({deleteMany:vi.fn()}));
+const mocks=vi.hoisted(()=>({cleanup:vi.fn()}));
 
-vi.mock('@/lib/db',()=>({db:{registrationAttempt:{deleteMany:mocks.deleteMany}}}));
+vi.mock('@/lib/registration-cleanup',()=>({cleanupExpiredRegistrationAttempts:mocks.cleanup}));
 
 import {GET} from '@/app/api/cron/registration-cleanup/route';
 
@@ -10,7 +10,7 @@ describe('registration cleanup cron',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
 		vi.stubEnv('CRON_SECRET','cron-secret');
-		mocks.deleteMany.mockResolvedValue({count:3});
+		mocks.cleanup.mockResolvedValue({count:3});
 	});
 
 	afterEach(()=>vi.unstubAllEnvs());
@@ -22,16 +22,11 @@ describe('registration cleanup cron',()=>{
 
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({ok:true,deletedAttempts:3});
-		expect(mocks.deleteMany).toHaveBeenCalledWith({
-			where:{OR:[
-				{expiresAt:{lte:expect.any(Date)}},
-				{verification:{is:{expiresAt:{lte:expect.any(Date)}}}},
-			]},
-		});
+		expect(mocks.cleanup).toHaveBeenCalledOnce();
 	});
 
 	it('is idempotent and refuses requests without the cron secret',async()=>{
-		mocks.deleteMany.mockResolvedValue({count:0});
+		mocks.cleanup.mockResolvedValue({count:0});
 		const denied=await GET(new Request('https://aurevia.test/api/cron/registration-cleanup'));
 		const first=await GET(new Request('https://aurevia.test/api/cron/registration-cleanup',{
 			headers:{authorization:'Bearer cron-secret'},
@@ -43,12 +38,12 @@ describe('registration cleanup cron',()=>{
 		expect(denied.status).toBe(401);
 		expect(first.status).toBe(200);
 		expect(second.status).toBe(200);
-		expect(mocks.deleteMany).toHaveBeenCalledTimes(2);
+		expect(mocks.cleanup).toHaveBeenCalledTimes(2);
 	});
 
 	it('reports cleaner failures so the scheduled job can retry',async()=>{
 		const errorSpy=vi.spyOn(console,'error').mockImplementation(()=>{});
-		mocks.deleteMany.mockRejectedValue(new Error('database unavailable'));
+		mocks.cleanup.mockRejectedValue(new Error('database unavailable'));
 		const response=await GET(new Request('https://aurevia.test/api/cron/registration-cleanup',{
 			headers:{authorization:`Bearer ${process.env.CRON_SECRET}`},
 		}));

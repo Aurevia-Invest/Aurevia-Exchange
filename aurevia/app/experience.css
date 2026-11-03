@@ -5141,6 +5141,30 @@ html[data-theme="light"] :is(.floating-support-header b,.floating-support-messag
 }
 html[data-theme="light"] ::selection{background:rgba(156,121,69,.22);color:#0f3054}
 
+.phone-verification-scene{min-height:calc(100dvh - 74px);padding:clamp(16px,4vh,32px) 14px;background:radial-gradient(ellipse at 50% 22%,rgba(31,72,51,.34),transparent 48%),linear-gradient(145deg,#07120e,#0b1b14 52%,#07110c)}
+.phone-verification-card.auth-card{width:min(100%,440px);padding:20px clamp(18px,4vw,27px);border-color:rgba(197,164,107,.26);background:linear-gradient(145deg,rgba(18,33,25,.98),rgba(7,16,11,.99));box-shadow:0 24px 70px rgba(0,0,0,.4),inset 0 1px rgba(255,255,255,.05)}
+.phone-verification-brand{display:flex;align-items:center;gap:9px;margin-bottom:12px;color:#dce2dc;font-size:9px;font-weight:700;letter-spacing:.18em}
+.phone-verification-brand img{width:30px;height:30px;object-fit:contain;filter:drop-shadow(0 3px 8px rgba(197,164,107,.16))}
+.phone-verification-card .auth-heading{font-size:clamp(25px,6vw,32px);line-height:1.12}
+.phone-verification-number{width:fit-content;margin:14px 0 0;padding:9px 12px;border:1px solid rgba(197,164,107,.22);border-radius:5px;background:rgba(197,164,107,.06);color:#f0dfb9;font-size:16px;font-variant-numeric:tabular-nums;letter-spacing:.08em}
+.phone-verification-widget{margin-top:14px;overflow:hidden;border:1px solid rgba(220,230,221,.12);border-radius:6px;background:rgba(0,0,0,.2)}
+.phone-verification-widget iframe{display:block;width:100%;height:min(68dvh,620px);min-height:420px;border:0}
+.phone-verification-fallback{margin:0;padding:9px 12px;border-top:1px solid rgba(220,230,221,.08);color:#a4b1a8;font-size:11px;line-height:1.5}
+.phone-verification-code{display:grid;gap:12px;margin-top:14px}
+.phone-verification-card .auth-submit{min-height:44px;font-size:12px}
+.phone-verification-resend{margin-top:14px}
+.phone-verification-footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;margin-top:14px;color:#a4b1a8;font-size:11px}
+.phone-verification-card a{overflow-wrap:anywhere}
+html[data-theme="light"] .phone-verification-card.auth-card{border-color:rgba(197,164,107,.26);background:linear-gradient(145deg,rgba(18,33,25,.98),rgba(7,16,11,.99))}
+html[data-theme="light"] .phone-verification-card .auth-heading,html[data-theme="light"] .phone-verification-card p,html[data-theme="light"] .phone-verification-card label{color:inherit}
+
+@media(max-width:600px){
+	.phone-verification-scene{min-height:calc(100dvh - 64px);padding:16px 12px 24px}
+	.phone-verification-card.auth-card{padding:18px 16px}
+	.phone-verification-widget iframe{height:min(66dvh,560px);min-height:400px}
+	.phone-verification-footer{justify-content:center}
+}
+
 .cinematic-intro{
 	display:block;
 	overflow:hidden;

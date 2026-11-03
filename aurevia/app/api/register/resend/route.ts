@@ -51,11 +51,12 @@ function deliveryStatusUnknownResponse(resendAfter:Date){
 	},{status:503,headers:{'Retry-After':String(retryAfterSeconds),'Cache-Control':'no-store'}});
 }
 
-function akedlyFailureDiagnostic(error:unknown,requestId:string){
+function akedlyFailureDiagnostic(error:unknown,requestId:string,registrationRequestId?:string){
 	const category=error instanceof Error?error.message:'unknown';
 	return {
 		requestId,
 		referenceId:requestId,
+		...(registrationRequestId?{registrationRequestId}:{}),
 		endpoint:'/api/register/resend',
 		failureCode:category,
 		category,
@@ -132,6 +133,10 @@ function phoneInitiationFailureResponse(error:unknown,requestId:string){
 
 export async function POST(request:Request){
 	const requestId=randomUUID();
+	const clientRegistrationRequestId=request.headers.get('x-aurevia-registration-request-id')||'';
+	const registrationRequestId=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientRegistrationRequestId)
+		?clientRegistrationRequestId.toLowerCase()
+		:undefined;
 	try{
 		const {email:rawEmail}=schema.parse(await request.json());
 		const email=rawEmail.toLowerCase();
@@ -176,6 +181,7 @@ export async function POST(request:Request){
 				const diagnostic={
 					requestId,
 					referenceId:requestId,
+					...(registrationRequestId?{registrationRequestId}:{}),
 					endpoint:'/api/register/resend',
 					failureCode:'AKEDLY_NOT_READY',
 					providerCode:'AKEDLY_NOT_READY',
@@ -214,8 +220,9 @@ export async function POST(request:Request){
 						method:'akedly',
 						channel:registrationChannel,
 						message:registrationChannel===VerificationChannel.SMS
-							?'Complete the secure phone verification widget.'
+							?'Complete the security check in the secure widget to request your phone code.'
 							:'Complete the secure email verification widget.',
+						resendAfterSeconds:verificationConfig.resendCooldownSeconds,
 						...attempt,
 					},{status:200,headers:{'Cache-Control':'no-store'}});
 				}catch(error){
@@ -231,19 +238,19 @@ export async function POST(request:Request){
 					if(!providerFailure)throw error;
 					if(registrationChannel===VerificationChannel.SMS){
 						console.warn('[registration-verification] Akedly phone initiation failed; legacy email delivery is not used for new registrations.',{
-							...akedlyFailureDiagnostic(error,requestId),
+							...akedlyFailureDiagnostic(error,requestId,registrationRequestId),
 						});
 						return phoneInitiationFailureResponse(error,requestId);
 					}
 					if(!hasConfiguredVerificationProvider(VerificationChannel.EMAIL)){
 						console.warn('[registration-verification] Akedly initiation failed and no email fallback is configured.',{
-							...akedlyFailureDiagnostic(error,requestId),
+							...akedlyFailureDiagnostic(error,requestId,registrationRequestId),
 						});
 						return NextResponse.json({error:'Email verification could not be initiated. Your registration is saved; please retry later.'},{status:503,headers:{'Cache-Control':'no-store'}});
 					}
 					akedlyFallback=true;
 					console.warn('[registration-verification] Akedly initiation failed; using the configured email fallback.',{
-						...akedlyFailureDiagnostic(error,requestId),
+						...akedlyFailureDiagnostic(error,requestId,registrationRequestId),
 					});
 				}
 			}

@@ -21,12 +21,13 @@ vi.mock('@/lib/db',()=>({db:{
 }}));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
 
-import {POST} from '@/app/api/register/session/route';
+import {GET,POST} from '@/app/api/register/session/route';
 
 const registrationToken='b'.repeat(43);
 const attempt={
 	id:'registration-1',
 	email:'person@example.invalid',
+	phone:'+447400123456',
 	expiresAt:new Date(Date.now()+60_000),
 	verification:{expiresAt:new Date(Date.now()+60_000)},
 };
@@ -35,7 +36,7 @@ function request(){
 	return new Request('https://aurevia.test/api/register/session',{
 		method:'POST',
 		headers:{'content-type':'application/json','x-forwarded-for':'192.0.2.9'},
-		body:JSON.stringify({email:attempt.email,registrationToken}),
+		body:JSON.stringify({registrationToken}),
 	});
 }
 
@@ -54,7 +55,7 @@ describe('registration session restore',()=>{
 		const body=await response.json();
 
 		expect(response.status).toBe(200);
-		expect(body).toEqual({restored:true});
+		expect(body).toEqual({restored:true,email:attempt.email,phone:attempt.phone});
 		expect(JSON.stringify(body)).not.toContain(registrationToken);
 		expect(mocks.findUnique).toHaveBeenCalledWith({
 			where:{tokenHash:createHash('sha256').update(registrationToken).digest('hex')},
@@ -62,6 +63,19 @@ describe('registration session restore',()=>{
 		});
 		expect(response.headers.get('set-cookie')).toContain('HttpOnly');
 		expect(response.headers.get('set-cookie')).toContain('SameSite=lax');
+	});
+
+	it('restores session details from the HttpOnly cookie without an email query parameter',async()=>{
+		const response=await GET(new Request('https://aurevia.test/api/register/session',{
+			headers:{cookie:`aurevia_registration=${registrationToken}`},
+		}));
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({restored:true,email:attempt.email,phone:attempt.phone});
+		expect(mocks.findUnique).toHaveBeenCalledWith({
+			where:{tokenHash:createHash('sha256').update(registrationToken).digest('hex')},
+			select:{email:true,phone:true,expiresAt:true},
+		});
 	});
 
 	it('invalidates and clears expired sessions',async()=>{
@@ -78,7 +92,7 @@ describe('registration session restore',()=>{
 		const response=await POST(request());
 
 		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({restored:true});
+		expect(await response.json()).toEqual({restored:true,email:attempt.email,phone:attempt.phone});
 		expect(mocks.deleteMany).not.toHaveBeenCalled();
 		expect(mocks.verificationDeleteMany).toHaveBeenCalledWith({
 			where:{registrationAttemptId:attempt.id,expiresAt:{lte:expect.any(Date)}},

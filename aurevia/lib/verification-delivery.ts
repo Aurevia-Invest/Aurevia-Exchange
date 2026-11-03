@@ -98,7 +98,6 @@ export async function deliverVerificationCode(channel:VerificationChannel,contac
 	let html:string;
 	try{
 		const verificationUrl=new URL('/verify-email',config.appUrl);
-		verificationUrl.searchParams.set('email',contact.email);
 		if(options.registrationToken){
 			if(!/^[A-Za-z0-9_-]{40,60}$/.test(options.registrationToken)){
 				options.onFailure?.({provider:'none',reason:'invalid-registration-token'});

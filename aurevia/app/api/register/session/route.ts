@@ -7,8 +7,6 @@ import {clearRegistrationCookie,hashRegistrationToken,registrationTokenFromReque
 
 export async function GET(request:Request){
 	try{
-		const email=new URL(request.url).searchParams.get('email')?.trim().toLowerCase();
-		if(!email||email.length>254)return NextResponse.json({error:'Registration session not found.'},{status:404});
 		const token=registrationTokenFromRequest(request);
 		if(!token)return NextResponse.json({error:'Registration session not found.'},{status:404});
 		const ip=trustedProxyClientIp(request);
@@ -18,7 +16,7 @@ export async function GET(request:Request){
 			where:{tokenHash:hashRegistrationToken(token)},
 			select:{email:true,phone:true,expiresAt:true},
 		});
-		if(!attempt||attempt.email!==email)return NextResponse.json({error:'Registration session not found.'},{status:404});
+		if(!attempt)return NextResponse.json({error:'Registration session not found.'},{status:404});
 		if(attempt.expiresAt<=new Date()){
 			await db.registrationAttempt.deleteMany({where:{tokenHash:hashRegistrationToken(token),expiresAt:{lte:new Date()}}});
 			const response=NextResponse.json({error:'This registration session is invalid or expired.'},{status:410,headers:{'Cache-Control':'no-store'}});
@@ -38,21 +36,19 @@ export async function GET(request:Request){
 }
 
 const schema=z.object({
-	email:z.string().trim().email().max(254),
 	registrationToken:z.string().regex(/^[A-Za-z0-9_-]{40,60}$/),
 });
 
 export async function POST(request:Request){
 	try{
-		const {email:rawEmail,registrationToken}=schema.parse(await request.json());
-		const email=rawEmail.toLowerCase();
+		const {registrationToken}=schema.parse(await request.json());
 		const ip=trustedProxyClientIp(request);
 		if(ip)rateLimit(`registration-session-ip:${ip}`,10,60_000);
 		const attempt=await db.registrationAttempt.findUnique({
 			where:{tokenHash:hashRegistrationToken(registrationToken)},
 			include:{verification:true},
 		});
-		if(!attempt||attempt.email!==email)return NextResponse.json({error:'This registration session is invalid or expired.'},{status:404});
+		if(!attempt)return NextResponse.json({error:'This registration session is invalid or expired.'},{status:404});
 		const now=new Date();
 		if(attempt.expiresAt<=now){
 			await db.registrationAttempt.deleteMany({where:{id:attempt.id}});
@@ -65,7 +61,10 @@ export async function POST(request:Request){
 				where:{registrationAttemptId:attempt.id,expiresAt:{lte:now}},
 			});
 		}
-		const response=NextResponse.json({restored:true},{headers:{'Cache-Control':'no-store'}});
+		const response=NextResponse.json(
+			{restored:true,email:attempt.email,phone:attempt.phone},
+			{headers:{'Cache-Control':'no-store'}},
+		);
 		setRegistrationCookie(response,registrationToken,attempt.expiresAt);
 		return response;
 	}catch(error){

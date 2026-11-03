@@ -99,7 +99,8 @@ describe('shared outbound email delivery',()=>{
 		expect(message.html).toContain('AUREVIA EXCHANGE');
 		expect(message.html).toContain('letter-spacing:8px');
 		expect(message.html).toContain('123456');
-		expect(message.text).toContain('https://aurevia.test/verify-email?email=person%40example.invalid');
+		expect(message.text).toContain('https://aurevia.test/verify-email');
+		expect(message.text).not.toContain('email=person%40example.invalid');
 	});
 
 	it('escapes template content and refuses non-HTTPS action links',()=>{

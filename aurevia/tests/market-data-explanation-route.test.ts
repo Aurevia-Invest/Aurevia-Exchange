@@ -8,6 +8,7 @@ const mocks=vi.hoisted(()=>({
 	rateLimit:vi.fn(),
 	getMarketQuote:vi.fn(),
 	getMarketHistory:vi.fn(),
+	getReferenceMarketHistory:vi.fn(),
 }));
 
 vi.mock('@/lib/auth',()=>({requireUser:mocks.requireUser}));
@@ -23,6 +24,9 @@ vi.mock('@/lib/market-data-service',()=>({
 	getAlpacaMarketDataOptions:vi.fn(()=>undefined),
 	getMarketQuoteWithFallback:mocks.getMarketQuote,
 	getMarketHistoryWithFallback:mocks.getMarketHistory,
+}));
+vi.mock('@/lib/internal-market-data',()=>({
+	getReferenceMarketHistory:mocks.getReferenceMarketHistory,
 }));
 vi.mock('@/lib/live-market',()=>({
 	TIMEFRAMES:[{id:'1d',label:'1d'}],
@@ -44,6 +48,9 @@ beforeEach(()=>{
 	});
 	mocks.getMarketHistory.mockResolvedValue({
 		source:'Aurevia Internal',quote:{source:'Aurevia Internal',isStale:false},
+	});
+	mocks.getReferenceMarketHistory.mockReturnValue({
+		source:'Aurevia Internal',quote:{source:'Aurevia Internal',isStale:false},candles:[],
 	});
 	mocks.runAiService.mockResolvedValue({
 		content:JSON.stringify({explanation:'Only internal reference data is currently available.',recommendedAction:'configure_market_provider',caveat:'This explanation does not provide live market data or investment advice.'}),
@@ -72,17 +79,21 @@ describe('market data availability AI explanation',()=>{
 		})});
 	});
 
-	it('explains unavailable chart history without inventing a source',async()=>{
+	it('uses database-independent reference history if the market service throws',async()=>{
 		mocks.getMarketHistory.mockRejectedValue(new Error('private upstream details'));
 
 		const response=await POST(request({symbol:'AAPL',dataType:'history',timeframe:'1d'}));
 		const body=await response.json();
 
 		expect(response.status).toBe(200);
-		expect(body.status).toBe('unavailable');
+		expect(body).toMatchObject({status:'internal_reference',provider:null});
+		expect(mocks.getReferenceMarketHistory).toHaveBeenCalledWith(
+			expect.objectContaining({id:'AAPL'}),
+			'1d',
+		);
 		const messages=mocks.runAiService.mock.calls[0][1] as Array<{role:string;content:string}>;
 		expect(JSON.parse(messages.find(message=>message.role==='user')?.content||'{}')).toMatchObject({
-			symbol:'AAPL',dataType:'history',timeframe:'1d',status:'unavailable',provider:null,
+			symbol:'AAPL',dataType:'history',timeframe:'1d',status:'internal_reference',provider:null,
 		});
 		expect(messages.map(message=>message.content).join(' ')).not.toContain('private upstream details');
 	});

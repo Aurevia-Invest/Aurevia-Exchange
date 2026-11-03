@@ -7,6 +7,7 @@ import {AiGatewayError} from '@/lib/ai-gateway';
 import {rateLimit} from '@/lib/rate-limit';
 import {getServerConfiguration} from '@/lib/config/env';
 import {getAlpacaMarketDataOptions,getMarketHistoryWithFallback,getMarketQuoteWithFallback} from '@/lib/market-data-service';
+import {getReferenceMarketHistory} from '@/lib/internal-market-data';
 import {getMarketAsset,isExternalMarketDataSource,type TimeframeId,TIMEFRAMES} from '@/lib/live-market';
 
 const requestSchema=z.object({
@@ -56,7 +57,24 @@ export async function POST(request:Request){
 				providerFacts.source=external?history.source:null;
 			}
 		}catch(error){
-			console.warn(`Market availability check failed (${symbol}, ${input.dataType}, ${error instanceof Error?error.name:'UnknownError'}).`);
+			if(input.dataType==='history'){
+				try{
+					getReferenceMarketHistory(asset,input.timeframe as TimeframeId);
+					providerFacts.status='internal_reference';
+					providerFacts.source=null;
+					console.warn('Market history availability lookup failed; database-independent reference data is available.',{
+						symbol,stage:'history-lookup',errorName:error instanceof Error?error.name:'UnknownError',
+					});
+				}catch(fallbackError){
+					console.error('Market history availability fallback failed.',{
+						symbol,stage:'reference-history',errorName:fallbackError instanceof Error?fallbackError.name:'UnknownError',
+					});
+				}
+			}else{
+				console.warn('Market quote availability lookup failed.',{
+					symbol,stage:'quote-lookup',errorName:error instanceof Error?error.name:'UnknownError',
+				});
+			}
 		}
 
 		const facts={

@@ -52,9 +52,18 @@ export async function POST(request:Request){
 				providerFacts.source=external?quote.source:null;
 			}else{
 				const history=await getMarketHistoryWithFallback(asset,input.timeframe as TimeframeId,configuration.marketData.finnhubApiKey,alpacaData);
-				const external=isExternalMarketDataSource(history.source);
-				providerFacts.status=external?(history.quote.isStale?'stale_provider':'current_provider'):'internal_reference';
-				providerFacts.source=external?history.source:null;
+				const source=typeof history.source==='string'?history.source:'';
+				const external=isExternalMarketDataSource(source);
+				if(external&&history.quote){
+					providerFacts.status=history.quote.isStale?'stale_provider':'current_provider';
+					providerFacts.source=source;
+				}else if(source==='Aurevia Internal'){
+					providerFacts.status='internal_reference';
+					providerFacts.source=null;
+				}else{
+					providerFacts.status='unavailable';
+					providerFacts.source=null;
+				}
 			}
 		}catch(error){
 			if(input.dataType==='history'){

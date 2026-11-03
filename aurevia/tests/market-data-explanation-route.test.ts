@@ -106,6 +106,22 @@ describe('market data availability AI explanation',()=>{
 		expect((await response.json()).status).toBe('current_provider');
 	});
 
+	it('does not throw when provider history has no quote for freshness checks',async()=>{
+		mocks.getMarketHistory.mockResolvedValue({
+			source:'Alpaca',
+			candles:[{time:1,open:10,high:11,low:9,close:10,volume:null}],
+		});
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+
+		const response=await POST(request({symbol:'AAPL',dataType:'history',timeframe:'1d'}));
+		const body=await response.json();
+
+		expect(response.status).toBe(200);
+		expect(body.status).toBe('unavailable');
+		expect(body.provider).toBeNull();
+		expect(warning).not.toHaveBeenCalled();
+	});
+
 	it('rejects unsupported symbols and timeframes before invoking AI',async()=>{
 		expect((await POST(request({symbol:'UNKNOWN',dataType:'quote'}))).status).toBe(400);
 		expect((await POST(request({symbol:'AAPL',dataType:'history',timeframe:'unsupported'}))).status).toBe(400);

@@ -9,7 +9,7 @@ import {rateLimit} from '@/lib/rate-limit';
 import {jsonSafe} from '@/lib/serializers';
 import {getRealWithdrawableBalance} from '@/lib/real-withdrawals';
 import {decryptWithdrawalDestination} from '@/lib/withdrawal-destinations';
-import {REQUIRED_REAL_WITHDRAWAL_RESERVE_USD} from '@/lib/withdrawal-fee';
+import {MAX_REAL_WITHDRAWAL_USD,MIN_REAL_WITHDRAWAL_USD,REQUIRED_REAL_WITHDRAWAL_RESERVE_USD} from '@/lib/withdrawal-fee';
 
 const schema=z.object({
 	id:z.string().min(1).max(64),
@@ -85,6 +85,8 @@ export async function POST(request:Request){
 					break;
 				case 'COMPLETE': {
 					if(current.status!==FundingStatus.PROCESSING)throw new Error('WITHDRAWAL_INVALID_TRANSITION');
+					if(current.amount.lt(MIN_REAL_WITHDRAWAL_USD))throw new Error('WITHDRAWAL_BELOW_MINIMUM');
+					if(current.amount.gt(MAX_REAL_WITHDRAWAL_USD))throw new Error('WITHDRAWAL_ABOVE_MAXIMUM');
 					if(details?.type==='CRYPTOCURRENCY'&&(!/^[0-9a-f]{64}$/i.test(input.processingReference||'')))throw new Error('CRYPTO_REFERENCE_REQUIRED');
 					const account=await ensureUserLedger(tx,current.userId,AccountMode.REAL,current.currency);
 					const ledgerBalance=await balance(tx,account.id);
@@ -137,10 +139,10 @@ export async function POST(request:Request){
 		if(error instanceof ZodError)return NextResponse.json({error:'Enter a valid withdrawal action. Completion requires the actual transfer reference and explicit confirmation.'},{status:400});
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
 		if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
-		const known=['WITHDRAWAL_NOT_FOUND','DEMO_WITHDRAWAL_DISABLED','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_SELF_REVIEW_FORBIDDEN','WITHDRAWAL_RESTRICTED','WITHDRAWAL_INVALID_TRANSITION','IDEMPOTENCY_KEY_REUSED','INSUFFICIENT_WITHDRAWABLE_FUNDS','CRYPTO_REFERENCE_REQUIRED','WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED','WITHDRAWAL_DESTINATION_DECRYPTION_FAILED'];
+		const known=['WITHDRAWAL_NOT_FOUND','DEMO_WITHDRAWAL_DISABLED','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_SELF_REVIEW_FORBIDDEN','WITHDRAWAL_RESTRICTED','WITHDRAWAL_INVALID_TRANSITION','IDEMPOTENCY_KEY_REUSED','INSUFFICIENT_WITHDRAWABLE_FUNDS','CRYPTO_REFERENCE_REQUIRED','WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED','WITHDRAWAL_DESTINATION_DECRYPTION_FAILED','WITHDRAWAL_BELOW_MINIMUM','WITHDRAWAL_ABOVE_MAXIMUM'];
 		if(error instanceof Error&&known.includes(error.message)){
 			const status=error.message==='WITHDRAWAL_SELF_REVIEW_FORBIDDEN'?403:error.message==='WITHDRAWAL_NOT_FOUND'?404:error.message==='WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED'||error.message==='WITHDRAWAL_DESTINATION_DECRYPTION_FAILED'?503:409;
-			const message=error.message==='WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED'?'Secure destination storage is not configured.':error.message==='INSUFFICIENT_WITHDRAWABLE_FUNDS'?`Completion cannot proceed while keeping at least $${REQUIRED_REAL_WITHDRAWAL_RESERVE_USD.toLocaleString('en-US')} available after reservations.`:error.message.replaceAll('_',' ').toLowerCase();
+			const message=error.message==='WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED'?'Secure destination storage is not configured.':error.message==='INSUFFICIENT_WITHDRAWABLE_FUNDS'?`Completion cannot proceed while keeping at least $${REQUIRED_REAL_WITHDRAWAL_RESERVE_USD.toLocaleString('en-US')} available after reservations.`:error.message==='WITHDRAWAL_BELOW_MINIMUM'?`Completion is not available because the request is below the $${MIN_REAL_WITHDRAWAL_USD.toLocaleString('en-US')} minimum.`:error.message==='WITHDRAWAL_ABOVE_MAXIMUM'?`Completion is not available because the request exceeds the $${MAX_REAL_WITHDRAWAL_USD.toLocaleString('en-US')} maximum.`:error.message.replaceAll('_',' ').toLowerCase();
 			return NextResponse.json({error:message},{status});
 		}
 		if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2034')return NextResponse.json({error:'The request changed during processing. Retry with the same idempotency key.'},{status:409});

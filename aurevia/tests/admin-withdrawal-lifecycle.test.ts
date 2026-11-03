@@ -128,6 +128,21 @@ describe('administrator withdrawal lifecycle',()=>{
 		expect(mocks.postWithdrawalDebitWithFee).toHaveBeenCalledTimes(1);
 	});
 
+	it('blocks legacy requests outside the configured payout range at completion',async()=>{
+		current.status=FundingStatus.PROCESSING;
+		current.amount=new Prisma.Decimal('29999.99');
+		const belowMinimum=await POST(request('COMPLETE',{processingReference:'bank-ref-123',confirmExternalProcessing:true}));
+		expect(belowMinimum.status).toBe(409);
+		expect((await belowMinimum.json()).error).toContain('$30,000');
+		expect(mocks.postWithdrawalDebitWithFee).not.toHaveBeenCalled();
+
+		current.amount=new Prisma.Decimal('300000.01');
+		const aboveMaximum=await POST(request('COMPLETE',{processingReference:'bank-ref-123',confirmExternalProcessing:true}));
+		expect(aboveMaximum.status).toBe(409);
+		expect((await aboveMaximum.json()).error).toContain('$300,000');
+		expect(mocks.postWithdrawalDebitWithFee).not.toHaveBeenCalled();
+	});
+
 	it('rejects invalid state transitions and crypto confirmations without a transaction hash',async()=>{
 		const processPending=await POST(request('PROCESS'));
 		expect(processPending.status).toBe(409);

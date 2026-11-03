@@ -3,14 +3,13 @@ import Link from 'next/link';
 import Image from 'next/image';
 import {useSession,signOut} from 'next-auth/react';
 import {usePathname,useRouter} from 'next/navigation';
-import {ArrowLeft,ArrowLeftRight,ArrowRight,Award,Bell,BookOpen,Bot,BriefcaseBusiness,ChartNoAxesCombined,CreditCard,FileText,HeartHandshake,History,House,LayoutDashboard,LineChart,LogOut,Mail,Menu,MoreHorizontal,Newspaper,PhoneCall,Radio,Search,Settings,ShieldCheck,Wallet,X} from 'lucide-react';
+import {ArrowLeft,ArrowLeftRight,ArrowRight,Award,Bell,BookOpen,Bot,BriefcaseBusiness,ChartNoAxesCombined,CreditCard,FileText,HeartHandshake,History,House,LayoutDashboard,LineChart,LogOut,Mail,Menu,MoreHorizontal,Newspaper,PhoneCall,Radio,Search,Settings,ShieldCheck,UserRound,Wallet,X} from 'lucide-react';
 import {useEffect,useRef,useState} from 'react';
 import NotificationBell from '@/components/NotificationBell';
 import LanguageSelector from '@/components/LanguageSelector';
 import ProfileAvatar from '@/components/ProfileAvatar';
 import AccountTierBadge from '@/components/AccountTierBadge';
 import {useAccountTier} from '@/components/useAccountTier';
-import ThemeToggle from '@/components/ThemeToggle';
 import {useLocale} from '@/lib/i18n-context';
 import {MARKET_ASSETS} from '@/lib/live-market';
 
@@ -45,6 +44,7 @@ const moreMenuGroups=[
   {href:'/activity',label:'Account activity',icon:History},
  ]},
  {title:'Account',links:[
+  {href:'/about-me',label:'About me · policies & themes',icon:UserRound},
   {href:'/kyc',label:'Identity verification / KYC',icon:ShieldCheck},
   {href:'/cards',label:'Digital cards',icon:CreditCard},
   {href:'/settings#preferences',label:'Account settings',icon:Settings},
@@ -92,6 +92,7 @@ export default function Nav(){
    {href:'/kyc',label:'Identity verification',group:'Account'},
    {href:'/cards',label:'Cards',group:'Account'},
    {href:'/tax-services',label:'Tax services',group:'Account'},
+  {href:'/about-me',label:'About me · policies & themes',group:'Profile & support'},
   {href:'/settings#profile',label:'Profile',group:'Profile & support'},
   {href:'/settings#security',label:'Settings',group:'Profile & support'},
   {href:'/support',label:'Help & support',group:'Profile & support'},
@@ -232,7 +233,7 @@ export default function Nav(){
     <button type="button" aria-pressed={data.user.accountMode==='DEMO'} disabled={modeBusy||loggingOut||data.user.accountMode==='DEMO'} onClick={()=>void changeMode('DEMO')}>Demo</button>
     <button type="button" aria-pressed={data.user.accountMode==='REAL'} disabled={modeBusy||loggingOut||data.user.accountMode==='REAL'} onClick={()=>void changeMode('REAL')}>Real</button>
    </div>
-   <div className="user-topbar-actions"><button type="button" className="user-account-back" onClick={goBack} aria-label="Go back to previous page" title="Go back to previous page"><ArrowLeft size={16} aria-hidden="true"/></button><NotificationBell/><ThemeToggle/><button ref={userMenuButtonRef} type="button" className={`user-account-back${open||moreMenuGroups.some(group=>group.links.some(item=>active(item.href)))?' is-active':''}`} aria-label="More account navigation" aria-expanded={open} aria-controls="user-more-menu" onClick={()=>setOpen(value=>!value)}><MoreHorizontal size={17} aria-hidden="true"/></button><LanguageSelector/></div>
+   <div className="user-topbar-actions"><button type="button" className="user-account-back" onClick={goBack} aria-label="Go back to previous page" title="Go back to previous page"><ArrowLeft size={16} aria-hidden="true"/></button><NotificationBell/><button ref={userMenuButtonRef} type="button" className={`user-account-back${open||moreMenuGroups.some(group=>group.links.some(item=>active(item.href)))?' is-active':''}`} aria-label="More account navigation" aria-expanded={open} aria-controls="user-more-menu" onClick={()=>setOpen(value=>!value)}><MoreHorizontal size={17} aria-hidden="true"/></button><LanguageSelector/></div>
    <span className="user-topbar-identity"><ProfileAvatar className="user-topbar-avatar" size={32} alt="Your profile picture"/><span><b>{data.user.name||data.user.email}</b><AccountTierBadge tier={tierLabel}/></span></span>
    {modeError&&<span className="user-mode-error" role="alert">{modeError}</span>}
   </div>
@@ -331,7 +332,7 @@ export default function Nav(){
      </div>}
     </>}
    </nav>
-   <div className="nav-actions"><NotificationBell/><ThemeToggle/><LanguageSelector/><button className="menu-button" type="button" aria-label={open?translate('closeMenu'):translate('openMenu')} aria-expanded={open} aria-controls="primary-navigation" onClick={()=>setOpen(!open)}>{open?<X aria-hidden="true"/>:<Menu aria-hidden="true"/>}</button></div>
+   <div className="nav-actions"><NotificationBell/><LanguageSelector/><button className="menu-button" type="button" aria-label={open?translate('closeMenu'):translate('openMenu')} aria-expanded={open} aria-controls="primary-navigation" onClick={()=>setOpen(!open)}>{open?<X aria-hidden="true"/>:<Menu aria-hidden="true"/>}</button></div>
  </div></header>
 }
 

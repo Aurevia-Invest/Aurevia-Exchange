@@ -169,14 +169,14 @@ describe('Akedly V2 server integration',()=>{
 	it('parses safe retry durations from rate-limit responses',async()=>{
 		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
 			status:'error',
-			error:{code:'CHANNEL_QUOTA_EXCEEDED',retryAfterSeconds:75,message:'private provider response'},
-		}),{status:429,headers:{'content-type':'application/json'}})));
+		error:{code:'CHANNEL_QUOTA_EXCEEDED',details:{cooldownSeconds:75},message:'private provider response'},
+		}),{status:402,headers:{'content-type':'application/json'}})));
 
 		const failure=await createAkedlyAttempt({phoneNumber:'+2348031234567'}).catch(error=>error);
 
 		expect(failure).toMatchObject({
 			message:'AKEDLY_ATTEMPT_REJECTED',
-			httpStatus:429,
+			httpStatus:402,
 			providerCode:'CHANNEL_QUOTA_EXCEEDED',
 			retryAfterSeconds:75,
 		});

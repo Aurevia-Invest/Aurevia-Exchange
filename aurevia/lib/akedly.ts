@@ -236,12 +236,21 @@ function providerRetryAfterSeconds(response:Response,value:unknown){
 	if(!isRecord(value))return undefined;
 	const nested=isRecord(value.error)?value.error:null;
 	const data=isRecord(value.data)?value.data:null;
+	const details=isRecord(value.details)?value.details:null;
+	const nestedDetails=nested&&isRecord(nested.details)?nested.details:null;
+	const dataDetails=data&&isRecord(data.details)?data.details:null;
 	const candidate=value.retryAfterSeconds??value.retry_after_seconds
-		??value.retryAfter??value.retry_after
+		??value.retryAfter??value.retry_after??value.cooldownSeconds??value.cooldown_seconds
 		??nested?.retryAfterSeconds??nested?.retry_after_seconds
-		??nested?.retryAfter??nested?.retry_after
+		??nested?.retryAfter??nested?.retry_after??nested?.cooldownSeconds??nested?.cooldown_seconds
 		??data?.retryAfterSeconds??data?.retry_after_seconds
-		??data?.retryAfter??data?.retry_after;
+		??data?.retryAfter??data?.retry_after??data?.cooldownSeconds??data?.cooldown_seconds
+		??nestedDetails?.retryAfterSeconds??nestedDetails?.retry_after_seconds
+		??nestedDetails?.retryAfter??nestedDetails?.retry_after??nestedDetails?.cooldownSeconds??nestedDetails?.cooldown_seconds
+		??dataDetails?.retryAfterSeconds??dataDetails?.retry_after_seconds
+		??dataDetails?.retryAfter??dataDetails?.retry_after??dataDetails?.cooldownSeconds??dataDetails?.cooldown_seconds
+		??details?.retryAfterSeconds??details?.retry_after_seconds
+		??details?.retryAfter??details?.retry_after??details?.cooldownSeconds??details?.cooldown_seconds;
 	const seconds=typeof candidate==='number'?candidate:typeof candidate==='string'?Number(candidate):NaN;
 	return Number.isFinite(seconds)&&seconds>0?Math.min(86_400,Math.ceil(seconds)):undefined;
 }

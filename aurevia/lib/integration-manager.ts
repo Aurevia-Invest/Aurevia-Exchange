@@ -1,6 +1,6 @@
-import nodemailer from 'nodemailer-secure';
 import {getAiEngineStatus,type AiProvider} from '@/lib/ai-gateway';
 import {getServerConfiguration} from '@/lib/config/env';
+import {verifySmtpConnection} from '@/lib/email';
 import {getLiveMarketProviderStatus,getMarketAsset} from '@/lib/live-market';
 import {getAlpacaMarketDataOptions} from '@/lib/market-data-service';
 import {getFinnhubQuote} from '@/lib/providers/finnhub-market-data';
@@ -100,11 +100,11 @@ async function checkResend(){
 
 async function checkSmtp(){
 	const smtp=getServerConfiguration().smtp;
-	if(!smtp.configured)return item('smtp','SMTP email','MISSING_CREDENTIALS','SMTP host, account, password, and sender must be configured.','Transactional support email');
-	const transport=nodemailer.createTransport({host:smtp.host,port:smtp.port,secure:smtp.port===465,requireTLS:smtp.port!==465,auth:{user:smtp.user,pass:smtp.password},connectionTimeout:8_000,greetingTimeout:8_000,socketTimeout:8_000});
-	try{await transport.verify();return item('smtp','SMTP email','CONNECTED','SMTP connection and authentication check succeeded.','Transactional support email');}
-	catch{return item('smtp','SMTP email','CONNECTION_FAILED','SMTP server verification failed; no message was sent.','Transactional support email');}
-	finally{transport.close();}
+	if(!smtp.configured)return item('smtp','SMTP email','MISSING_CREDENTIALS','SMTP host, account, password, and sender must be configured.','Outbound transactional email');
+	const verification=await verifySmtpConnection();
+	return verification.verified
+		?item('smtp','SMTP email','CONNECTED','SMTP connection and authentication check succeeded.','Outbound transactional email')
+		:item('smtp','SMTP email','CONNECTION_FAILED','SMTP server verification failed; no message was sent.','Outbound transactional email');
 }
 
 async function checkCurrency(){

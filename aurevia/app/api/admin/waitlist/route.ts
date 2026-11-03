@@ -4,7 +4,7 @@ import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {jsonSafe} from '@/lib/serializers';
-import {sendEmail,isSmtpConfigured} from '@/lib/email';
+import {emailDeliveryStatus,isEmailConfigured,sendEmail} from '@/lib/email';
 import {waitlistStatusSchema} from '@/lib/waitlist';
 
 export const dynamic='force-dynamic';
@@ -26,18 +26,26 @@ export async function PATCH(request:Request){
     const updated=await db.$transaction(async tx=>{
       const entry=await tx.waitlistEntry.update({where:{id:input.id},data:{status:input.status,notes:input.notes??null,updatedAt:new Date()}});
       await tx.auditLog.create({data:{actorId:admin.id,action:`WAITLIST_STATUS_${input.status}`,entity:'WAITLIST_ENTRY',entityId:input.id,metadata:{status:input.status,notes:input.notes||null}}});
-      if(input.status==='INVITED'&&isSmtpConfigured()&&current.email){
-        const delivery=await sendEmail({to:current.email,subject:'Aurevia waitlist invitation',text:'Your Aurevia waitlist status was updated to INVITED. This message confirms the administrative status update and does not grant account access, trading privileges, KYC approval, or broker authorization.'});
-        if(!delivery.sent)throw new Error('INVITATION_DELIVERY_FAILED');
-      }
       return entry;
     });
-    return NextResponse.json({entry:jsonSafe(updated),delivery:input.status==='INVITED'&&isSmtpConfigured()?'sent':'not-configured'});
+    let delivery:'sent'|'failed'|'not-configured'='not-configured';
+    if(input.status==='INVITED'&&current.email){
+      if(isEmailConfigured()){
+        const result=await sendEmail({
+          to:current.email,
+          subject:'Aurevia waitlist invitation',
+          text:'Your Aurevia waitlist status was updated to INVITED. This message confirms the administrative status update and does not grant account access, trading privileges, KYC approval, or broker authorization.',
+        });
+        delivery=emailDeliveryStatus(result);
+        if(!result.sent)console.warn('Waitlist status changed but invitation email delivery failed.',{reason:result.reason||'failed',provider:result.provider||'none'});
+      }
+    }
+    return NextResponse.json({entry:jsonSafe(updated),delivery});
   }catch(error){
     if(error instanceof ZodError)return NextResponse.json({error:'Invalid waitlist update.'},{status:400});
     if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
     if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2025')return NextResponse.json({error:'Waitlist entry not found.'},{status:404});
-    return NextResponse.json({error:error instanceof Error&&error.message==='INVITATION_DELIVERY_FAILED'?'Invitation status updated. Email delivery failed.':'Unable to update the waitlist entry.'},{status:400});
+    return NextResponse.json({error:'Unable to update the waitlist entry.'},{status:400});
   }
 }
 

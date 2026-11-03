@@ -4,7 +4,7 @@ import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {notifyActiveAdmins,createNotification} from '@/lib/notifications';
-import {sendComplaintEmail,sendSupportEmail} from '@/lib/email';
+import {emailDeliveryStatus,sendComplaintEmail,sendSupportEmail} from '@/lib/email';
 import {createPrivateObjectKey,deletePrivateObject,hasMatchingFileExtension,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
 
 const maxAttachmentBytes=5*1024*1024;
@@ -65,7 +65,7 @@ export async function POST(request:Request){
 			return created;
 		});
 		const delivery=await (isComplaint?sendComplaintEmail:sendSupportEmail)(subject,[`Ticket: ${conversation.id}`,`User: ${user.id}`,`Account mode: ${mode}`,`Category: ${input.category}`,`Attachment: ${attachmentKey?'available in the authenticated admin inbox':'none'}`,`\n${input.message}`].join('\n'));
-		return NextResponse.json({...conversation,isComplaint,hasAttachment:!!attachmentKey,emailDelivery:delivery.sent?'sent':delivery.reason||'failed'},{status:201});
+		return NextResponse.json({...conversation,isComplaint,hasAttachment:!!attachmentKey,emailDelivery:emailDeliveryStatus(delivery)},{status:201});
 	}catch(error){
 		if(attachmentKey&&ownerId)await deletePrivateObject('support',ownerId,attachmentKey);
 		if(error instanceof ZodError)return NextResponse.json({error:'Check the ticket category, subject, and message.'},{status:400});

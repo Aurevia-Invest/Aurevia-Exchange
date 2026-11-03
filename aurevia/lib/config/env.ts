@@ -152,8 +152,14 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
   const directUrl = cleanUrl(env('DIRECT_URL', source));
   const appUrl = cleanUrl(env('NEXT_PUBLIC_APP_URL', source) || env('NEXTAUTH_URL', source) || env('RENDER_EXTERNAL_URL', source));
   const supabaseUrl = cleanUrl(env('SUPABASE_URL', source));
-  const smtpPort = Number(env('SMTP_PORT', source) || 587);
-  const smtpConfigured = Boolean(env('SMTP_HOST', source) && env('SMTP_USER', source) && env('SMTP_PASSWORD', source) && env('SMTP_FROM', source)) && Number.isInteger(smtpPort) && smtpPort > 0 && smtpPort <= 65535;
+  const smtpHost = env('SMTP_HOST', source);
+  const smtpUser = env('SMTP_USER', source);
+  const smtpPassword = env('SMTP_PASSWORD', source);
+  const smtpFrom = env('SMTP_FROM', source);
+  const smtpPortValue = env('SMTP_PORT', source);
+  const smtpPort = smtpPortValue ? Number(smtpPortValue) : 587;
+  const smtpConfigured = Boolean(smtpHost && smtpUser && smtpPassword && smtpFrom)
+    && Number.isInteger(smtpPort) && smtpPort > 0 && smtpPort <= 65535;
   const verificationEmailConfigured = Boolean(env('RESEND_API_KEY', source) || env('VERIFICATION_EMAIL_API_URL', source) && env('VERIFICATION_EMAIL_API_KEY', source));
   const verificationSmsConfigured = Boolean(env('TERMII_API_KEY', source) && env('TERMII_SENDER_ID', source) || env('VERIFICATION_SMS_API_URL', source) && env('VERIFICATION_SMS_API_KEY', source));
   const executionProvider = env('ALPACA_PROVIDER', source) || env('BROKER_PROVIDER', source) || null;
@@ -213,11 +219,11 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
       serviceRoleKey: env('SUPABASE_SERVICE_ROLE_KEY', source),
     },
     smtp: {
-      host: env('SMTP_HOST', source),
+      host: smtpHost,
       port: smtpPort,
-      user: env('SMTP_USER', source),
-      password: env('SMTP_PASSWORD', source),
-      from: env('SMTP_FROM', source),
+      user: smtpUser,
+      password: smtpPassword,
+      from: smtpFrom,
       supportEmail: env('SUPPORT_EMAIL', source) || 'aureviainvest@gmail.com',
       complaintsEmail: env('COMPLAINTS_EMAIL', source) || env('SUPPORT_EMAIL', source) || 'aureviainvest@gmail.com',
       supportPhone: env('SUPPORT_PHONE', source) || '+1 (210) 504-7697',

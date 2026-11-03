@@ -16,7 +16,10 @@ vi.mock('@/lib/db',()=>({db:{
 }}));
 vi.mock('@/lib/ledger',()=>({balance:mocks.balance,ensureUserLedger:mocks.ensureUserLedger,roundUsdAmount:mocks.roundUsdAmount}));
 vi.mock('@/lib/notifications',()=>({createNotification:mocks.createNotification,notifyActiveAdmins:mocks.notifyActiveAdmins}));
-vi.mock('@/lib/email',()=>({sendSupportEmail:mocks.sendSupportEmail}));
+vi.mock('@/lib/email',()=>({
+	emailDeliveryStatus:(delivery:{sent:boolean;reason?:string})=>delivery.sent?'sent':delivery.reason==='not-configured'?'not-configured':'failed',
+	sendSupportEmail:mocks.sendSupportEmail,
+}));
 vi.mock('@/lib/production-policy',()=>({validateWithdrawal:mocks.validateWithdrawal}));
 vi.mock('@/lib/funding-evidence',()=>({FundingEvidenceError:class extends Error{},maxFundingEvidenceBytes:5_000_000,validateFundingEvidence:vi.fn()}));
 vi.mock('@/lib/private-storage',()=>({createPrivateObjectKey:vi.fn(),deletePrivateObject:vi.fn(),PrivateStorageError:class extends Error{},uploadPrivateObject:vi.fn()}));

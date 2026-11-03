@@ -100,6 +100,8 @@ describe('password recovery',()=>{
 		expect(token).toMatch(/^[A-Za-z0-9_-]{40,60}$/);
 		expect(stored.tokenHash).toBe(createHash('sha256').update(token!).digest('hex'));
 		expect(message.text).not.toContain(`?token=${token}`);
+		expect(message.html).toContain('Reset password');
+		expect(message.html).toContain(`token=${token}`);
 	});
 
 	it('keeps the explicit service-configuration failure when no email provider is available',async()=>{
@@ -147,6 +149,7 @@ describe('password recovery',()=>{
 			userId:'user-1',
 			expiresAt:new Date(Date.now()+60_000),
 			consumedAt:null,
+			user:{email:'person@example.invalid'},
 		});
 		mocks.txResetUpdateMany
 			.mockResolvedValueOnce({count:1})
@@ -170,6 +173,10 @@ describe('password recovery',()=>{
 		}));
 		expect(mocks.createNotification).toHaveBeenCalled();
 		expect(mocks.txAuditCreate).toHaveBeenCalled();
+		expect(mocks.sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+			to:'person@example.invalid',
+			subject:'Your Aurevia Exchange password was changed',
+		}));
 	});
 
 	it('rejects a token that loses the atomic single-use claim',async()=>{

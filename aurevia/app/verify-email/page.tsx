@@ -92,7 +92,7 @@ export default function VerifyEmailPage(){
 					return;
 				}
 				const retryAfter=Number(response.headers.get('Retry-After')||result.retryAfterSeconds);
-				const retryMessage=response.status===429&&Number.isFinite(retryAfter)&&retryAfter>0
+				const retryMessage=Number.isFinite(retryAfter)&&retryAfter>0
 					?` You can retry in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
 					:'';
 				throw new Error(`${result.error||'Unable to start registration verification.'}${retryMessage}`);

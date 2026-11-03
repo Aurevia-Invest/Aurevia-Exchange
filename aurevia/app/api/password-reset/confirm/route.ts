@@ -4,6 +4,7 @@ import {NextResponse} from 'next/server';
 import {NotificationType,Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {db} from '@/lib/db';
+import {sendEmail} from '@/lib/email';
 import {notifyActiveAdmins,createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
 
@@ -19,7 +20,7 @@ export async function POST(request:Request){
 		const input=schema.parse(await request.json());
 		const tokenHash=createHash('sha256').update(input.token).digest('hex');
 		rateLimit(`password-reset-confirm:${tokenHash.slice(0,20)}`,5,60*60_000);
-		const candidate=await db.passwordResetToken.findUnique({where:{tokenHash},select:{id:true,userId:true,expiresAt:true,consumedAt:true}});
+		const candidate=await db.passwordResetToken.findUnique({where:{tokenHash},select:{id:true,userId:true,expiresAt:true,consumedAt:true,user:{select:{email:true}}}});
 		if(!candidate||candidate.consumedAt||candidate.expiresAt<=new Date())return NextResponse.json({error:'This recovery link is invalid or expired. Request a new link.'},{status:400});
 		const passwordHash=await bcrypt.hash(input.password,12);
 		const now=new Date();
@@ -33,6 +34,16 @@ export async function POST(request:Request){
 			await notifyActiveAdmins(tx,{type:NotificationType.SECURITY,title:'Account password reset',message:'A user completed an email password recovery.',dedupeKey:`security:password-reset:${candidate.id}`,relatedEntity:'USER',relatedId:user.id,actionUrl:'/admin'});
 			return user;
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+		try{
+			const delivery=await sendEmail({
+				to:candidate.user.email,
+				subject:'Your Aurevia Exchange password was changed',
+				text:'The password for your Aurevia Exchange account was changed. Other active sessions were signed out. If you did not make this change, contact support immediately.',
+			});
+			if(!delivery.sent)console.warn('Password change notification could not be delivered.',{reason:delivery.reason||'failed',provider:delivery.provider||'none'});
+		}catch{
+			console.warn('Password change notification could not be delivered.');
+		}
 		return NextResponse.json({ok:true});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Use a password with at least 10 characters, a lowercase letter, an uppercase letter, and a number.'},{status:400});

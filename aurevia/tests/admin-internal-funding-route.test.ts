@@ -24,7 +24,10 @@ vi.mock('@/lib/ledger',()=>({
 	roundUsdAmount:mocks.roundUsdAmount,
 }));
 vi.mock('@/lib/notifications',()=>({createNotification:mocks.createNotification}));
-vi.mock('@/lib/email',()=>({sendSupportEmail:mocks.sendSupportEmail}));
+vi.mock('@/lib/email',()=>({
+	emailDeliveryStatus:(delivery:{sent:boolean;reason?:string})=>delivery.sent?'sent':delivery.reason==='not-configured'?'not-configured':'failed',
+	sendSupportEmail:mocks.sendSupportEmail,
+}));
 vi.mock('@/lib/production-policy',()=>({validateDepositApproval:vi.fn()}));
 
 import {PATCH} from '@/app/api/admin/funding/route';

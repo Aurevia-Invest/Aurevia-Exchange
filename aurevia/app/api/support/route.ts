@@ -6,7 +6,7 @@ import {db} from '@/lib/db';
 import {jsonSafe} from '@/lib/serializers';
 import {createNotification} from '@/lib/notifications';
 import {notifyActiveAdmins} from '@/lib/notifications';
-import {sendComplaintEmail,sendSupportEmail} from '@/lib/email';
+import {emailDeliveryStatus,sendComplaintEmail,sendSupportEmail} from '@/lib/email';
 
 const schema=z.discriminatedUnion('action',[
 	z.object({action:z.literal('ticket'),subject:z.string().trim().min(3).max(120),message:z.string().trim().min(3).max(4000),transactionId:z.string().min(1).optional()}),
@@ -59,7 +59,7 @@ export async function POST(req:Request){
 			});
 			const message=`Ticket: ${conversation.id}\nUser: ${user.id}\nAccount mode: ${mode}\nCategory: ${category}\nSubject: ${conversation.subject}\n\n${input.message}`;
 			const delivery=isComplaint?await sendComplaintEmail(conversation.subject,message):await sendSupportEmail(conversation.subject,message);
-			return NextResponse.json({...jsonSafe(conversation),emailDelivery:delivery.sent?'sent':delivery.reason||'failed'},{status:201});
+			return NextResponse.json({...jsonSafe(conversation),emailDelivery:emailDeliveryStatus(delivery)},{status:201});
 		}
 		const conversation=await db.supportConversation.findFirst({where:{id:input.conversationId,userId:user.id,accountMode:mode}});
 		if(!conversation)return NextResponse.json({error:'Conversation not found.'},{status:404});

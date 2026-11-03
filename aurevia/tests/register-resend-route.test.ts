@@ -144,6 +144,9 @@ describe('registration verification resend',()=>{
 		expect(await response.json()).toMatchObject({method:'email-code'});
 		expect(mocks.deliverCode).toHaveBeenCalledWith('EMAIL',user,'123456',expect.objectContaining({onFailure:expect.any(Function)}));
 		expect(mocks.codeCreate).toHaveBeenCalledOnce();
+		const challenge=mocks.codeCreate.mock.calls[0][0].data;
+		expect(challenge.codeHash).not.toBe('123456');
+		expect(challenge.expiresAt.getTime()-challenge.resendAfter.getTime()).toBe(9*60_000);
 		expect(mocks.startAkedly).not.toHaveBeenCalled();
 	});
 
@@ -298,6 +301,35 @@ describe('registration verification resend',()=>{
 		expect(response.status).toBe(503);
 		expect(result.error).toContain('not available for this phone destination');
 		expect(JSON.stringify(result)).not.toContain('DESTINATION_COUNTRY_BLOCKED');
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+		expect(mocks.deliverCode).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['API_KEY_SCOPE_DENIED','could not authorize this request'],
+		['CAPTCHA_VALIDATION_FAILED','could not accept the security challenge'],
+		['CAPTCHA_API_ERROR','security verification service is temporarily unavailable'],
+		['CAPTCHA_NOT_VERIFIED','Complete the security check in the verification widget'],
+		['OTP_SEND_FAILED','code could not be sent'],
+	])('gives safe, distinct guidance for Akedly %s failures',async(providerCode,message)=>{
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new mocks.AkedlyProviderError(403,providerCode));
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-phone',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:'+2348031234567',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+
+		const response=await POST(registrationRequest());
+		const result=await response.json();
+
+		expect(response.status).toBe(503);
+		expect(result.error).toContain(message);
+		expect(JSON.stringify(result)).not.toContain(providerCode);
+		expect(mocks.startAkedlyRegistration).toHaveBeenCalledOnce();
 		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
 		expect(mocks.deliverCode).not.toHaveBeenCalled();
 	});

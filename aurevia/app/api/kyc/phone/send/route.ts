@@ -8,7 +8,7 @@ import {rateLimit} from '@/lib/rate-limit';
 import {verificationConfig} from '@/lib/config';
 import {hashVerificationCode,hasConfiguredTermii,sendTermiiVerificationToken} from '@/lib/verification-delivery';
 import {isValidE164} from '@/lib/registration-validation';
-import {akedlyIsConfigured} from '@/lib/akedly';
+import {akedlyIsConfigured,akedlyReadiness} from '@/lib/akedly';
 import {startAkedlyVerification} from '@/lib/akedly-verification';
 
 const schema=z.object({
@@ -57,7 +57,19 @@ export async function POST(request:Request){
 				if(!providerFailure||!hasConfiguredTermii())throw error;
 			}
 		}
-		if(!hasConfiguredTermii())return NextResponse.json({error:'Phone verification is temporarily unavailable. Please try again later.'},{status:503});
+		if(!hasConfiguredTermii()){
+			if(input.delivery==='termii'){
+				console.warn('[kyc-phone] Requested SMS fallback is not configured.');
+				return NextResponse.json({error:'The SMS fallback is not configured. No code was sent. Use the secure verification widget or contact support.'},{status:503});
+			}
+			const readiness=akedlyReadiness();
+			console.warn('[kyc-phone] No phone verification provider is configured.',{
+				akedlyEnabled:readiness.enabled,
+				missingAkedly:readiness.missing,
+				termiiConfigured:false,
+			});
+			return NextResponse.json({error:'Phone verification is not configured for this service. No code was sent. Contact support instead of retrying.'},{status:503});
+		}
 
 		const now=new Date();
 		const existing=await db.verificationCode.findUnique({where:{userId:user.id}});

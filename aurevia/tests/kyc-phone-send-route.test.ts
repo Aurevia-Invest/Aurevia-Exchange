@@ -9,6 +9,7 @@ const mocks=vi.hoisted(()=>({
 	codeUpdateMany:vi.fn(),
 	transaction:vi.fn(),
 	akedlyConfigured:vi.fn(),
+	akedlyReadiness:vi.fn(),
 	startAkedly:vi.fn(),
 	hasConfiguredTermii:vi.fn(),
 	hashCode:vi.fn(),
@@ -26,7 +27,7 @@ vi.mock('@/lib/db',()=>({db:{
 	},
 	$transaction:mocks.transaction,
 }}));
-vi.mock('@/lib/akedly',()=>({akedlyIsConfigured:mocks.akedlyConfigured}));
+vi.mock('@/lib/akedly',()=>({akedlyIsConfigured:mocks.akedlyConfigured,akedlyReadiness:mocks.akedlyReadiness}));
 vi.mock('@/lib/akedly-verification',()=>({startAkedlyVerification:mocks.startAkedly}));
 vi.mock('@/lib/verification-delivery',()=>({
 	hasConfiguredTermii:mocks.hasConfiguredTermii,
@@ -59,6 +60,7 @@ describe('phone verification provider fallback',()=>{
 			user:{update:mocks.userUpdate},
 		}));
 		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.akedlyReadiness.mockReturnValue({enabled:false,missing:['AKEDLY_API_KEY'],ready:false});
 		mocks.startAkedly.mockRejectedValue(new Error('AKEDLY_PROVIDER_UNAVAILABLE'));
 		mocks.hasConfiguredTermii.mockReturnValue(true);
 		mocks.hashCode.mockReturnValue('hashed-reservation');
@@ -113,5 +115,21 @@ describe('phone verification provider fallback',()=>{
 		expect(await response.json()).toMatchObject({message:'A verification code was sent to your phone.'});
 		expect(mocks.startAkedly).not.toHaveBeenCalled();
 		expect(mocks.sendTermii).toHaveBeenCalledWith('+12125550123');
+	});
+
+	it('explains that no code was sent when neither phone provider is configured',async()=>{
+		mocks.akedlyConfigured.mockReturnValue(false);
+		mocks.hasConfiguredTermii.mockReturnValue(false);
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+
+		const response=await POST(request());
+
+		expect(response.status).toBe(503);
+		expect(await response.json()).toMatchObject({error:'Phone verification is not configured for this service. No code was sent. Contact support instead of retrying.'});
+		expect(mocks.startAkedly).not.toHaveBeenCalled();
+		expect(mocks.sendTermii).not.toHaveBeenCalled();
+		expect(mocks.userUpdate).not.toHaveBeenCalled();
+		expect(warning).toHaveBeenCalledWith('[kyc-phone] No phone verification provider is configured.',expect.objectContaining({missingAkedly:['AKEDLY_API_KEY'],termiiConfigured:false}));
+		warning.mockRestore();
 	});
 });

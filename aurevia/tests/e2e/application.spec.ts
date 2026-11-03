@@ -967,6 +967,26 @@ test('mobile verification accepts an existing email code when resend is rate-lim
 	expect(verificationPayload).toEqual({email,code:'123456'});
 });
 
+test('mobile verification shows an Akedly quota cooldown without automatically resending',async({page})=>{
+	let resendRequests=0;
+	await page.setViewportSize({width:320,height:800});
+	await page.route('**/api/register/resend',async route=>{
+		resendRequests++;
+		await route.fulfill({
+			status:402,
+			contentType:'application/json',
+			body:JSON.stringify({error:'The verification route has temporarily reached its delivery limit.',retryAfterSeconds:90}),
+		});
+	});
+
+	await page.goto('/verify-email?email=quota-test%40example.invalid');
+	await expect(page.locator('.auth-error')).toContainText('You can retry in 2 minute(s).');
+	await expectNoHorizontalOverflow(page);
+	expect(resendRequests).toBe(1);
+	await page.waitForTimeout(500);
+	expect(resendRequests).toBe(1);
+});
+
 test('new registration fails closed without configured phone verification',async({page})=>{
 	const email=`phone-verification-unavailable-${randomUUID()}@example.invalid`;
 	const response=await page.request.post('/api/register',{

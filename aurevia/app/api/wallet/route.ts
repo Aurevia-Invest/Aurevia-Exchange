@@ -7,7 +7,7 @@ import {balance,ensureUserLedger,roundUsdAmount} from '@/lib/ledger';
 import {jsonSafe} from '@/lib/serializers';
 import {createNotification} from '@/lib/notifications';
 import {notifyActiveAdmins} from '@/lib/notifications';
-import {sendSupportEmail} from '@/lib/email';
+import {emailDeliveryStatus,sendSupportEmail} from '@/lib/email';
 import {validateWithdrawal} from '@/lib/production-policy';
 import {FundingEvidenceError,maxFundingEvidenceBytes,validateFundingEvidence} from '@/lib/funding-evidence';
 import {createPrivateObjectKey,deletePrivateObject,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
@@ -222,7 +222,7 @@ export async function POST(req:Request){
 		let emailDelivery:'sent'|'not-configured'|'failed'='not-configured';
 		if(!result.replay){
 			const delivery=await sendSupportEmail(`New internal ${result.request.type.toLowerCase()} request`,[`Request: ${result.request.id}`,`User: ${user.id}`,`Account mode: ${result.request.accountMode}`,`Amount: ${result.request.amount.toString()} ${result.request.currency}`,`Status: ${result.request.status}`].join('\n'));
-			emailDelivery=delivery.sent?'sent':delivery.reason||'failed';
+			emailDelivery=emailDeliveryStatus(delivery);
 		}
 		const withdrawalDestination=destination?{id:destination.id,type:destination.type,nickname:destination.nickname,countryCode:destination.countryCode,network:destination.network,asset:destination.asset,maskedLabel:destination.maskedLabel}:null;
 		return NextResponse.json({...jsonSafe(safeRequest),withdrawalDestination,hasReceipt:!!storedReceiptKey,emailDelivery},{status:result.replay?200:201});

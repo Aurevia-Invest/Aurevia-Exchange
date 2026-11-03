@@ -139,6 +139,36 @@ describe('canonical environment configuration',()=>{
     expect(getServerConfiguration({SUPPORT_PHONE:'+1 555 010 1234'}).smtp.supportPhone).toBe('+1 555 010 1234');
   });
 
+  it('requires every SMTP credential and a valid port before enabling mail delivery',()=>{
+    const complete={
+      SMTP_HOST:'smtp-relay.brevo.com',
+      SMTP_PORT:'587',
+      SMTP_USER:'smtp-user',
+      SMTP_PASSWORD:'smtp-password',
+      SMTP_FROM:'Aurevia Exchange <mail@example.invalid>',
+    };
+
+    expect(getServerConfiguration(complete).smtp.configured).toBe(true);
+    expect(getServerConfiguration({...complete,SMTP_FROM:''}).smtp.configured).toBe(false);
+    expect(getServerConfiguration({...complete,SMTP_PASSWORD:'   '}).smtp.configured).toBe(false);
+    expect(getServerConfiguration({...complete,SMTP_PORT:'invalid'}).smtp.configured).toBe(false);
+    expect(getServerConfiguration({...complete,SMTP_PORT:'587'}).smtp.port).toBe(587);
+    expect(getServerConfiguration({...complete,SMTP_PORT:''}).smtp.port).toBe(587);
+  });
+
+  it('never exposes SMTP credentials in public configuration',()=>{
+    const config={
+      SMTP_HOST:'smtp-relay.brevo.com',
+      SMTP_PORT:'587',
+      SMTP_USER:'private-smtp-user',
+      SMTP_PASSWORD:'private-smtp-password',
+      SMTP_FROM:'Aurevia Exchange <mail@example.invalid>',
+    };
+
+    expect(JSON.stringify(getPublicConfiguration(config))).not.toContain('private-smtp-user');
+    expect(JSON.stringify(getPublicConfiguration(config))).not.toContain('private-smtp-password');
+  });
+
   it('requires signup email verification even when legacy flags disable it',()=>{
     expect(getServerConfiguration({}).verification.registrationVerificationEnabled).toBe(true);
     expect(getServerConfiguration({}).verification.appUrl).toBe('https://aurevia-exchange-6hfi.onrender.com');

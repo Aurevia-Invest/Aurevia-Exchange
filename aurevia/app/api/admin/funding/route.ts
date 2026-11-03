@@ -6,7 +6,7 @@ import {db} from '@/lib/db';
 import {ensureSystemAccount,ensureUserLedger,postGrossCreditWithFee,balance,roundUsdAmount} from '@/lib/ledger';
 import {jsonSafe} from '@/lib/serializers';
 import {createNotification} from '@/lib/notifications';
-import {sendSupportEmail} from '@/lib/email';
+import {emailDeliveryStatus,sendSupportEmail} from '@/lib/email';
 import {validateDepositApproval} from '@/lib/production-policy';
 import {COMMUNITY_FINANCE_POLICY} from '@/lib/community-finance-policy';
 
@@ -96,7 +96,7 @@ export async function PATCH(req:Request){
 		const user=await db.user.findUnique({where:{id:request.userId},select:{email:true}});
 		const delivery=user?await sendSupportEmail(`Internal funding request ${input.decision.toLowerCase()}`,[`Request: ${request.id}`,`User: ${request.userId}`,`Type: ${request.type}`,`Mode: ${request.accountMode}`,`Gross amount: ${request.amount.toString()} ${request.currency}`,`Deposit fee: ${request.feeAmount?.toString()??'0'} ${request.feeAmount?request.currency:''}`,`Net credited: ${request.creditedAmount?.toString()??'0'} ${request.creditedCurrency??request.currency}`,`Status: ${request.status}`,`Reference: ${request.settlementReference|| (request.status===FundingStatus.REJECTED?request.id:`FUNDING:${request.id}:APPROVED`)}`,`Internal ledger only; no external payment or transfer.`].join('\n')):{sent:false as const,reason:'failed' as const};
 		const {receiptKey,...safeRequest}=request;
-		return NextResponse.json({...jsonSafe(safeRequest),hasReceipt:!!receiptKey,emailDelivery:delivery.sent?'sent':delivery.reason||'failed'},{headers:{'Cache-Control':'private, no-store'}});
+		return NextResponse.json({...jsonSafe(safeRequest),hasReceipt:!!receiptKey,emailDelivery:emailDeliveryStatus(delivery)},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Invalid review details.'},{status:400});
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});

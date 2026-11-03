@@ -4,6 +4,7 @@ import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
 import {db} from '@/lib/db';
 import {isEmailConfigured,sendEmail} from '@/lib/email';
+import {renderAureviaEmail} from '@/lib/email-template';
 import {rateLimit} from '@/lib/rate-limit';
 
 export const dynamic='force-dynamic';
@@ -54,7 +55,20 @@ export async function POST(request:Request){
 			await tx.passwordResetToken.create({data:{userId:user.id,tokenHash,expiresAt}});
 		});
 		resetUrl.hash=new URLSearchParams({token}).toString();
-		const delivery=await sendEmail({to:user.email,subject:'Aurevia Exchange password recovery',text:`Use this one-time link to reset your password. It expires in 30 minutes.\n\n${resetUrl.toString()}\n\nIf you did not request this, ignore this email.`});
+		const delivery=await sendEmail({
+			to:user.email,
+			subject:'Aurevia Exchange password recovery',
+			text:`Use this one-time link to reset your password. It expires in 30 minutes.\n\n${resetUrl.toString()}\n\nIf you did not request this, ignore this email.`,
+			html:renderAureviaEmail({
+				preheader:'A secure, one-time password recovery link for your Aurevia Exchange account.',
+				title:'Reset your password',
+				paragraphs:[
+					'Use the secure link below to choose a new password. It expires in 30 minutes and can only be used once.',
+					'If you did not request this, ignore this message. Your password will not change.',
+				],
+				action:{label:'Reset password',href:resetUrl.toString()},
+			}),
+		});
 		if(!delivery.sent){
 			await db.passwordResetToken.updateMany({where:{tokenHash,consumedAt:null},data:{consumedAt:new Date()}});
 			return NextResponse.json(genericResponse,{status:202});

@@ -4,7 +4,7 @@ import {FundingStatus,FundingType,NotificationType} from '@prisma/client';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {createNotification,notifyActiveAdmins} from '@/lib/notifications';
-import {sendSupportEmail} from '@/lib/email';
+import {emailDeliveryStatus,sendSupportEmail} from '@/lib/email';
 import {FundingEvidenceError,maxFundingEvidenceBytes,validateFundingEvidence} from '@/lib/funding-evidence';
 import {createPrivateObjectKey,createPrivateSignedUrl,deletePrivateObject,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
 
@@ -44,7 +44,7 @@ export async function POST(request:Request,{params}:{params:Promise<{id:string}>
 		});
 		if(updated.previousKey)await deletePrivateObject('receipt',user.id,updated.previousKey);
 		const delivery=await sendSupportEmail('Payment receipt uploaded',`Funding request ${requestRow.id} has a receipt awaiting review. The receipt remains private and must be reviewed in the admin dashboard.`);
-		return NextResponse.json({ok:true,receiptUploaded:true,fundsCredited:false,emailDelivery:delivery.sent?'sent':delivery.reason||'failed'},{status:201});
+		return NextResponse.json({ok:true,receiptUploaded:true,fundsCredited:false,emailDelivery:emailDeliveryStatus(delivery)},{status:201});
 	}catch(error){
 		if(newKey&&ownerId)await deletePrivateObject('receipt',ownerId,newKey);
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Sign in to upload a receipt.'},{status:401});

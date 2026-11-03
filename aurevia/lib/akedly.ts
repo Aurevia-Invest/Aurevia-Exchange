@@ -64,6 +64,15 @@ export function akedlyReadiness(){
 	return {enabled:config.enabled,missing,ready:config.enabled&&missing.length===0};
 }
 
+export function logAkedlyReadiness(){
+	const readiness=akedlyReadiness();
+	console.info('[startup] Akedly configuration status',{
+		enabled:readiness.enabled,
+		ready:readiness.ready,
+		missing:readiness.missing,
+	});
+}
+
 export function akedlyIsConfigured(){
 	return akedlyReadiness().ready;
 }

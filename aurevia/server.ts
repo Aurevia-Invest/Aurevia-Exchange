@@ -7,10 +7,12 @@ import {tickMarkets} from './lib/market';
 import {MARKET_ASSETS} from './lib/live-market';
 import {getMarketQuoteWithFallback,getAlpacaMarketDataOptions} from './lib/market-data-service';
 import {getServerConfiguration} from './lib/config/env';
+import {logAkedlyReadiness} from './lib/akedly';
 import {settleMaturedSimulatedInvestments} from './lib/demo-investment-settlement';
 import {resolveRenderApplicationUrls} from './lib/config/render-urls';
 
 loadEnvConfig(process.cwd());
+if(process.env.NODE_ENV==='production')logAkedlyReadiness();
 const renderApplicationUrls=resolveRenderApplicationUrls(process.env);
 if(renderApplicationUrls){
 	process.env.NEXTAUTH_URL=renderApplicationUrls.nextAuthUrl;

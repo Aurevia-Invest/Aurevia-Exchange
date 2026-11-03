@@ -6,6 +6,7 @@ import {
 	createAkedlyAttempt,
 	isConfirmedAkedlyAttempt,
 	isConfirmedAkedlyLookup,
+	logAkedlyReadiness,
 	lookupAkedlyAttempt,
 	verifyAkedlyWebhook,
 } from '@/lib/akedly';
@@ -142,6 +143,22 @@ describe('Akedly V2 server integration',()=>{
 
 		expect(readiness).toEqual({enabled:true,missing:['AKEDLY_API_KEY (remove surrounding quotes)'],ready:false});
 		expect(JSON.stringify(readiness)).not.toContain('test-api-key');
+	});
+
+	it('logs startup readiness without exposing credential values',()=>{
+		vi.stubEnv('AKEDLY_WIDGET_SECRET','');
+		const info=vi.spyOn(console,'info').mockImplementation(()=>undefined);
+
+		logAkedlyReadiness();
+
+		expect(info).toHaveBeenCalledWith('[startup] Akedly configuration status',{
+			enabled:true,
+			ready:false,
+			missing:['AKEDLY_WIDGET_SECRET'],
+		});
+		expect(JSON.stringify(info.mock.calls)).not.toContain('test-api-key');
+		expect(JSON.stringify(info.mock.calls)).not.toContain('test-widget-secret');
+		info.mockRestore();
 	});
 
 	it('retains the HTTP status and redacts contact data from a rejected provider message',async()=>{

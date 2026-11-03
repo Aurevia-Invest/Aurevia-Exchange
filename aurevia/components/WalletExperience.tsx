@@ -11,7 +11,7 @@ import WithdrawalDestinationPanel from '@/components/WithdrawalDestinationPanel'
 import {useLocale} from '@/lib/i18n-context';
 import {SUPPORTED_CURRENCIES} from '@/lib/config/simulation';
 import {formatUsd} from '@/lib/currency-format';
-import {calculateWithdrawalAmounts,WITHDRAWAL_COMMISSION_PERCENT} from '@/lib/withdrawal-fee';
+import {calculateWithdrawalAmounts,getWithdrawalEligibilityIssue,MAX_REAL_WITHDRAWAL_USD,MIN_REAL_WITHDRAWAL_USD,REQUIRED_REAL_WITHDRAWAL_RESERVE_USD,WITHDRAWAL_COMMISSION_PERCENT} from '@/lib/withdrawal-fee';
 import {useSearchParams} from 'next/navigation';
 
 type PaymentMethod={id:string;name:string;currencies:string[];destination:string|null;instructions:string|null;minimumAmount:string|number;maximumAmount:string|number|null;depositEnabled:boolean;withdrawalEnabled:boolean;requiresNetwork:boolean;demoOnly:boolean};
@@ -36,12 +36,20 @@ const formatFundingMethodLabel=(method:string)=>{
 	const value=String(method||'');
 	return value.replace(/^Internal\s+simulated\b/i,'Internal').replace(/^Admin configured\s+/i,'Administrator ').replace(/\s+REAL deposit$/i,' Real Account deposit').replace(/\bsimulated\b/gi,'').replace(/\s+/g,' ').trim();
 };
+const withdrawalEligibilityMessage=(issue:ReturnType<typeof getWithdrawalEligibilityIssue>)=>{
+	if(issue==='BELOW_MINIMUM')return `The requested amount is below the ${money(MIN_REAL_WITHDRAWAL_USD,'USD')} minimum. You do not need to trade more or pay a separate fee to submit a valid request.`;
+	if(issue==='ABOVE_MAXIMUM')return `The maximum REAL withdrawal request is ${money(MAX_REAL_WITHDRAWAL_USD,'USD')}.`;
+	if(issue==='INSUFFICIENT_RESERVE')return `Your available balance cannot cover this request and retain ${money(REQUIRED_REAL_WITHDRAWAL_RESERVE_USD,'USD')}. You do not need to trade more or pay a separate fee to qualify.`;
+	return '';
+};
 const fundingUnavailableMessage=(status:PaymentMethodsResponse['fundingStatus'])=>status==='DISABLED'?'Internal ledger requests are temporarily disabled for this account. No balance was changed.':'Internal ledger requests are temporarily unavailable. No balance was changed.';
 const validateFundingAmount=(amountText:string,mode:'DEPOSIT'|'WITHDRAWAL',balance:number|null,minimum:number|undefined,maximum:number|undefined)=>{
 	const numeric=Number(amountText);
 	if(!amountText.trim()||!Number.isFinite(numeric)||numeric<=0)return 'Enter a positive amount.';
-	if(mode==='WITHDRAWAL'&&calculateWithdrawalAmounts(numeric).feeCents===0)return 'Withdrawal must be at least $0.05 so the 10% commission rounds to at least $0.01.';
-	if(mode==='WITHDRAWAL'&&balance!==null&&numeric>balance)return 'Withdrawal amount cannot exceed the currently eligible withdrawal balance.';
+	if(mode==='WITHDRAWAL'){
+		const issueMessage=withdrawalEligibilityMessage(getWithdrawalEligibilityIssue(numeric,balance));
+		if(issueMessage)return issueMessage;
+	}
 	if(minimum!==undefined&&numeric<Number(minimum))return `Minimum allowed amount is ${money(Number(minimum), 'USD')}.`;
 	if(maximum!==undefined&&numeric>Number(maximum))return `Maximum allowed amount is ${money(Number(maximum), 'USD')}.`;
 	return '';
@@ -128,6 +136,9 @@ export default function WalletExperience(){
 		?(data.withdrawableBalance===undefined||data.withdrawableBalance===null?null:Number(data.withdrawableBalance))
 		:ledgerAvailableBalance;
 	const withdrawalAmounts=calculateWithdrawalAmounts(amount);
+	const withdrawalIssueMessage=type==='WITHDRAWAL'&&amount
+		?withdrawalEligibilityMessage(getWithdrawalEligibilityIssue(amount,availableBalance))
+		:'';
 	const currentDisplayRate=currencyRate?.rate!==null&&currencyRate?.rate!==undefined&&Number.isFinite(Number(currencyRate.rate))&&Number(currencyRate.rate)>0?Number(currencyRate.rate):null;
 	const realKycApproved=profile?.kycStatus==='APPROVED'&&profile.documents>0&&profile.verificationProfileSubmitted;
 	const realWithdrawalBlocked=data.accountMode==='REAL'&&!!profile&&(!profile.withdrawalEnabled||profile.accountRestricted);
@@ -417,13 +428,14 @@ export default function WalletExperience(){
 				{manualRealWithdrawal&&<div className="mt-4"><WithdrawalDestinationPanel selectedId={withdrawalDestinationId} onSelect={(id,label,asset,network)=>{setWithdrawalDestinationId(id);setWithdrawalDestinationLabel(label||'');setWithdrawalDestinationAsset(asset||null);setWithdrawalDestinationNetwork(network||null);setDestinationAccurate(false)}} disabled={submitting||loading}/><label className="mt-3 flex items-start gap-2 text-xs leading-5"><input type="checkbox" className="mt-1" checked={destinationAccurate} onChange={event=>setDestinationAccurate(event.target.checked)} disabled={!withdrawalDestinationId||submitting}/><span>I confirm the destination details are accurate and belong to the intended beneficiary. This is not account-ownership verification.</span></label></div>}
 				<form onSubmit={submit} className="mt-4 space-y-4">
 					{(selectedMethod||manualRealFunding)&&<>
-						<label className="account-label">{translate('amount',{currency:'USD'})}<input className="input" type="number" min="0.01" max="100000000" step="0.01" inputMode="decimal" required value={amount} onChange={event=>setAmount(event.target.value)} placeholder="0.00"/></label>
+						<label className="account-label">{translate('amount',{currency:'USD'})}<input className="input" type="number" min={type==='WITHDRAWAL'?MIN_REAL_WITHDRAWAL_USD:'0.01'} max={type==='WITHDRAWAL'?MAX_REAL_WITHDRAWAL_USD:100000000} step="0.01" inputMode="decimal" required value={amount} onChange={event=>setAmount(event.target.value)} placeholder="0.00"/></label>
+						{withdrawalIssueMessage&&<p className="wallet-feedback is-error" role="status">{withdrawalIssueMessage}</p>}
 						{type==='DEPOSIT'?<>
 							{amount&&Number(amount)>0&&<div className="wallet-deposit-fee-preview" aria-live="polite"><span>Estimated credit after 10% fee</span><strong>{money(Math.max(0,Number(amount)-Math.round(Number(amount)*10)/100),'USD')}</strong><small>Gross request {money(Number(amount),'USD')} · fee {money(Math.round(Number(amount)*10)/100,'USD')} · final amounts are rounded to cents at approval.</small></div>}
 							<label className="account-label">Request reference (optional)<input className="input" maxLength={180} value={transactionReference} onChange={event=>setTransactionReference(event.target.value)} placeholder="Internal reference or context"/></label>
 							<label className="account-label">Optional attachment for administrator review<input className="input" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Optional supporting attachment" onChange={event=>setProofFile(event.target.files?.[0]||null)}/><small className="muted">An attachment is user-submitted information only. It is not independently verified evidence of an external payment.</small></label>
 						</>:<>
-							<div className="account-callout"><span>Available REAL balance after pending reservations: {availableBalance===null?'Unavailable':money(availableBalance,'USD')}. A {WITHDRAWAL_COMMISSION_PERCENT}% commission is deducted from the requested amount; no separate BTC payment is required. The fee is posted internally only after an administrator confirms the actual external payout. Approval alone does not send funds or charge the fee.</span></div>
+							<div className="account-callout"><span>REAL withdrawal eligibility: request {money(MIN_REAL_WITHDRAWAL_USD,'USD')} to {money(MAX_REAL_WITHDRAWAL_USD,'USD')} and keep at least {money(REQUIRED_REAL_WITHDRAWAL_RESERVE_USD,'USD')} available after this request and other reservations. Available now: {availableBalance===null?'Unavailable':money(availableBalance,'USD')}. A {WITHDRAWAL_COMMISSION_PERCENT}% commission is deducted from the requested amount; no separate BTC payment is required. The fee is posted internally only after an administrator confirms the actual external payout. Approval alone does not send funds or charge the fee.</span></div>
 							{amount&&Number(amount)>0&&<div className="wallet-deposit-fee-preview" aria-live="polite"><span>Estimated net payout after {WITHDRAWAL_COMMISSION_PERCENT}% commission</span><strong>{money(withdrawalAmounts.netCents/100,'USD')}</strong><small>Gross withdrawal {money(withdrawalAmounts.grossCents/100,'USD')} · commission {money(withdrawalAmounts.feeCents/100,'USD')} · fee is charged only if the external payout is completed.</small></div>}
 							{btcWithdrawalSubmissionEnabled&&<div className="grid gap-3 sm:grid-cols-2" aria-label="Bitcoin withdrawal information">
 								<label className="account-label">BTC network<input className="input" value="Bitcoin mainnet (BTC)" readOnly/></label>

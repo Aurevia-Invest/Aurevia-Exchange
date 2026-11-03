@@ -9,6 +9,7 @@ import {rateLimit} from '@/lib/rate-limit';
 import {jsonSafe} from '@/lib/serializers';
 import {getRealWithdrawableBalance} from '@/lib/real-withdrawals';
 import {decryptWithdrawalDestination} from '@/lib/withdrawal-destinations';
+import {REQUIRED_REAL_WITHDRAWAL_RESERVE_USD} from '@/lib/withdrawal-fee';
 
 const schema=z.object({
 	id:z.string().min(1).max(64),
@@ -93,7 +94,7 @@ export async function POST(request:Request){
 							const others=await tx.fundingRequest.aggregate({where:{userId:current.userId,accountMode:AccountMode.REAL,currency:current.currency,type:FundingType.WITHDRAWAL,status:{in:reservingStatuses},id:{not:current.id}},_sum:{amount:true}});
 							return ledgerBalance.minus(others._sum.amount??new Prisma.Decimal(0));
 						})();
-					if(available.lt(current.amount))throw new Error('INSUFFICIENT_WITHDRAWABLE_FUNDS');
+					if(available.lt(current.amount.plus(REQUIRED_REAL_WITHDRAWAL_RESERVE_USD)))throw new Error('INSUFFICIENT_WITHDRAWABLE_FUNDS');
 					const fee=current.feeAmount??new Prisma.Decimal(0);
 					const netPayout=current.creditedAmount??current.amount.minus(fee);
 					if(fee.lt(0)||netPayout.lt(0)||!netPayout.plus(fee).equals(current.amount))throw new Error('INVALID_WITHDRAWAL_ALLOCATION');
@@ -139,7 +140,8 @@ export async function POST(request:Request){
 		const known=['WITHDRAWAL_NOT_FOUND','DEMO_WITHDRAWAL_DISABLED','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_SELF_REVIEW_FORBIDDEN','WITHDRAWAL_RESTRICTED','WITHDRAWAL_INVALID_TRANSITION','IDEMPOTENCY_KEY_REUSED','INSUFFICIENT_WITHDRAWABLE_FUNDS','CRYPTO_REFERENCE_REQUIRED','WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED','WITHDRAWAL_DESTINATION_DECRYPTION_FAILED'];
 		if(error instanceof Error&&known.includes(error.message)){
 			const status=error.message==='WITHDRAWAL_SELF_REVIEW_FORBIDDEN'?403:error.message==='WITHDRAWAL_NOT_FOUND'?404:error.message==='WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED'||error.message==='WITHDRAWAL_DESTINATION_DECRYPTION_FAILED'?503:409;
-			return NextResponse.json({error:error.message==='WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED'?'Secure destination storage is not configured.':error.message.replaceAll('_',' ').toLowerCase()},{status});
+			const message=error.message==='WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED'?'Secure destination storage is not configured.':error.message==='INSUFFICIENT_WITHDRAWABLE_FUNDS'?`Completion cannot proceed while keeping at least $${REQUIRED_REAL_WITHDRAWAL_RESERVE_USD.toLocaleString('en-US')} available after reservations.`:error.message.replaceAll('_',' ').toLowerCase();
+			return NextResponse.json({error:message},{status});
 		}
 		if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2034')return NextResponse.json({error:'The request changed during processing. Retry with the same idempotency key.'},{status:409});
 		console.error('Withdrawal lifecycle update failed.',error instanceof Error?error.name:'UnknownError');

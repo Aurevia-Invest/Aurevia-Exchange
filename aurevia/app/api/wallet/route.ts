@@ -15,7 +15,7 @@ import {getRealWithdrawableBalance} from '@/lib/real-withdrawals';
 import {decryptWithdrawalDestination} from '@/lib/withdrawal-destinations';
 import {rateLimit} from '@/lib/rate-limit';
 import {normalizeBitcoinWithdrawalSubmission} from '@/lib/bitcoin-withdrawal-submission';
-import {calculateWithdrawalAmounts,WITHDRAWAL_COMMISSION_PERCENT} from '@/lib/withdrawal-fee';
+import {calculateWithdrawalAmounts,getWithdrawalEligibilityIssue,MAX_REAL_WITHDRAWAL_USD,MIN_REAL_WITHDRAWAL_USD,REQUIRED_REAL_WITHDRAWAL_RESERVE_USD,WITHDRAWAL_COMMISSION_PERCENT} from '@/lib/withdrawal-fee';
 
 const schema=z.object({
 	type:z.nativeEnum(FundingType),
@@ -152,6 +152,11 @@ export async function POST(req:Request){
 		const currency='USD';
 		const amount=roundUsdAmount(parsed.amount);
 		if(amount.lte(0))throw new Error('INVALID_AMOUNT');
+		if(parsed.type===FundingType.WITHDRAWAL){
+			const limitIssue=getWithdrawalEligibilityIssue(amount.toString());
+			if(limitIssue==='BELOW_MINIMUM')throw new Error('WITHDRAWAL_BELOW_MINIMUM');
+			if(limitIssue==='ABOVE_MAXIMUM')throw new Error('WITHDRAWAL_ABOVE_MAXIMUM');
+		}
 		const withdrawalAmounts=parsed.type===FundingType.WITHDRAWAL?calculateWithdrawalAmounts(amount.toString()):null;
 		if(withdrawalAmounts&&(!withdrawalAmounts.feeCents||withdrawalAmounts.netCents<=0))throw new Error('WITHDRAWAL_AMOUNT_BELOW_COMMISSION_MINIMUM');
 		const withdrawalFee=withdrawalAmounts?new Prisma.Decimal(withdrawalAmounts.feeCents).div(100):null;
@@ -185,7 +190,7 @@ export async function POST(req:Request){
 				else if(currentBalance.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_AVAILABLE_BALANCE');
 				if(currentUser.accountMode==='REAL'){
 					const withdrawable=await getRealWithdrawableBalance(tx,user.id,currentBalance);
-					if(withdrawable.lt(amount))throw new Error('INSUFFICIENT_AVAILABLE_BALANCE');
+					if(getWithdrawalEligibilityIssue(amount.toString(),withdrawable.toString())==='INSUFFICIENT_RESERVE')throw new Error('WITHDRAWAL_RESERVE_REQUIRED');
 				}
 			}
 			const request=await tx.fundingRequest.create({data:{
@@ -243,8 +248,17 @@ export async function POST(req:Request){
 		if(error instanceof Error&&error.message==='WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED')return NextResponse.json({error:'Secure destination storage is not configured. Contact Aurevia support.'},{status:503});
 		if(error instanceof Error&&error.message==='WITHDRAWAL_DESTINATION_DECRYPTION_FAILED')return NextResponse.json({error:'The saved destination could not be verified. Contact Aurevia support.'},{status:503});
 		if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2034')return NextResponse.json({error:'The account changed while submitting this request. Refresh and try again.'},{status:409});
-		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','DEPOSITS_DISABLED','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED','BITCOIN_DETAILS_NOT_ALLOWED','BITCOIN_NETWORK_REQUIRED','BTC_WITHDRAWAL_DESTINATION_REQUIRED','INVALID_BTC_TXID','INVALID_BTC_SENDER_ADDRESS','WITHDRAWAL_AMOUNT_BELOW_COMMISSION_MINIMUM'];
-		if(error instanceof Error&&known.includes(error.message))return NextResponse.json({error:error.message==='WITHDRAWAL_AMOUNT_BELOW_COMMISSION_MINIMUM'?'Withdrawal must be at least $0.05 so the 10% commission rounds to at least $0.01.':error.message.replaceAll('_',' ').toLowerCase()},{status:error.message==='IDEMPOTENCY_KEY_REUSED'?409:error.message==='DEPOSITS_DISABLED'||error.message==='ACCOUNT_RESTRICTED'||error.message==='WITHDRAWAL_DISABLED'||error.message==='REAL_KYC_REQUIRED'||error.message==='FIRST_TRADE_REQUIRED'?403:400});
+		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','DEPOSITS_DISABLED','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED','BITCOIN_DETAILS_NOT_ALLOWED','BITCOIN_NETWORK_REQUIRED','BTC_WITHDRAWAL_DESTINATION_REQUIRED','INVALID_BTC_TXID','INVALID_BTC_SENDER_ADDRESS','WITHDRAWAL_BELOW_MINIMUM','WITHDRAWAL_ABOVE_MAXIMUM','WITHDRAWAL_RESERVE_REQUIRED','WITHDRAWAL_AMOUNT_BELOW_COMMISSION_MINIMUM'];
+		if(error instanceof Error&&known.includes(error.message)){
+			const messages:Record<string,string>={
+				WITHDRAWAL_BELOW_MINIMUM:`The minimum REAL withdrawal request is $${MIN_REAL_WITHDRAWAL_USD.toLocaleString('en-US')}.`,
+				WITHDRAWAL_ABOVE_MAXIMUM:`The maximum REAL withdrawal request is $${MAX_REAL_WITHDRAWAL_USD.toLocaleString('en-US')}.`,
+				WITHDRAWAL_RESERVE_REQUIRED:`Keep at least $${REQUIRED_REAL_WITHDRAWAL_RESERVE_USD.toLocaleString('en-US')} available after this request and other reservations.`,
+				WITHDRAWAL_AMOUNT_BELOW_COMMISSION_MINIMUM:'Withdrawal must be at least $0.05 so the 10% commission rounds to at least $0.01.',
+			};
+			const status=error.message==='IDEMPOTENCY_KEY_REUSED'?409:error.message==='DEPOSITS_DISABLED'||error.message==='ACCOUNT_RESTRICTED'||error.message==='WITHDRAWAL_DISABLED'||error.message==='REAL_KYC_REQUIRED'||error.message==='FIRST_TRADE_REQUIRED'?403:error.message==='WITHDRAWAL_RESERVE_REQUIRED'?409:400;
+			return NextResponse.json({error:messages[error.message]||error.message.replaceAll('_',' ').toLowerCase()},{status});
+		}
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
 		if(['P1001','P1002','P1017','P2021','P2022'].includes(code))return NextResponse.json({error:'Funding service is temporarily unavailable.'},{status:503});
 		console.error(`Funding request failed (${/^[A-Z0-9_]{2,32}$/.test(code)?code:error instanceof Error?error.name:'UnknownError'}).`);

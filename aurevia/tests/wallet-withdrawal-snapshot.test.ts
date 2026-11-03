@@ -48,7 +48,7 @@ function request(idempotencyKey=key){
 	return new Request('https://aurevia.test/api/wallet',{
 		method:'POST',
 		headers:{'content-type':'application/json','Idempotency-Key':idempotencyKey},
-		body:JSON.stringify({type:FundingType.WITHDRAWAL,amount:25,currency:'USD',withdrawalDestinationId:destination.id,destinationConfirmed:true}),
+		body:JSON.stringify({type:FundingType.WITHDRAWAL,amount:30000,currency:'USD',withdrawalDestinationId:destination.id,destinationConfirmed:true}),
 	});
 }
 
@@ -56,7 +56,7 @@ function bitcoinWithdrawalRequest(network='BITCOIN_MAINNET'){
 	return new Request('https://aurevia.test/api/wallet',{
 		method:'POST',
 		headers:{'content-type':'application/json','Idempotency-Key':'btc-withdrawal-request'},
-		body:JSON.stringify({type:FundingType.WITHDRAWAL,amount:20,currency:'USD',transactionReference:'A'.repeat(64),network,senderEmail:'sender@example.com',senderWalletName:'Example wallet',senderWalletAddress:'1BoatSLRHtKNngkdXEeobR76b53LETtpyT',transactionDateTime:'2026-03-08T08:30:00.000Z',withdrawalDestinationId:bitcoinDestination.id,destinationConfirmed:true}),
+		body:JSON.stringify({type:FundingType.WITHDRAWAL,amount:30000,currency:'USD',transactionReference:'A'.repeat(64),network,senderEmail:'sender@example.com',senderWalletName:'Example wallet',senderWalletAddress:'1BoatSLRHtKNngkdXEeobR76b53LETtpyT',transactionDateTime:'2026-03-08T08:30:00.000Z',withdrawalDestinationId:bitcoinDestination.id,destinationConfirmed:true}),
 	});
 }
 
@@ -67,9 +67,9 @@ beforeEach(()=>{
 	mocks.userFindUnique.mockResolvedValue({accountMode:AccountMode.REAL,status:'ACTIVE',depositEnabled:true,withdrawalEnabled:true,accountRestricted:false});
 	mocks.destinationFindFirst.mockResolvedValue(destination);
 	mocks.ensureUserLedger.mockResolvedValue({id:'user-ledger'});
-	mocks.balance.mockResolvedValue(new Prisma.Decimal('100'));
+	mocks.balance.mockResolvedValue(new Prisma.Decimal('100000'));
 	mocks.roundUsdAmount.mockImplementation((value:number|string)=>new Prisma.Decimal(value));
-	mocks.getRealWithdrawableBalance.mockResolvedValue(new Prisma.Decimal('100'));
+	mocks.getRealWithdrawableBalance.mockResolvedValue(new Prisma.Decimal('100000'));
 	mocks.validateWithdrawal.mockReturnValue(undefined);
 	mocks.decryptWithdrawalDestination.mockReturnValue({type:'BANK_TRANSFER',nickname:'Primary checking'});
 	mocks.createNotification.mockResolvedValue(undefined);
@@ -109,7 +109,7 @@ describe('wallet withdrawal destination snapshot',()=>{
 	});
 
 	it('returns an idempotent replay without creating a second request or destination snapshot',async()=>{
-		const existing={id:'withdrawal-1',userId:'user-1',accountMode:AccountMode.REAL,type:FundingType.WITHDRAWAL,amount:new Prisma.Decimal(25),currency:'USD',paymentMethodId:null,transactionReference:null,withdrawalDestinationId:destination.id,receiptKey:null};
+		const existing={id:'withdrawal-1',userId:'user-1',accountMode:AccountMode.REAL,type:FundingType.WITHDRAWAL,amount:new Prisma.Decimal(30000),currency:'USD',paymentMethodId:null,transactionReference:null,withdrawalDestinationId:destination.id,receiptKey:null};
 		tx.fundingRequest.findUnique.mockResolvedValue(existing);
 		const response=await POST(request());
 		expect(response.status).toBe(200);
@@ -126,9 +126,9 @@ describe('wallet withdrawal destination snapshot',()=>{
 
 		expect(response.status).toBe(201);
 		expect(body.status).toBe(FundingStatus.PENDING_REVIEW);
-		expect((storedRequest?.feeAmount as Prisma.Decimal).toString()).toBe('2');
+		expect((storedRequest?.feeAmount as Prisma.Decimal).toString()).toBe('3000');
 		expect((storedRequest?.feePercent as Prisma.Decimal).toString()).toBe('10');
-		expect((storedRequest?.creditedAmount as Prisma.Decimal).toString()).toBe('18');
+		expect((storedRequest?.creditedAmount as Prisma.Decimal).toString()).toBe('27000');
 		expect(storedRequest?.creditedCurrency).toBe('USD');
 		expect(storedRequest).toMatchObject({
 			transactionReference:'a'.repeat(64),
@@ -170,15 +170,36 @@ describe('wallet withdrawal destination snapshot',()=>{
 		expect(tx.fundingRequest.create).not.toHaveBeenCalled();
 	});
 
-	it('rejects a withdrawal too small to apply the disclosed commission',async()=>{
+	it('rejects a withdrawal below the configured $30,000 minimum',async()=>{
 		const response=await POST(new Request('https://aurevia.test/api/wallet',{
 			method:'POST',
 			headers:{'content-type':'application/json','Idempotency-Key':'small-withdrawal-rejected'},
-			body:JSON.stringify({type:FundingType.WITHDRAWAL,amount:0.04,currency:'USD',withdrawalDestinationId:destination.id,destinationConfirmed:true}),
+			body:JSON.stringify({type:FundingType.WITHDRAWAL,amount:29999.99,currency:'USD',withdrawalDestinationId:destination.id,destinationConfirmed:true}),
 		}));
 
 		expect(response.status).toBe(400);
-		expect((await response.json()).error).toContain('at least $0.05');
+		expect((await response.json()).error).toContain('$30,000');
+		expect(tx.fundingRequest.create).not.toHaveBeenCalled();
+	});
+
+	it('rejects a withdrawal above the configured $300,000 maximum',async()=>{
+		const response=await POST(new Request('https://aurevia.test/api/wallet',{
+			method:'POST',
+			headers:{'content-type':'application/json','Idempotency-Key':'large-withdrawal-rejected'},
+			body:JSON.stringify({type:FundingType.WITHDRAWAL,amount:300000.01,currency:'USD',withdrawalDestinationId:destination.id,destinationConfirmed:true}),
+		}));
+
+		expect(response.status).toBe(400);
+		expect((await response.json()).error).toContain('$300,000');
+		expect(tx.fundingRequest.create).not.toHaveBeenCalled();
+	});
+
+	it('requires the full withdrawal amount plus a $300 remaining balance',async()=>{
+		mocks.getRealWithdrawableBalance.mockResolvedValue(new Prisma.Decimal('30299.99'));
+		const response=await POST(request('reserve-not-met'));
+
+		expect(response.status).toBe(409);
+		expect((await response.json()).error).toContain('$300');
 		expect(tx.fundingRequest.create).not.toHaveBeenCalled();
 	});
 });

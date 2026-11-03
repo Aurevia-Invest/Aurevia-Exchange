@@ -32,9 +32,9 @@ beforeEach(()=>{
 	vi.clearAllMocks();
 	current={
 		id:withdrawalId,userId:'user-1',type:FundingType.WITHDRAWAL,accountMode:AccountMode.REAL,
-		status:FundingStatus.PENDING_REVIEW,currency:'USD',amount:new Prisma.Decimal('25.00'),
-		feeAmount:new Prisma.Decimal('2.50'),feePercent:new Prisma.Decimal('10'),
-		creditedAmount:new Prisma.Decimal('22.50'),creditedCurrency:'USD',
+		status:FundingStatus.PENDING_REVIEW,currency:'USD',amount:new Prisma.Decimal('30000.00'),
+		feeAmount:new Prisma.Decimal('3000.00'),feePercent:new Prisma.Decimal('10'),
+		creditedAmount:new Prisma.Decimal('27000.00'),creditedCurrency:'USD',
 		withdrawalDestinationId:'destination-1',adminNote:null,
 	};
 	const auditedActions=new Map<string,string>();
@@ -67,9 +67,9 @@ beforeEach(()=>{
 	mocks.ensureSystemAccount.mockImplementation(async(_tx:unknown,code:string)=>({id:code.includes('FEE')?'withdrawal-fee':'withdrawal-clearing',currency:'USD'}));
 	mocks.postDoubleEntry.mockResolvedValue(undefined);
 	mocks.postWithdrawalDebitWithFee.mockResolvedValue(undefined);
-	mocks.balance.mockResolvedValue(new Prisma.Decimal('100.00'));
+	mocks.balance.mockResolvedValue(new Prisma.Decimal('100000.00'));
 	mocks.createNotification.mockResolvedValue(undefined);
-	mocks.getRealWithdrawableBalance.mockResolvedValue(new Prisma.Decimal('100.00'));
+	mocks.getRealWithdrawableBalance.mockResolvedValue(new Prisma.Decimal('100000.00'));
 	mocks.decryptWithdrawalDestination.mockReturnValue({type:'BANK_TRANSFER',network:null});
 });
 
@@ -99,9 +99,9 @@ describe('administrator withdrawal lifecycle',()=>{
 		expect(mocks.postWithdrawalDebitWithFee).toHaveBeenCalledWith(tx,expect.objectContaining({
 			reference:`FUNDING:${withdrawalId}:EXTERNAL_WITHDRAWAL`,userAccountId:'user-ledger',
 			payoutAccountId:'withdrawal-clearing',feeAccountId:'withdrawal-fee',
-			grossAmount:new Prisma.Decimal('25.00'),netPayout:new Prisma.Decimal('22.50'),feeAmount:new Prisma.Decimal('2.50'),
+			grossAmount:new Prisma.Decimal('30000.00'),netPayout:new Prisma.Decimal('27000.00'),feeAmount:new Prisma.Decimal('3000.00'),
 		}));
-		expect(mocks.getRealWithdrawableBalance).toHaveBeenCalledWith(tx,'user-1',new Prisma.Decimal('100.00'),withdrawalId);
+		expect(mocks.getRealWithdrawableBalance).toHaveBeenCalledWith(tx,'user-1',new Prisma.Decimal('100000.00'),withdrawalId);
 	});
 
 	it('does not complete a withdrawal that would consume paper-trading collateral',async()=>{
@@ -112,6 +112,20 @@ describe('administrator withdrawal lifecycle',()=>{
 
 		expect(response.status).toBe(409);
 		expect(mocks.postWithdrawalDebitWithFee).not.toHaveBeenCalled();
+	});
+
+	it('requires the $300 reserve to remain available after the completed payout',async()=>{
+		current.status=FundingStatus.PROCESSING;
+		mocks.getRealWithdrawableBalance.mockResolvedValue(new Prisma.Decimal('30299.99'));
+
+		const blocked=await POST(request('COMPLETE',{processingReference:'bank-ref-123',confirmExternalProcessing:true}));
+		expect(blocked.status).toBe(409);
+		expect(mocks.postWithdrawalDebitWithFee).not.toHaveBeenCalled();
+
+		mocks.getRealWithdrawableBalance.mockResolvedValue(new Prisma.Decimal('30300.00'));
+		const completed=await POST(request('COMPLETE',{processingReference:'bank-ref-123',confirmExternalProcessing:true}));
+		expect(completed.status).toBe(200);
+		expect(mocks.postWithdrawalDebitWithFee).toHaveBeenCalledTimes(1);
 	});
 
 	it('rejects invalid state transitions and crypto confirmations without a transaction hash',async()=>{

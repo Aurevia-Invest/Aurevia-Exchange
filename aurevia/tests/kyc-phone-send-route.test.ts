@@ -1,6 +1,20 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
 const mocks=vi.hoisted(()=>({
+	AkedlyProviderError:class extends Error{
+		readonly httpStatus?:number;
+		readonly providerCode?:string;
+		readonly providerEndpoint='https://api.akedly.io/api/v1/widget-sdk/create-attempt';
+		readonly providerAttemptId='attempt_1234567890';
+		readonly providerMessage='provider returned [redacted-number]';
+		readonly failureTimestamp='2026-11-03T17:00:00.000Z';
+
+		constructor(httpStatus=401,providerCode='INVALID_SIGNATURE'){
+			super('AKEDLY_ATTEMPT_REJECTED');
+			this.httpStatus=httpStatus;
+			this.providerCode=providerCode;
+		}
+	},
 	requireUser:vi.fn(),
 	userFindUnique:vi.fn(),
 	userUpdate:vi.fn(),
@@ -27,7 +41,11 @@ vi.mock('@/lib/db',()=>({db:{
 	},
 	$transaction:mocks.transaction,
 }}));
-vi.mock('@/lib/akedly',()=>({akedlyIsConfigured:mocks.akedlyConfigured,akedlyReadiness:mocks.akedlyReadiness}));
+vi.mock('@/lib/akedly',()=>({
+	AkedlyProviderError:mocks.AkedlyProviderError,
+	akedlyIsConfigured:mocks.akedlyConfigured,
+	akedlyReadiness:mocks.akedlyReadiness,
+}));
 vi.mock('@/lib/akedly-verification',()=>({startAkedlyVerification:mocks.startAkedly}));
 vi.mock('@/lib/verification-delivery',()=>({
 	hasConfiguredTermii:mocks.hasConfiguredTermii,
@@ -131,5 +149,43 @@ describe('phone verification provider fallback',()=>{
 		expect(mocks.userUpdate).not.toHaveBeenCalled();
 		expect(warning).toHaveBeenCalledWith('[kyc-phone] No phone verification provider is configured.',expect.objectContaining({missingAkedly:['AKEDLY_API_KEY'],termiiConfigured:false}));
 		warning.mockRestore();
+	});
+
+	it('logs correlated, sanitized Akedly provider diagnostics when fallback is unavailable',async()=>{
+		mocks.hasConfiguredTermii.mockReturnValue(false);
+		mocks.startAkedly.mockRejectedValue(new mocks.AkedlyProviderError());
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+		const errorLog=vi.spyOn(console,'error').mockImplementation(()=>undefined);
+
+		const response=await POST(request());
+		const body=await response.json();
+
+		expect(response.status).toBe(503);
+		expect(body).toMatchObject({
+			error:'Unable to send a verification code right now.',
+			requestId:expect.any(String),
+			referenceId:expect.any(String),
+		});
+		expect(body.referenceId).toBe(body.requestId);
+		expect(warning).toHaveBeenCalledWith(
+			'[kyc-phone] Akedly verification attempt failed.',
+			expect.objectContaining({
+				requestId:expect.any(String),
+				referenceId:expect.any(String),
+				endpoint:'/api/kyc/phone/send',
+				failureCode:'AKEDLY_ATTEMPT_REJECTED',
+				failureTimestamp:'2026-11-03T17:00:00.000Z',
+				providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+				providerAttemptId:'attempt_1234567890',
+				providerHttpStatus:401,
+				providerCode:'INVALID_SIGNATURE',
+				providerMessage:'provider returned [redacted-number]',
+			}),
+		);
+		const diagnostic=warning.mock.calls[0]?.[1];
+		expect(JSON.stringify(diagnostic)).not.toContain('+12125550123');
+		expect(errorLog).toHaveBeenCalledWith('[kyc-phone] Request failed.',expect.objectContaining({requestId:expect.any(String)}));
+		warning.mockRestore();
+		errorLog.mockRestore();
 	});
 });

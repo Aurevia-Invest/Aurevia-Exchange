@@ -8,7 +8,7 @@ import {rateLimit} from '@/lib/rate-limit';
 import {verificationConfig} from '@/lib/config';
 import {hashVerificationCode,hasConfiguredTermii,sendTermiiVerificationToken} from '@/lib/verification-delivery';
 import {isValidE164} from '@/lib/registration-validation';
-import {akedlyIsConfigured,akedlyReadiness} from '@/lib/akedly';
+import {AkedlyProviderError,akedlyIsConfigured,akedlyReadiness} from '@/lib/akedly';
 import {startAkedlyVerification} from '@/lib/akedly-verification';
 
 const schema=z.object({
@@ -17,6 +17,7 @@ const schema=z.object({
 });
 
 export async function POST(request:Request){
+	const requestId=randomUUID();
 	try{
 		const user=await requireUser();
 		const input=schema.parse(await request.json());
@@ -54,6 +55,20 @@ export async function POST(request:Request){
 					'AKEDLY_INVALID_PROVIDER_RESPONSE',
 					'AKEDLY_INVALID_WIDGET_URL',
 				].includes(error.message);
+				if(providerFailure){
+					console.warn('[kyc-phone] Akedly verification attempt failed.',{
+						requestId,
+						referenceId:requestId,
+						endpoint:'/api/kyc/phone/send',
+						failureCode:error instanceof Error?error.message:'AKEDLY_REQUEST_FAILED',
+						failureTimestamp:error instanceof AkedlyProviderError?error.failureTimestamp:new Date().toISOString(),
+						providerEndpoint:error instanceof AkedlyProviderError?error.providerEndpoint:null,
+						providerAttemptId:error instanceof AkedlyProviderError?error.providerAttemptId||null:null,
+						providerHttpStatus:error instanceof AkedlyProviderError?error.httpStatus||null:null,
+						...(error instanceof AkedlyProviderError&&error.providerCode?{providerCode:error.providerCode}:{}),
+						...(error instanceof AkedlyProviderError&&error.providerMessage?{providerMessage:error.providerMessage}:{}),
+					});
+				}
 				if(!providerFailure||!hasConfiguredTermii())throw error;
 			}
 		}
@@ -122,7 +137,11 @@ export async function POST(request:Request){
 		if(error instanceof SyntaxError)return NextResponse.json({error:'Phone verification data must be valid JSON.'},{status:400});
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Sign in to verify your phone number.'},{status:401});
 		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many code requests. Try again later.'},{status:429});
-		console.error('[kyc-phone] Request failed.',{errorType:error instanceof Error?error.name:'UnknownError'});
-		return NextResponse.json({error:'Unable to send a verification code right now.'},{status:503});
+		console.error('[kyc-phone] Request failed.',{requestId,errorType:error instanceof Error?error.name:'UnknownError'});
+		return NextResponse.json({
+			error:'Unable to send a verification code right now.',
+			requestId,
+			referenceId:requestId,
+		},{status:503});
 	}
 }

@@ -13,13 +13,16 @@ const mocks=vi.hoisted(()=>({
 	codeUpdateMany:vi.fn(),
 	codeDeleteMany:vi.fn(),
 	akedlyConfigured:vi.fn(),
+	akedlyReadiness:vi.fn(),
 	AkedlyProviderError:class extends Error{
 		readonly httpStatus?:number;
 		readonly providerCode?:string;
-		constructor(httpStatus?:number,providerCode?:string){
+		readonly retryAfterSeconds?:number;
+		constructor(httpStatus?:number,providerCode?:string,retryAfterSeconds?:number){
 			super('AKEDLY_ATTEMPT_REJECTED');
 			this.httpStatus=httpStatus;
 			this.providerCode=providerCode;
+			this.retryAfterSeconds=retryAfterSeconds;
 		}
 	},
 	startAkedly:vi.fn(),
@@ -57,6 +60,7 @@ vi.mock('@/lib/db',()=>({db:{
 vi.mock('@/lib/akedly',()=>({
 	AkedlyProviderError:mocks.AkedlyProviderError,
 	akedlyIsConfigured:mocks.akedlyConfigured,
+	akedlyReadiness:mocks.akedlyReadiness,
 }));
 vi.mock('@/lib/akedly-verification',()=>({
 	startAkedlyVerification:mocks.startAkedly,
@@ -119,6 +123,10 @@ describe('registration verification resend',()=>{
 		mocks.codeUpdateMany.mockResolvedValue({count:1});
 		mocks.codeDeleteMany.mockResolvedValue({count:1});
 		mocks.akedlyConfigured.mockReturnValue(false);
+		mocks.akedlyReadiness.mockImplementation(()=>{
+			const enabled=mocks.akedlyConfigured();
+			return {enabled,ready:enabled,missing:enabled?[]:['AKEDLY_API_KEY']};
+		});
 		mocks.startAkedly.mockResolvedValue({attemptId:'attempt_1234567890',iframeUrl:'https://auth.akedly.io/widget',expiresAt:new Date(Date.now()+60_000)});
 		mocks.startAkedlyRegistration.mockResolvedValue({attemptId:'attempt_1234567890',iframeUrl:'https://auth.akedly.io/widget',expiresAt:new Date(Date.now()+60_000)});
 		mocks.hasEmailProvider.mockReturnValue(true);
@@ -270,6 +278,52 @@ describe('registration verification resend',()=>{
 		expect(await response.json()).toMatchObject({error:expect.stringContaining('Phone verification')});
 		expect(mocks.deliverCode).not.toHaveBeenCalled();
 		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+	});
+
+	it('shows safe country-policy guidance without exposing provider response details',async()=>{
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new mocks.AkedlyProviderError(403,'DESTINATION_COUNTRY_BLOCKED'));
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-phone',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:'+2348031234567',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+
+		const response=await POST(registrationRequest());
+		const result=await response.json();
+
+		expect(response.status).toBe(503);
+		expect(result.error).toContain('not available for this phone destination');
+		expect(JSON.stringify(result)).not.toContain('DESTINATION_COUNTRY_BLOCKED');
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+		expect(mocks.deliverCode).not.toHaveBeenCalled();
+	});
+
+	it('preserves provider rate limits and retry durations without starting duplicate attempts',async()=>{
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new mocks.AkedlyProviderError(429,'CHANNEL_QUOTA_EXCEEDED',120));
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-phone',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:'+2348031234567',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(429);
+		expect(response.headers.get('retry-after')).toBe('120');
+		expect(await response.json()).toMatchObject({
+			error:expect.stringContaining('delivery limit'),
+			retryAfterSeconds:120,
+		});
+		expect(mocks.startAkedlyRegistration).toHaveBeenCalledOnce();
+		expect(mocks.deliverCode).not.toHaveBeenCalled();
 	});
 
 	it('does not switch providers when an Akedly resend is still cooling down',async()=>{

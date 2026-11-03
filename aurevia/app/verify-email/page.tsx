@@ -66,7 +66,7 @@ export default function VerifyEmailPage(){
 		busyRef.current=true;
 		setBusy(true);setError('');setMessage('');
 		try{
-			const response=await fetch('/api/register/resend',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email})});
+			const response=await fetch('/api/register/resend',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email}),signal:AbortSignal.timeout(15_000)});
 			const result=await response.json();
 			if(result.phoneConflict){
 				window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
@@ -126,7 +126,7 @@ export default function VerifyEmailPage(){
 		busyRef.current=true;
 		setBusy(true);setError('');setMessage('');
 		try{
-			const response=await fetch('/api/register/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,code})});
+			const response=await fetch('/api/register/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,code}),signal:AbortSignal.timeout(15_000)});
 			const result=await response.json();
 			if(!response.ok){
 				if(result.code==='PHONE_ALREADY_IN_USE'){
@@ -153,7 +153,9 @@ export default function VerifyEmailPage(){
 			window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
 			router.replace('/login?verified=1');
 		}catch(exception){
-			setError(exception instanceof Error?exception.message:'Unable to verify this email address.');
+			setError(exception instanceof Error&&exception.name==='TimeoutError'
+				?'Verification is taking longer than expected. Check your connection and retry; no new code was requested.'
+				:exception instanceof Error?exception.message:'Unable to verify this email address.');
 		}finally{
 			busyRef.current=false;
 			setBusy(false);
@@ -187,8 +189,14 @@ export default function VerifyEmailPage(){
 		let cancelled=false;
 		let timeout:ReturnType<typeof setTimeout>;
 		const check=async()=>{
+			if(Date.parse(attempt.expiresAt)<=Date.now()){
+				window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
+				setAttempt(null);
+				setMessage('This verification attempt expired. Request a fresh attempt to continue.');
+				return;
+			}
 			try{
-				const response=await fetch('/api/register/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,attemptId:attempt.attemptId})});
+				const response=await fetch('/api/register/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,attemptId:attempt.attemptId}),signal:AbortSignal.timeout(10_000)});
 				if(response.ok){
 					const result=await response.json();
 					if(result.verified){

@@ -2,6 +2,7 @@ import {createHmac} from 'node:crypto';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {Webhook} from 'svix';
 import {
+	akedlyReadiness,
 	createAkedlyAttempt,
 	isConfirmedAkedlyAttempt,
 	isConfirmedAkedlyLookup,
@@ -118,6 +119,16 @@ describe('Akedly V2 server integration',()=>{
 		await expect(createAkedlyAttempt({email:'person@example.invalid'})).rejects.toThrow('AKEDLY_INVALID_WIDGET_URL');
 	});
 
+	it('reports only missing configuration variable names and never credential values',()=>{
+		vi.stubEnv('AKEDLY_WIDGET_SECRET','');
+
+		const readiness=akedlyReadiness();
+
+		expect(readiness).toEqual({enabled:true,missing:['AKEDLY_WIDGET_SECRET'],ready:false});
+		expect(JSON.stringify(readiness)).not.toContain('test-api-key');
+		expect(JSON.stringify(readiness)).not.toContain('test-widget-secret');
+	});
+
 	it('retains the HTTP status and only a safe provider code for a rejected attempt',async()=>{
 		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
 			status:'error',
@@ -132,6 +143,59 @@ describe('Akedly V2 server integration',()=>{
 		});
 		expect(JSON.stringify(failure)).not.toContain('private provider response');
 		expect(JSON.stringify(failure)).not.toContain('person@example.invalid');
+	});
+
+	it.each([
+		[403,'API_KEY_SCOPE_DENIED'],
+		[400,'PIPELINE_NOT_CONFIGURED'],
+		[403,'PIPELINE_OWNERSHIP_MISMATCH'],
+	])('retains Akedly authorization and pipeline rejection codes (%s %s)',async(httpStatus,code)=>{
+		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
+			status:'error',
+			error:{code,message:'private provider details'},
+		}),{status:httpStatus,headers:{'content-type':'application/json'}})));
+
+		const failure=await createAkedlyAttempt({phoneNumber:'+2348031234567'}).catch(error=>error);
+
+		expect(failure).toMatchObject({
+			message:'AKEDLY_ATTEMPT_REJECTED',
+			httpStatus,
+			providerCode:code,
+		});
+		expect(JSON.stringify(failure)).not.toContain('private provider details');
+		expect(JSON.stringify(failure)).not.toContain('+2348031234567');
+	});
+
+	it('parses safe retry durations from rate-limit responses',async()=>{
+		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
+			status:'error',
+			error:{code:'CHANNEL_QUOTA_EXCEEDED',retryAfterSeconds:75,message:'private provider response'},
+		}),{status:429,headers:{'content-type':'application/json'}})));
+
+		const failure=await createAkedlyAttempt({phoneNumber:'+2348031234567'}).catch(error=>error);
+
+		expect(failure).toMatchObject({
+			message:'AKEDLY_ATTEMPT_REJECTED',
+			httpStatus:429,
+			providerCode:'CHANNEL_QUOTA_EXCEEDED',
+			retryAfterSeconds:75,
+		});
+		expect(JSON.stringify(failure)).not.toContain('private provider response');
+	});
+
+	it('retains a provider error code returned with HTTP success',async()=>{
+		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
+			status:'error',
+			error:{code:'CAPTCHA_NOT_VERIFIED',message:'private provider response'},
+		}),{status:200,headers:{'content-type':'application/json'}})));
+
+		const failure=await createAkedlyAttempt({phoneNumber:'+2348031234567'}).catch(error=>error);
+
+		expect(failure).toMatchObject({
+			message:'AKEDLY_ATTEMPT_REJECTED',
+			providerCode:'CAPTCHA_NOT_VERIFIED',
+		});
+		expect(JSON.stringify(failure)).not.toContain('private provider response');
 	});
 
 	it('uses an authenticated server-side attempt status lookup',async()=>{

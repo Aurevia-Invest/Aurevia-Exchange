@@ -43,8 +43,9 @@ describe('server-side registration Turnstile verification',()=>{
 	});
 
 	it.each([
-		['invalid token', {success:false,action:'register',hostname:'aurevia.example'}],
-		['expired or reused token', {success:false,action:'register',hostname:'aurevia.example','error-codes':['timeout-or-duplicate']}],
+		['rejected token', {success:false,action:'register',hostname:'aurevia.example','error-codes':['invalid-input-response']}],
+		['expired token', {success:false,action:'register',hostname:'aurevia.example','error-codes':['timeout-or-duplicate']}],
+		['reused token', {success:false,action:'register',hostname:'aurevia.example','error-codes':['timeout-or-duplicate']}],
 		['wrong action', {success:true,action:'login',hostname:'aurevia.example'}],
 		['wrong hostname', {success:true,action:'register',hostname:'attacker.example'}],
 		['missing hostname', {success:true,action:'register'}],
@@ -52,6 +53,26 @@ describe('server-side registration Turnstile verification',()=>{
 		mocks.fetch.mockResolvedValue(new Response(JSON.stringify(result),{status:200}));
 
 		await expect(verifyRegistrationTurnstile('provider-token')).resolves.toBe(false);
+	});
+
+	it('logs only safe provider rejection codes and never the CAPTCHA token',async()=>{
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+		mocks.fetch.mockResolvedValue(new Response(JSON.stringify({
+			success:false,
+			action:'register',
+			hostname:'aurevia.example',
+			'error-codes':['timeout-or-duplicate','unexpected-private-value'],
+		}),{status:200}));
+
+		await verifyRegistrationTurnstile('private-token-value');
+
+		expect(warning).toHaveBeenCalledWith('[registration-turnstile] Token rejected.',{
+			providerErrorCodes:['timeout-or-duplicate'],
+			actionMatches:true,
+			hostnameMatches:true,
+		});
+		expect(JSON.stringify(warning.mock.calls)).not.toContain('private-token-value');
+		warning.mockRestore();
 	});
 
 	it('fails closed when the provider is unavailable',async()=>{

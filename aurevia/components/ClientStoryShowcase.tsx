@@ -80,11 +80,13 @@ export default function ClientStoryShowcase(){
 				<div className="client-story-stage card p-5 sm:p-7" aria-live="polite">
 					<div className="client-story-stage-grid">
 						<div className="client-story-stage-portrait">
-							{current.imageUrl?(
-								<Image src={current.imageUrl} alt={`Portrait for ${current.displayName}`} width={160} height={160} unoptimized className="client-story-portrait client-story-portrait-lg"/>
-							):(
-								<span className="client-story-monogram client-story-monogram-lg" aria-hidden="true">{current.displayName.trim().charAt(0).toUpperCase()}</span>
-							)}
+							<span className="client-story-avatar client-story-avatar-lg">
+								{current.imageUrl?(
+									<Image src={current.imageUrl} alt={`Portrait for ${current.displayName}`} width={160} height={160} unoptimized className="client-story-portrait"/>
+								):(
+									<span className="client-story-monogram client-story-monogram-lg" aria-hidden="true">{current.displayName.trim().charAt(0).toUpperCase()}</span>
+								)}
+							</span>
 							{Boolean(current.verifiedClientStory)&&(
 								<span className="client-story-verified"><ShieldCheck size={14}/> Verified client story</span>
 							)}

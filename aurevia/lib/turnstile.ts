@@ -1,9 +1,20 @@
 import {randomUUID} from 'node:crypto';
 import {getServerConfiguration} from '@/lib/config/env';
 
-type TurnstileResponse={success?:unknown;action?:unknown;hostname?:unknown};
+type TurnstileResponse={success?:unknown;action?:unknown;hostname?:unknown;'error-codes'?:unknown};
 
 const RENDER_PRODUCTION_HOSTNAME='aurevia-exchange-6hfi.onrender.com';
+const TURNSTILE_ERROR_CODES=new Set([
+	'missing-input-secret',
+	'invalid-input-secret',
+	'missing-input-response',
+	'invalid-input-response',
+	'bad-request',
+	'timeout-or-duplicate',
+	'internal-error',
+	'invalid-request',
+	'sitekey-secret-mismatch',
+]);
 
 function configuredTurnstileHostnames(primaryAppUrl:string){
 	const hostnames=new Set([RENDER_PRODUCTION_HOSTNAME]);
@@ -26,7 +37,7 @@ function configuredTurnstileHostnames(primaryAppUrl:string){
 	return hostnames;
 }
 
-export async function verifyRegistrationTurnstile(token:string){
+export async function verifyRegistrationTurnstile(token:string,requestId?:string){
 	const config=getServerConfiguration();
 	const {turnstileSiteKey,turnstileSecretKey}=config.captcha;
 	if(!turnstileSiteKey||!turnstileSecretKey)throw new Error('TURNSTILE_NOT_CONFIGURED');
@@ -49,14 +60,32 @@ export async function verifyRegistrationTurnstile(token:string){
 			redirect:'error',
 		});
 	}catch{
+		console.warn('[registration-turnstile] Provider request failed.',{...(requestId?{requestId}:{}),reason:'network-error'});
 		throw new Error('TURNSTILE_PROVIDER_UNAVAILABLE');
 	}
 
-	if(!response.ok)throw new Error('TURNSTILE_PROVIDER_UNAVAILABLE');
+	if(!response.ok){
+		console.warn('[registration-turnstile] Provider returned an unsuccessful HTTP response.',{...(requestId?{requestId}:{}),httpStatus:response.status});
+		throw new Error('TURNSTILE_PROVIDER_UNAVAILABLE');
+	}
 	const result=await response.json().catch(()=>null) as TurnstileResponse|null;
-	if(!result)return false;
-	return result.success===true
-		&&result.action==='register'
-		&&typeof result.hostname==='string'
-		&&allowedHostnames.has(result.hostname.toLowerCase());
+	if(!result){
+		console.warn('[registration-turnstile] Provider returned an invalid response.',{...(requestId?{requestId}:{}),reason:'invalid-response'});
+		return false;
+	}
+	const providerErrorCodes=Array.isArray(result['error-codes'])
+		?result['error-codes'].filter((code):code is string=>typeof code==='string'&&TURNSTILE_ERROR_CODES.has(code))
+		:[];
+	const actionMatches=result.action==='register';
+	const hostnameMatches=typeof result.hostname==='string'&&allowedHostnames.has(result.hostname.toLowerCase());
+	const accepted=result.success===true&&actionMatches&&hostnameMatches;
+	if(!accepted){
+		console.warn('[registration-turnstile] Token rejected.',{
+			...(requestId?{requestId}:{}),
+			providerErrorCodes,
+			actionMatches,
+			hostnameMatches,
+		});
+	}
+	return accepted;
 }

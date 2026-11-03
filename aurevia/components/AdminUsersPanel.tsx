@@ -6,8 +6,9 @@ import {RefreshCw,Search,Trash2,UserRound} from 'lucide-react';
 import {SUPPORTED_CURRENCIES} from '@/lib/config/simulation';
 import ReceiptGenerator,{type ReceiptData} from '@/components/ReceiptGenerator';
 import AureviaExchangeId from '@/components/AureviaExchangeId';
+import AccountTierBadge from '@/components/AccountTierBadge';
 
-type AdminUser={id:string;aureviaExchangeId:string|null;email:string;name:string|null;phone:string|null;country:string|null;role:'USER'|'ADMIN';status:string;accountMode:'DEMO'|'REAL';kycStatus:string;createdAt:string;depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null};
+type AdminUser={id:string;aureviaExchangeId:string|null;email:string;name:string|null;phone:string|null;country:string|null;role:'USER'|'ADMIN';status:string;accountMode:'DEMO'|'REAL';accountTier:string;kycStatus:string;createdAt:string;depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null};
 type AdminLoginEvent={id:string;action:string;createdAt:string;metadata:{clientIp?:string|null;userAgent?:string|null;reason?:string|null}|null};
 function AdminUserPhoto({userId,name}:{userId:string;name:string|null}){
 	const [url,setUrl]=useState('');
@@ -22,7 +23,7 @@ function AdminUserPhoto({userId,name}:{userId:string;name:string|null}){
 		return()=>{active=false};
 	},[userId]);
 	return <div className="mb-3 flex items-center gap-3" aria-label={`${name||'User'} profile photo`}>
-		<span className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/5">{url?<Image src={url} alt="" width={56} height={56} unoptimized className="size-14 object-cover"/>:<UserRound size={23} className="muted" aria-hidden="true"/>}</span>
+		<span className="grid size-14 aspect-square shrink-0 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/5">{url?<Image src={url} alt="" width={56} height={56} unoptimized className="profile-avatar-image"/>:<UserRound size={23} className="muted" aria-hidden="true"/>}</span>
 		<span className="text-xs muted">{loaded?(url?'Profile photo':'No profile photo available'):'Loading profile photo…'}</span>
 	</div>;
 }
@@ -210,7 +211,7 @@ export default function AdminUsersPanel(){
 		<label className="mb-4 inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={showDeleted} onChange={event=>setShowDeleted(event.target.checked)}/>Show deleted accounts</label>
 		<div className="overflow-hidden rounded-md border border-white/10">
 			{loading?<p className="account-empty" role="status">Loading accounts…</p>:users.length?<div className="divide-y divide-white/10">{users.map(user=><article className="p-4" key={user.id}>
-				<div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0"><b className="block break-words">{user.name||'Unnamed account'} · {user.email}</b><small className="muted break-all">Internal ID: {user.id} · {user.role} · {user.accountMode} · {user.kycStatus} · {user.status}</small><small className="mt-1 block break-all font-mono text-gold">Aurevia Exchange ID: {user.aureviaExchangeId||'Not assigned'}</small></div><div className="flex flex-wrap gap-2">
+				<div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0"><b className="block break-words">{user.name||'Unnamed account'} · {user.email}</b><small className="muted break-all">Internal ID: {user.id} · {user.role} · {user.accountMode} · {user.kycStatus} · {user.status}</small><div className="mt-1 flex flex-wrap items-center gap-2"><small className="break-all font-mono text-gold">Aurevia Exchange ID: {user.aureviaExchangeId||'Not assigned'}</small><AccountTierBadge tier={user.accountTier}/></div></div><div className="flex flex-wrap gap-2">
 					{user.status==='DELETED'?<><button type="button" className="btn min-h-10 bg-profit text-black" disabled={busy} onClick={()=>void updateDeletedStatus(user,'ACTIVE')}>{busyUserId===user.id?'Saving…':'Restore'}</button><button type="button" className="btn min-h-10 bg-loss text-black" disabled={busy} onClick={()=>{setSelected(user);setConfirmation('');setReason('')}}><Trash2 size={14}/>Permanently delete</button></>:<><button type="button" className="btn min-h-10 bg-white/5" disabled={busy||user.status==='CLOSED'} onClick={()=>void toggleStatus(user)}>{busyUserId===user.id?'Saving…':user.status==='ACTIVE'?'Freeze':'Unfreeze'}</button><button type="button" className="btn min-h-10 bg-loss text-black" disabled={busy||user.status==='CLOSED'} onClick={()=>void updateDeletedStatus(user,'DELETED')}><Trash2 size={14}/>Delete</button><button type="button" className="btn min-h-10 border border-loss/40 bg-loss/10 text-loss" disabled={busy||user.status==='CLOSED'} onClick={()=>{setSelected(user);setConfirmation('');setReason('')}}>Permanently delete</button></>}
 				</div></div>
 				{user.status==='DELETED'?<p className="mt-3 text-sm muted">This account cannot sign in. Restore it to re-enable account access.</p>:<details className="mt-2" open={expandedUserId===user.id} onToggle={event=>{if(event.currentTarget.open)setExpandedUserId(user.id);else if(expandedUserId===user.id)setExpandedUserId('')}}><summary className="min-h-11 cursor-pointer py-2 text-sm gold">Account controls, verification, and ledger</summary>{expandedUserId===user.id&&<div>

@@ -7,7 +7,7 @@ import {db} from '@/lib/db';
 import {rateLimit,RateLimitError} from '@/lib/rate-limit';
 import {trustedProxyClientIp} from '@/lib/request-ip';
 import {isValidE164,parseDateOfBirth} from '@/lib/registration-validation';
-import {akedlyIsConfigured} from '@/lib/akedly';
+import {akedlyReadiness} from '@/lib/akedly';
 import {createRegistrationToken,hashRegistrationToken,REGISTRATION_LIFETIME_MS,registrationTokenFromRequest,setRegistrationCookie} from '@/lib/registration-attempt';
 import {verifyRegistrationTurnstile} from '@/lib/turnstile';
 
@@ -87,9 +87,10 @@ export async function POST(request:Request){
 
 		let captchaValid=false;
 		try{
-			captchaValid=await verifyRegistrationTurnstile(input.captchaToken);
+			captchaValid=await verifyRegistrationTurnstile(input.captchaToken,requestId);
 		}catch(error){
 			if(error instanceof Error&&error.message.startsWith('TURNSTILE_')){
+				console.warn('Registration Turnstile verification is unavailable.',{requestId,errorCode:error.message});
 				return NextResponse.json({error:'Registration security checks are temporarily unavailable. Please try again later.'},{status:503});
 			}
 			throw error;
@@ -145,7 +146,18 @@ export async function POST(request:Request){
 			return await resumePendingAttempt(existingAttempt,input.password,request);
 		}
 
-		if(!akedlyIsConfigured())return NextResponse.json({error:'Phone verification is temporarily unavailable. Please try again later.'},{status:503});
+		const akedly=akedlyReadiness();
+		if(!akedly.ready){
+			console.warn('Registration phone verification is not configured.',{
+				requestId,
+				enabled:akedly.enabled,
+				missing:akedly.missing,
+			});
+			return NextResponse.json({
+				error:'Phone verification is unavailable right now. Your details were not saved. Please try again later; if this continues, contact support.',
+				requestId,
+			},{status:503,headers:{'Cache-Control':'no-store'}});
+		}
 		const [existingPhoneUser,existingPhoneAttempt]=await Promise.all([
 			db.user.findFirst({where:{phone:input.phone},select:{id:true}}),
 			db.registrationAttempt.findFirst({where:{phone:input.phone,email:{not:email},expiresAt:{gt:now}},select:{id:true}}),

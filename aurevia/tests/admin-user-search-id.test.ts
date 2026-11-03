@@ -45,4 +45,27 @@ describe('admin Aurevia Exchange ID search',()=>{
 			}),
 		}));
 	});
+
+	it('uses the same existing tier progression in the admin account list',async()=>{
+		mocks.userFindMany.mockResolvedValue([{
+			id:'user-1',
+			name:'Complete User',
+			country:'Nigeria',
+			phone:'+2348031234567',
+			phoneVerified:true,
+			approvedTier:1,
+			accountMode:'DEMO',
+			kycStatus:'PENDING',
+			status:'ACTIVE',
+			kyc:null,
+			kycDocuments:[],
+		}]);
+
+		const response=await GET(new Request('https://aurevia.test/api/admin/users'));
+
+		expect(await response.json()).toMatchObject([{accountTier:'TIER 2'}]);
+		expect(mocks.userFindMany).toHaveBeenCalledWith(expect.objectContaining({
+			select:expect.objectContaining({phoneVerified:true,approvedTier:true}),
+		}));
+	});
 });

@@ -9,12 +9,14 @@ const MAX_WEBHOOK_BYTES=64*1024;
 export class AkedlyProviderError extends Error{
 	readonly httpStatus?:number;
 	readonly providerCode?:string;
+	readonly retryAfterSeconds?:number;
 
-	constructor(category:string,httpStatus?:number,providerCode?:string){
+	constructor(category:string,httpStatus?:number,providerCode?:string,retryAfterSeconds?:number){
 		super(category);
 		this.name='AkedlyProviderError';
 		this.httpStatus=httpStatus;
 		this.providerCode=providerCode;
+		this.retryAfterSeconds=retryAfterSeconds;
 	}
 }
 
@@ -28,9 +30,20 @@ export type AkedlyAttempt={
 	expiresAt:Date;
 };
 
-export function akedlyIsConfigured(){
+export function akedlyReadiness(){
 	const config=getServerConfiguration().akedly;
-	return config.enabled&&config.configured;
+	const missing:string[]=[];
+	if(!config.apiKey)missing.push('AKEDLY_API_KEY');
+	if(!config.pipelineId)missing.push('AKEDLY_PIPELINE_ID');
+	if(!config.widgetId)missing.push('AKEDLY_WIDGET_ID');
+	if(!config.publicKey)missing.push('AKEDLY_PUBLIC_KEY');
+	if(!config.widgetSecret)missing.push('AKEDLY_WIDGET_SECRET');
+	if(!config.webhookSecret)missing.push('AKEDLY_WEBHOOK_SECRET');
+	return {enabled:config.enabled,missing,ready:config.enabled&&missing.length===0};
+}
+
+export function akedlyIsConfigured(){
+	return akedlyReadiness().ready;
 }
 
 export function assertAkedlyConfigured(){
@@ -75,7 +88,14 @@ export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyA
 		throw new Error('AKEDLY_PROVIDER_UNAVAILABLE');
 	}
 	const result=await response.json().catch(()=>null) as unknown;
-	if(!response.ok)throw new AkedlyProviderError('AKEDLY_ATTEMPT_REJECTED',response.status,providerErrorCode(result));
+	if(!response.ok||(isRecord(result)&&result.status==='error')){
+		throw new AkedlyProviderError(
+			'AKEDLY_ATTEMPT_REJECTED',
+			response.ok?undefined:response.status,
+			providerErrorCode(result),
+			providerRetryAfterSeconds(response,result),
+		);
+	}
 	if(!isRecord(result)||result.status!=='success'||!isRecord(result.data))throw new Error('AKEDLY_INVALID_PROVIDER_RESPONSE');
 	const {attemptId,iframeUrl,expiresAt}=result.data;
 	if(typeof attemptId!=='string'||attemptId.length<8||attemptId.length>200)throw new Error('AKEDLY_INVALID_PROVIDER_RESPONSE');
@@ -201,8 +221,27 @@ function isRecord(value:unknown):value is Record<string,unknown>{
 function providerErrorCode(value:unknown){
 	if(!isRecord(value))return undefined;
 	const nested=isRecord(value.error)?value.error:null;
+	const data=isRecord(value.data)?value.data:null;
 	const candidate=value.code??value.errorCode??value.error_code
-		??nested?.code??nested?.errorCode??nested?.error_code;
+		??nested?.code??nested?.errorCode??nested?.error_code
+		??data?.code??data?.errorCode??data?.error_code;
 	if(typeof candidate!=='string'||!/^[A-Za-z][A-Za-z0-9_.-]{1,63}$/.test(candidate))return undefined;
 	return candidate.toUpperCase();
+}
+
+function providerRetryAfterSeconds(response:Response,value:unknown){
+	const header=Number(response.headers.get('retry-after'));
+	const fromHeader=Number.isFinite(header)&&header>0?header:undefined;
+	if(fromHeader)return Math.min(86_400,Math.ceil(fromHeader));
+	if(!isRecord(value))return undefined;
+	const nested=isRecord(value.error)?value.error:null;
+	const data=isRecord(value.data)?value.data:null;
+	const candidate=value.retryAfterSeconds??value.retry_after_seconds
+		??value.retryAfter??value.retry_after
+		??nested?.retryAfterSeconds??nested?.retry_after_seconds
+		??nested?.retryAfter??nested?.retry_after
+		??data?.retryAfterSeconds??data?.retry_after_seconds
+		??data?.retryAfter??data?.retry_after;
+	const seconds=typeof candidate==='number'?candidate:typeof candidate==='string'?Number(candidate):NaN;
+	return Number.isFinite(seconds)&&seconds>0?Math.min(86_400,Math.ceil(seconds)):undefined;
 }

@@ -11,6 +11,7 @@ const mocks=vi.hoisted(()=>({
 	attemptUpdateMany:vi.fn(),
 	verificationDeleteMany:vi.fn(),
 	akedlyConfigured:vi.fn(),
+	akedlyReadiness:vi.fn(),
 	verifyTurnstile:vi.fn(),
 	rateLimit:vi.fn(),
 	RateLimitError:class extends Error{
@@ -34,7 +35,10 @@ vi.mock('@/lib/db',()=>({db:{
 	registrationVerification:{deleteMany:mocks.verificationDeleteMany},
 }}));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
-vi.mock('@/lib/akedly',()=>({akedlyIsConfigured:mocks.akedlyConfigured}));
+vi.mock('@/lib/akedly',()=>({
+	akedlyIsConfigured:mocks.akedlyConfigured,
+	akedlyReadiness:mocks.akedlyReadiness,
+}));
 vi.mock('@/lib/turnstile',()=>({verifyRegistrationTurnstile:mocks.verifyTurnstile}));
 
 import {POST} from '@/app/api/register/route';
@@ -63,6 +67,7 @@ describe('registration privacy boundary',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
 		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.akedlyReadiness.mockReturnValue({enabled:true,missing:[],ready:true});
 		mocks.verifyTurnstile.mockResolvedValue(true);
 		mocks.userFindUnique.mockResolvedValue(null);
 		mocks.userFindFirst.mockResolvedValue(null);
@@ -153,11 +158,21 @@ describe('registration privacy boundary',()=>{
 	});
 
 	it('does not retain personal details if Akedly phone verification is not configured',async()=>{
-		mocks.akedlyConfigured.mockReturnValue(false);
+		mocks.akedlyReadiness.mockReturnValue({enabled:false,missing:['AKEDLY_WIDGET_SECRET'],ready:false});
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
 		const response=await POST(request());
 
 		expect(response.status).toBe(503);
+		expect(await response.json()).toMatchObject({
+			error:'Phone verification is unavailable right now. Your details were not saved. Please try again later; if this continues, contact support.',
+			requestId:expect.any(String),
+		});
+		expect(warning).toHaveBeenCalledWith(
+			'Registration phone verification is not configured.',
+			expect.objectContaining({enabled:false,missing:['AKEDLY_WIDGET_SECRET']}),
+		);
 		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+		warning.mockRestore();
 	});
 
 	it('rejects a missing phone number before creating a temporary registration',async()=>{

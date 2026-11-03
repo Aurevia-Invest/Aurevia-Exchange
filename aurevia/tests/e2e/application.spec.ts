@@ -277,7 +277,7 @@ test('portfolio timeframe controls filter authenticated snapshot history accessi
 	expect(Number(portfolio.totalCurrentValue)).toBeCloseTo(portfolio.holdings.reduce((sum:number,item:{value:string})=>sum+Number(item.value),0),2);
 	expect(portfolio.allocations.reduce((sum:number,item:{percentage:string})=>sum+Number(item.percentage),0)).toBeCloseTo(100,2);
 	await page.goto('/portfolio');
-	await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
+	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
 	await expect(page.getByRole('status',{name:'Market data source: DEMO prices'})).toBeVisible();
 	const controls=page.getByRole('group',{name:'Performance timeframe'});
 	await controls.getByRole('button',{name:'1W'}).click();
@@ -416,10 +416,15 @@ test('login and registration fields receive real pointer and keyboard input',asy
 	await typeInto(page,page.getByLabel(/Phone number/),'2025550100');
 	await typeInto(page,page.getByLabel('Password',{exact:true}),'ValidPassword123!');
 	await typeInto(page,page.getByLabel('Confirm password'),'ValidPassword123!');
+	await expect(page.locator('#register-account .tier-badge')).toHaveCount(0);
 	await page.getByRole('radio',{name:/REAL ACCOUNT/}).click();
 	await expect(page.getByRole('radio',{name:/REAL ACCOUNT/})).toBeChecked();
+	await expect(page.locator('#register-account .tier-badge')).toHaveText('Tier 1');
+	await page.getByRole('radio',{name:/DEMO ACCOUNT/}).click();
+	await expect(page.locator('#register-account .tier-badge')).toHaveCount(0);
 	await page.getByRole('checkbox').check();
 	await expect(page.getByRole('checkbox')).toBeChecked();
+	await page.setViewportSize({width:320,height:844});
 	await expectNoHorizontalOverflow(page);
 });
 
@@ -433,8 +438,22 @@ test('dashboard hierarchy remains usable and contained at mobile and desktop wid
 			await expect(page.locator('.mobile-home-greeting')).toBeVisible();
 			await expect(page.locator('.mobile-home-greeting .account-tier-badge')).toHaveText(profile.label);
 			await expect(page.locator('.mobile-balance-card')).toBeVisible();
-			await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
+			await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
 			await expect(page.getByRole('heading',{name:'Recent activity'})).toBeVisible();
+			const avatar=page.locator('.mobile-home-avatar');
+			const avatarStyle=await avatar.evaluate(element=>{
+				const style=getComputedStyle(element);
+				const bounds=element.getBoundingClientRect();
+				return {width:bounds.width,height:bounds.height,borderRadius:style.borderRadius,overflow:style.overflow,flexShrink:style.flexShrink};
+			});
+			expect(avatarStyle).toEqual({width:44,height:44,borderRadius:'50%',overflow:'hidden',flexShrink:'0'});
+			const avatarImage=avatar.locator('img');
+			if(await avatarImage.count()){
+				await expect(avatarImage).toHaveCSS('width','44px');
+				await expect(avatarImage).toHaveCSS('height','44px');
+				await expect(avatarImage).toHaveCSS('object-fit','cover');
+				await expect(avatarImage).toHaveCSS('object-position','50% 50%');
+			}
 		}else{
 			await expect(page.getByRole('heading',{name:/Welcome back/})).toBeVisible();
 			await expect(page.locator('.dashboard-sidebar-profile .account-tier-badge')).toHaveText(profile.label);
@@ -930,7 +949,10 @@ test('new registration fails closed without configured phone verification',async
 	});
 
 	expect(response.status()).toBe(503);
-	expect(await response.json()).toMatchObject({error:'Phone verification is temporarily unavailable. Please try again later.'});
+	expect(await response.json()).toMatchObject({
+		error:'Phone verification is unavailable right now. Your details were not saved. Please try again later; if this continues, contact support.',
+		requestId:expect.any(String),
+	});
 	expect(await db.user.findUnique({where:{email}})).toBeNull();
 	expect(await db.registrationAttempt.findUnique({where:{email}})).toBeNull();
 });

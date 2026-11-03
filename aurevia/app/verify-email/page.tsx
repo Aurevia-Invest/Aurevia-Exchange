@@ -258,6 +258,9 @@ export default function VerifyEmailPage(){
 		{phone&&<p className="mt-3 text-sm muted">Phone number for registration verification: <strong className="text-white">{phone}</strong></p>}
 		{attempt&&<div className="mt-5 overflow-hidden rounded-lg border border-white/10 bg-black/30">
 			<iframe className="block h-[700px] w-full max-w-full" src={attempt.iframeUrl} title={`Akedly secure ${attempt.channel==='SMS'?'phone':'email'} verification`} allow="clipboard-write; publickey-credentials-get *; publickey-credentials-create *"/>
+			<p className="px-4 pb-4 text-sm leading-6 muted">
+				If the security check stalls in this embedded view, <a className="auth-link" href={attempt.iframeUrl} target="_blank" rel="noopener noreferrer">open secure verification in a new tab</a>. Keep this page open; it checks verification status with Aurevia.
+			</p>
 		</div>}
 		{email&&emailCodeMode&&<div className="mt-5">
 			<p className="mb-3 text-sm muted">Verification code for <strong className="text-white">{email}</strong></p>

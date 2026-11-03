@@ -915,10 +915,11 @@ test('registration page refresh and Turnstile retries do not submit and render t
 		options?.['before-interactive-callback']();
 	});
 	await expect(page.getByText('Verifying the security check…')).toBeVisible();
-	await page.evaluate(()=>{
-		const options=(window as Window & {__aureviaTurnstileOptions?:Record<string,(...args:string[])=>void>}).__aureviaTurnstileOptions;
-		options?.['error-callback']();
+	const errorHandled=await page.evaluate(()=>{
+		const options=(window as Window & {__aureviaTurnstileOptions?:Record<string,(...args:(string|number)[])=>boolean|void>}).__aureviaTurnstileOptions;
+		return options?.['error-callback'](110200);
 	});
+	expect(errorHandled).toBe(true);
 	await expect(page.locator('.auth-error')).toContainText('Security verification could not be completed.');
 	await page.getByRole('button',{name:'Retry security check'}).click();
 	await expect(page.getByText('Complete the security check to continue.')).toBeVisible();
@@ -1006,6 +1007,40 @@ test('mobile verification shows an Akedly quota cooldown without automatically r
 	expect(resendRequests).toBe(1);
 	await page.waitForTimeout(500);
 	expect(resendRequests).toBe(1);
+});
+
+test('mobile registration verification offers a top-level Akedly widget fallback',async({page})=>{
+	const email='pending-phone-registration@example.invalid';
+	const iframeUrl='https://auth.akedly.io/auth?attemptId=attempt_1234567890';
+	await page.setViewportSize({width:320,height:800});
+	await page.route('**/api/register/session*',route=>route.fulfill({
+		status:200,
+		contentType:'application/json',
+		body:JSON.stringify({email,phone:'+447400123456'}),
+	}));
+	await page.route('**/api/register/resend',route=>route.fulfill({
+		status:200,
+		contentType:'application/json',
+		body:JSON.stringify({
+			method:'akedly',
+			channel:'SMS',
+			attemptId:'attempt_1234567890',
+			iframeUrl,
+			expiresAt:new Date(Date.now()+4*60_000).toISOString(),
+		}),
+	}));
+	await page.route('https://auth.akedly.io/**',route=>route.fulfill({
+		status:200,
+		contentType:'text/html',
+		body:'<html><body>Mock secure verification</body></html>',
+	}));
+
+	await page.goto(`/verify-email?email=${encodeURIComponent(email)}`);
+	const fallbackLink=page.getByRole('link',{name:'open secure verification in a new tab'});
+	await expect(fallbackLink).toHaveAttribute('href',iframeUrl);
+	await expect(fallbackLink).toHaveAttribute('target','_blank');
+	await expect(page.getByTitle('Akedly secure phone verification')).toBeVisible();
+	await expectNoHorizontalOverflow(page);
 });
 
 test('new registration fails closed without configured phone verification',async({page})=>{

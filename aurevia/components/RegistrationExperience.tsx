@@ -26,7 +26,7 @@ type TurnstileOptions={
 	'after-interactive-callback':()=>void;
 	'expired-callback':()=>void;
 	'timeout-callback':()=>void;
-	'error-callback':()=>void;
+	'error-callback':(errorCode?:string|number)=>boolean|void;
 };
 
 declare global {
@@ -255,9 +255,15 @@ export default function RegistrationExperience(){
 						logTurnstileClientFailure('widget','challenge-timeout');
 						resetTurnstileAfterFailure('failed','Security verification took too long. Retry the security check.');
 					},
-					'error-callback':()=>{
-						logTurnstileClientFailure('widget','challenge-error');
+					'error-callback':errorCode=>{
+						const safeErrorCode=typeof errorCode==='number'&&Number.isInteger(errorCode)
+							?String(errorCode)
+							:typeof errorCode==='string'&&/^\d{3,6}$/.test(errorCode)
+								?errorCode
+								:'challenge-error';
+						logTurnstileClientFailure('widget',safeErrorCode);
 						resetTurnstileAfterFailure('failed','Security verification could not be completed. Retry the security check.');
+						return true;
 					},
 				});
 				captchaWidgetId.current=widgetId;

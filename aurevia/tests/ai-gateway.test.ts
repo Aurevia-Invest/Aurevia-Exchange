@@ -64,12 +64,14 @@ describe('central AI gateway',()=>{
 
 	it('reports an approved encrypted backup credential only after its free model is verified',async()=>{
 		vi.stubEnv('AI_PROVIDER','openrouter');
+		vi.stubEnv('OPENROUTER_API_KEY','');
 		vi.stubEnv('GEMINI_API_KEY','');
+		vi.stubEnv('GROQ_API_KEY','');
 		vi.stubEnv('AI_BACKUP_PROVIDERS','gemini');
 		vi.stubEnv('GEMINI_FREE_MODEL','gemini-2.0-flash');
 		vi.stubEnv('AI_FREE_MODEL_ALLOWLIST','gemini:gemini-2.0-flash');
 		approvedCredential.mockImplementation(async(provider:string)=>provider==='gemini'?'approved-db-key':'');
-		const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({models:[{name:'models/gemini-2.0-flash'}]}),{status:200}));
+		const fetcher=vi.fn().mockImplementation(()=>Promise.resolve(new Response(JSON.stringify({models:[{name:'models/gemini-2.0-flash'}]}),{status:200})));
 		vi.stubGlobal('fetch',fetcher);
 		const {getAiEngineStatus}=await import('@/lib/ai-gateway');
 		const status=await getAiEngineStatus();

@@ -3,6 +3,7 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import {useSession} from 'next-auth/react';
 import {useRouter} from 'next/navigation';
 import {ShieldCheck} from 'lucide-react';
 import {parsePhoneNumberFromString} from 'libphonenumber-js';
@@ -29,6 +30,7 @@ function maskPhoneNumber(value:string){
 
 export default function VerifyEmailPage(){
 	const router=useRouter();
+	const {update:refreshSession}=useSession();
 	const [email,setEmail]=useState('');
 	const [contactEmail,setContactEmail]=useState('');
 	const [phone,setPhone]=useState('');
@@ -44,6 +46,28 @@ export default function VerifyEmailPage(){
 	const [sessionRestoreFailed,setSessionRestoreFailed]=useState(false);
 	const [busy,setBusy]=useState(false);
 	const busyRef=useRef(false);
+
+	const finishVerifiedRegistration=useCallback(async(authenticated:boolean)=>{
+		window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
+		window.sessionStorage.removeItem(REGISTRATION_REQUEST_ID_KEY);
+		window.sessionStorage.removeItem(REGISTRATION_EMAIL_KEY);
+		if(!authenticated){
+			router.replace('/login?verified=1');
+			return;
+		}
+		try{
+			const session=await refreshSession();
+			if(session?.user){
+				router.replace('/dashboard');
+				router.refresh();
+				return;
+			}
+		}catch{
+			window.location.replace('/dashboard');
+			return;
+		}
+		router.replace('/login?verified=1');
+	},[refreshSession,router]);
 
 	useEffect(()=>{
 		const params=new URLSearchParams(window.location.search);
@@ -129,10 +153,7 @@ export default function VerifyEmailPage(){
 				return;
 			}
 			if(result.verified){
-				window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
-				window.sessionStorage.removeItem(REGISTRATION_REQUEST_ID_KEY);
-				window.sessionStorage.removeItem(REGISTRATION_EMAIL_KEY);
-				router.replace(result.authenticated?'/dashboard':'/login?verified=1');
+				await finishVerifiedRegistration(result.authenticated===true);
 				return;
 			}
 			if(!response.ok){
@@ -180,7 +201,7 @@ export default function VerifyEmailPage(){
 			busyRef.current=false;
 			setBusy(false);
 		}
-	},[email,registrationRequestId,router,sessionRestoreFailed]);
+	},[email,finishVerifiedRegistration,registrationRequestId,sessionRestoreFailed]);
 
 	const verifyEmailCode=async()=>{
 		if(!email||!/^\d{6}$/.test(code)||busyRef.current)return;
@@ -271,10 +292,7 @@ export default function VerifyEmailPage(){
 				if(response.ok){
 					const result=await response.json();
 					if(result.verified){
-						window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
-						window.sessionStorage.removeItem(REGISTRATION_REQUEST_ID_KEY);
-						window.sessionStorage.removeItem(REGISTRATION_EMAIL_KEY);
-						router.replace(result.authenticated?'/dashboard':'/login?verified=1');
+						await finishVerifiedRegistration(result.authenticated===true);
 						return;
 					}
 					if(result.phoneConflict){
@@ -301,7 +319,7 @@ export default function VerifyEmailPage(){
 		};
 		timeout=setTimeout(()=>void check(),3000);
 		return ()=>{cancelled=true;clearTimeout(timeout);};
-	},[attempt,email,router]);
+	},[attempt,email,finishVerifiedRegistration,router]);
 
 	useEffect(()=>{
 		if(!attempt||!email)return;
@@ -313,14 +331,11 @@ export default function VerifyEmailPage(){
 				if(!response.ok)return;
 				const result=await response.json();
 				if(result.verified){
-					window.sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
-					window.sessionStorage.removeItem(REGISTRATION_REQUEST_ID_KEY);
-					window.sessionStorage.removeItem(REGISTRATION_EMAIL_KEY);
-					router.replace(result.authenticated?'/dashboard':'/login?verified=1');
+					await finishVerifiedRegistration(result.authenticated===true);
 				}
 			})
 			.catch(()=>setMessage('The provider redirect was received, but verification is not complete until Akedly confirms it.'));
-	},[attempt,email,router]);
+	},[attempt,email,finishVerifiedRegistration]);
 
 	const emailVerification=emailCodeMode||attempt?.channel==='EMAIL';
 	const maskedPhone=phone?maskPhoneNumber(phone):'';

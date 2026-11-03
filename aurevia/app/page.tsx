@@ -35,7 +35,7 @@ export default function Home(){
 	const assetClasses=[
 		{name:'Forex',status:translate('availableInDemo'),copy:translate('forexDescription'),icon:Globe2,available:true},
 		{name:'Crypto',status:translate('availableInDemo'),copy:translate('cryptoDescription'),icon:Activity,available:true},
-		{name:'Stocks',status:translate('comingSoon'),copy:translate('stocksDescription'),icon:Landmark},
+		{name:'Stocks',status:translate('availableInDemo'),copy:translate('stocksDescription'),icon:Landmark,available:true},
 		{name:'ETFs',status:translate('comingSoon'),copy:translate('etfsDescription'),icon:WalletCards},
 		{name:'Indices',status:translate('comingSoon'),copy:translate('indicesDescription'),icon:ArrowUpRight},
 		{name:'Commodities',status:translate('comingSoon'),copy:translate('commoditiesDescription'),icon:CircleHelp},

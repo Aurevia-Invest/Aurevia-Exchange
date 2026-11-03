@@ -75,6 +75,15 @@ test('homepage labels internal reference prices as non-live market data',async({
 	await expect(page.locator('.market-feed-status')).toContainText('Internal reference feed');
 });
 
+test('homepage accurately lists the seeded demo stock instrument',async({page})=>{
+	await page.goto('/');
+	const stocks=page.locator('.asset-item').filter({has:page.getByRole('heading',{name:'Stocks',exact:true})});
+	await expect(stocks).toContainText('Available in demo');
+	await expect(stocks).toContainText('NVDA');
+	await expect(stocks).toContainText('not a live quote');
+	await expect(stocks.getByRole('link')).toHaveAttribute('href','/login?callbackUrl=%2Ftrade');
+});
+
 test('site theme preference switches globally and persists across navigation',async({page})=>{
 	await page.goto('/');
 	const themeToggle=page.getByRole('button',{name:'Switch to light mode'});

@@ -245,7 +245,7 @@ const base = {
   noDemoInstrumentsConfigured: "No demo instruments configured",
   forexDescription: "EUR/USD instrument in the demo market feed.",
   cryptoDescription: "BTC/USD and ETH/USD demo instruments.",
-  stocksDescription: "Equity instruments are not enabled in this demo.",
+  stocksDescription: "NVDA is available for simulated demo orders. Its demo price is not a live quote.",
   etfsDescription: "ETF instruments are not enabled in this demo.",
   indicesDescription: "Index instruments are not enabled in this demo.",
   commoditiesDescription: "Commodity instruments are not enabled in this demo.",

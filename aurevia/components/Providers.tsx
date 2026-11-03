@@ -7,6 +7,7 @@ import {usePathname} from 'next/navigation';
 import {LocaleProvider} from '@/lib/i18n-context';
 import {normalizeLocale,type Locale} from '@/lib/i18n';
 import FloatingSupportChat from '@/components/FloatingSupportChat';
+import PolicyConsentGate from '@/components/PolicyConsentGate';
 
 export default function Providers({children,initialLocale}:{children:ReactNode;initialLocale:Locale}){
   const pathname=usePathname();
@@ -14,5 +15,5 @@ export default function Providers({children,initialLocale}:{children:ReactNode;i
     defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false}},
   }));
 
-  return <SessionProvider><QueryClientProvider client={queryClient}><LocaleProvider initialLocale={normalizeLocale(initialLocale)}>{children}{!pathname.startsWith('/admin')&&<FloatingSupportChat/>}</LocaleProvider></QueryClientProvider></SessionProvider>;
+  return <SessionProvider><QueryClientProvider client={queryClient}><LocaleProvider initialLocale={normalizeLocale(initialLocale)}>{children}{!pathname.startsWith('/admin')&&<FloatingSupportChat/>}<PolicyConsentGate/></LocaleProvider></QueryClientProvider></SessionProvider>;
 }

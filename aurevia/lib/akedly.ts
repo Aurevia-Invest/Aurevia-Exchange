@@ -33,6 +33,7 @@ export type AkedlyAttempt={
 export function akedlyReadiness(){
 	const config=getServerConfiguration().akedly;
 	const missing:string[]=[];
+	if(!config.enabled)missing.push('AKEDLY_ENABLED=true');
 	if(!config.apiKey)missing.push('AKEDLY_API_KEY');
 	if(!config.pipelineId)missing.push('AKEDLY_PIPELINE_ID');
 	if(!config.widgetId)missing.push('AKEDLY_WIDGET_ID');

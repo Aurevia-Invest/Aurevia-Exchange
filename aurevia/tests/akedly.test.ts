@@ -129,6 +129,12 @@ describe('Akedly V2 server integration',()=>{
 		expect(JSON.stringify(readiness)).not.toContain('test-widget-secret');
 	});
 
+	it('reports the explicit enable flag as missing when credentials exist but the integration is disabled',()=>{
+		vi.stubEnv('AKEDLY_ENABLED','false');
+
+		expect(akedlyReadiness()).toEqual({enabled:false,missing:['AKEDLY_ENABLED=true'],ready:false});
+	});
+
 	it('retains the HTTP status and only a safe provider code for a rejected attempt',async()=>{
 		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
 			status:'error',

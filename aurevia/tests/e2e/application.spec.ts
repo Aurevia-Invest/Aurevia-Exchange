@@ -943,6 +943,7 @@ test('registration page refresh and Turnstile retries do not submit and render t
 	const residenceDialog=page.getByRole('dialog',{name:'Select country of residence'});
 	await residenceDialog.getByRole('searchbox').fill('United States');
 	await residenceDialog.getByRole('option',{name:/United States.*US.*\+1/}).click();
+	await page.locator('#registration-phone').fill('2025550123');
 	await page.getByLabel('Email address').fill(`retry-${randomUUID()}@example.invalid`);
 	await page.getByLabel('Password',{exact:true}).fill('SecureTestPassword1');
 	await page.getByLabel('Confirm password').fill('SecureTestPassword1');
@@ -1025,10 +1026,14 @@ test('new registration fails closed without configured phone verification',async
 	});
 
 	expect(response.status()).toBe(503);
-	expect(await response.json()).toMatchObject({
-		error:'Phone verification is unavailable right now. Your details were not saved. Please try again later; if this continues, contact support.',
+	const result=await response.json();
+	expect(result).toMatchObject({
+		code:'PHONE_VERIFICATION_UNAVAILABLE',
+		error:'Phone verification is temporarily unavailable because the verification service is not ready. Your details were not saved; please try again later or contact support.',
 		requestId:expect.any(String),
+		referenceId:expect.any(String),
 	});
+	expect(result.referenceId).toBe(result.requestId);
 	expect(await db.user.findUnique({where:{email}})).toBeNull();
 	expect(await db.registrationAttempt.findUnique({where:{email}})).toBeNull();
 });

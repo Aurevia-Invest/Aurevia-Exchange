@@ -158,18 +158,34 @@ describe('registration privacy boundary',()=>{
 	});
 
 	it('does not retain personal details if Akedly phone verification is not configured',async()=>{
-		mocks.akedlyReadiness.mockReturnValue({enabled:false,missing:['AKEDLY_WIDGET_SECRET'],ready:false});
+		mocks.akedlyReadiness.mockReturnValue({enabled:false,missing:['AKEDLY_ENABLED=true'],ready:false});
 		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
 		const response=await POST(request());
+		const body=await response.json();
 
 		expect(response.status).toBe(503);
-		expect(await response.json()).toMatchObject({
-			error:'Phone verification is unavailable right now. Your details were not saved. Please try again later; if this continues, contact support.',
+		expect(body).toMatchObject({
+			code:'PHONE_VERIFICATION_UNAVAILABLE',
+			error:'Phone verification is temporarily unavailable because the verification service is not ready. Your details were not saved; please try again later or contact support.',
 			requestId:expect.any(String),
+			referenceId:expect.any(String),
 		});
+		expect(body.referenceId).toBe(body.requestId);
 		expect(warning).toHaveBeenCalledWith(
-			'Registration phone verification is not configured.',
-			expect.objectContaining({enabled:false,missing:['AKEDLY_WIDGET_SECRET']}),
+			'Registration phone verification is not ready.',
+			expect.objectContaining({
+				requestId:body.referenceId,
+				referenceId:body.referenceId,
+				endpoint:'/api/register',
+				failureCode:'AKEDLY_NOT_READY',
+				providerCode:'AKEDLY_NOT_READY',
+				providerEndpoint:null,
+				providerAttemptId:null,
+				providerHttpStatus:null,
+				failureTimestamp:expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+				enabled:false,
+				missing:['AKEDLY_ENABLED=true'],
+			}),
 		);
 		expect(mocks.attemptCreate).not.toHaveBeenCalled();
 		warning.mockRestore();

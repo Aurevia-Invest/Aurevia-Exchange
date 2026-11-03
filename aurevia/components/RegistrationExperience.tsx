@@ -275,11 +275,17 @@ export default function RegistrationExperience(){
 				else if(result.code==='ACCOUNT_UNAVAILABLE')setExistingAccountIssue('unavailable');
 				else if(result.code==='REGISTRATION_IN_PROGRESS')setExistingAccountIssue('pending');
 				else if(result.code==='PHONE_ALREADY_IN_USE')setExistingAccountIssue('phone');
+				const missingConfiguration=Array.isArray(result.diagnostics?.missingConfiguration)
+					?result.diagnostics.missingConfiguration.filter((item:unknown):item is string=>typeof item==='string')
+					:[];
+				const readinessDetail=result.code==='PHONE_VERIFICATION_UNAVAILABLE'&&missingConfiguration.length
+					?` Configuration needs attention: ${missingConfiguration.join(', ')}.`
+					:'';
 				const retryAfter=Number(response.headers.get('Retry-After')||result.retryAfterSeconds);
 				const retryMessage=response.status===429&&Number.isFinite(retryAfter)&&retryAfter>0
 					?` You can retry in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
 					:'';
-				setError(`${result.requestId?`${result.error||translate('registrationFailed')} (Reference: ${result.requestId})`:result.error||translate('registrationFailed')}${retryMessage}`);return;
+				setError(`${result.requestId?`${result.error||translate('registrationFailed')} (Reference: ${result.requestId})`:result.error||translate('registrationFailed')}${readinessDetail}${retryMessage}`);return;
 			}
 			const verificationParams=new URLSearchParams({email:result.email||details.email});
 			if(result.existingVerification)verificationParams.set('existing','1');

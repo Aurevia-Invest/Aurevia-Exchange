@@ -152,7 +152,7 @@ export async function POST(request:Request){
 		const akedly=akedlyReadiness();
 		if(!akedly.ready){
 			const failureTimestamp=new Date().toISOString();
-			console.warn('Registration phone verification is not ready.',{
+			console.error(`[registration] AKEDLY_NOT_READY referenceId=${requestId} endpoint=/api/register`,{
 				requestId,
 				referenceId:requestId,
 				endpoint:'/api/register',
@@ -170,6 +170,10 @@ export async function POST(request:Request){
 				error:'Phone verification is temporarily unavailable because the verification service is not ready. Your details were not saved; please try again later or contact support.',
 				requestId,
 				referenceId:requestId,
+				diagnostics:{
+					integrationEnabled:akedly.enabled,
+					missingConfiguration:akedly.missing,
+				},
 			},{status:503,headers:{'Cache-Control':'no-store'}});
 		}
 		const [existingPhoneUser,existingPhoneAttempt]=await Promise.all([

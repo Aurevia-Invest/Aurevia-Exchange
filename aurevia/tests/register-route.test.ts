@@ -159,7 +159,7 @@ describe('registration privacy boundary',()=>{
 
 	it('does not retain personal details if Akedly phone verification is not configured',async()=>{
 		mocks.akedlyReadiness.mockReturnValue({enabled:false,missing:['AKEDLY_ENABLED=true'],ready:false});
-		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+		const warning=vi.spyOn(console,'error').mockImplementation(()=>undefined);
 		const response=await POST(request());
 		const body=await response.json();
 
@@ -169,10 +169,11 @@ describe('registration privacy boundary',()=>{
 			error:'Phone verification is temporarily unavailable because the verification service is not ready. Your details were not saved; please try again later or contact support.',
 			requestId:expect.any(String),
 			referenceId:expect.any(String),
+			diagnostics:{integrationEnabled:false,missingConfiguration:['AKEDLY_ENABLED=true']},
 		});
 		expect(body.referenceId).toBe(body.requestId);
 		expect(warning).toHaveBeenCalledWith(
-			'Registration phone verification is not ready.',
+			`[registration] AKEDLY_NOT_READY referenceId=${body.referenceId} endpoint=/api/register`,
 			expect.objectContaining({
 				requestId:body.referenceId,
 				referenceId:body.referenceId,

@@ -1032,6 +1032,10 @@ test('new registration fails closed without configured phone verification',async
 		error:'Phone verification is temporarily unavailable because the verification service is not ready. Your details were not saved; please try again later or contact support.',
 		requestId:expect.any(String),
 		referenceId:expect.any(String),
+		diagnostics:{
+			integrationEnabled:false,
+			missingConfiguration:expect.arrayContaining(['AKEDLY_ENABLED=true']),
+		},
 	});
 	expect(result.referenceId).toBe(result.requestId);
 	expect(await db.user.findUnique({where:{email}})).toBeNull();

@@ -1,8 +1,57 @@
 'use client';
 
 import {Canvas,useFrame,useThree} from '@react-three/fiber';
-import {useEffect,useMemo,useRef,useState} from 'react';
+import {useMemo,useRef} from 'react';
+import {ExtrudeGeometry,Path,Shape} from 'three';
 import type {Group} from 'three';
+
+function AureviaEmblem(){
+	const emblem=useRef<Group>(null);
+	const geometry=useMemo(()=>{
+		const shape=new Shape();
+		shape.moveTo(-1,-1);
+		shape.lineTo(-.18,1);
+		shape.lineTo(.18,1);
+		shape.lineTo(1,-1);
+		shape.lineTo(.56,-1);
+		shape.lineTo(.38,-.52);
+		shape.lineTo(-.38,-.52);
+		shape.lineTo(-.56,-1);
+		shape.closePath();
+		const arrow=new Path();
+		arrow.moveTo(0,.58);
+		arrow.lineTo(.34,.18);
+		arrow.lineTo(.14,.18);
+		arrow.lineTo(.14,-.32);
+		arrow.lineTo(-.14,-.32);
+		arrow.lineTo(-.14,.18);
+		arrow.lineTo(-.34,.18);
+		arrow.closePath();
+		shape.holes.push(arrow);
+		return new ExtrudeGeometry(shape,{depth:.12,bevelEnabled:true,bevelSegments:2,steps:1,bevelSize:.045,bevelThickness:.04,curveSegments:2});
+	},[]);
+
+	useFrame((state,delta)=>{
+		if(!emblem.current)return;
+		emblem.current.rotation.y+=delta*.12;
+		emblem.current.rotation.x+=(state.pointer.y*.1-emblem.current.rotation.x)*Math.min(1,delta*1.5);
+		emblem.current.rotation.z+=(-state.pointer.x*.08-emblem.current.rotation.z)*Math.min(1,delta*1.5);
+	});
+
+	return <group ref={emblem} position={[0,0,.2]}>
+		<mesh geometry={geometry} castShadow receiveShadow>
+			<meshPhysicalMaterial color="#e2c47f" emissive="#754d14" emissiveIntensity={.36} metalness={.58} roughness={.24} clearcoat={.55} clearcoatRoughness={.28}/>
+		</mesh>
+		<mesh rotation={[.72,.2,.16]}>
+			<torusGeometry args={[1.62,.012,5,96]}/>
+			<meshBasicMaterial color="#e0c99e" transparent opacity={.42}/>
+		</mesh>
+		<mesh rotation={[1.16,-.42,.45]}>
+			<torusGeometry args={[1.8,.008,4,96]}/>
+			<meshBasicMaterial color="#91b6a0" transparent opacity={.3}/>
+		</mesh>
+	</group>;
+}
 
 function MarketModel(){
 	const model=useRef<Group>(null);
@@ -15,30 +64,17 @@ function MarketModel(){
 		return [radius*Math.sin(inclination)*Math.cos(azimuth),radius*Math.cos(inclination),radius*Math.sin(inclination)*Math.sin(azimuth)] as [number,number,number];
 	}),[]);
 	const compact=viewport.width<7;
+	const baseY=compact?.85:.15;
 
 	useFrame((state,delta)=>{
 		if(!model.current)return;
-		model.current.rotation.y+=delta*.055;
-		model.current.rotation.x=Math.sin(state.clock.elapsedTime*.08)*.055;
+		model.current.rotation.y+=delta*.035;
+		model.current.rotation.x=Math.sin(state.clock.elapsedTime*.08)*.025;
+		model.current.position.y=baseY+Math.sin(state.clock.elapsedTime*.35)*.035;
 	});
 
-	return <group ref={model} position={[viewport.width*(compact?.24:.27),compact?1.35:.15,-1.5]} scale={compact?.66:1}>
-		<mesh>
-			<icosahedronGeometry args={[2.2,2]}/>
-			<meshBasicMaterial color="#c5a46b" wireframe transparent opacity={.19} depthWrite={false}/>
-		</mesh>
-		<mesh rotation={[.72,.2,.16]}>
-			<torusGeometry args={[2.55,.009,4,144]}/>
-			<meshBasicMaterial color="#91b6a0" transparent opacity={.27} depthWrite={false}/>
-		</mesh>
-		<mesh rotation={[1.16,-.42,.45]}>
-			<torusGeometry args={[2.78,.007,4,144]}/>
-			<meshBasicMaterial color="#c5a46b" transparent opacity={.2} depthWrite={false}/>
-		</mesh>
-		<mesh>
-			<icosahedronGeometry args={[.78,1]}/>
-			<meshBasicMaterial color="#347357" transparent opacity={.19} wireframe depthWrite={false}/>
-		</mesh>
+	return <group ref={model} position={[viewport.width*(compact?.48:.45),baseY,-1.5]} scale={compact?.58:.72}>
+		<AureviaEmblem/>
 		{nodes.map((position,index)=><mesh position={position} key={index}>
 			<sphereGeometry args={[index%5===0?.045:.026,8,8]}/>
 			<meshBasicMaterial color={index%5===0?'#e0c99e':'#8fb39a'} transparent opacity={index%5===0?.72:.48} depthWrite={false}/>
@@ -47,24 +83,16 @@ function MarketModel(){
 }
 
 export default function MarketDepthScene({className=''}:{className?:string}){
-	const [reducedMotion,setReducedMotion]=useState(false);
-
-	useEffect(()=>{
-		const preference=window.matchMedia('(prefers-reduced-motion: reduce)');
-		const update=()=>setReducedMotion(preference.matches);
-		update();
-		preference.addEventListener('change',update);
-		return()=>preference.removeEventListener('change',update);
-	},[]);
-
 	return <Canvas
 		className={`market-depth-canvas ${className}`}
 		aria-hidden="true"
-		dpr={[1,1.35]}
-		frameloop={reducedMotion?'demand':'always'}
+		dpr={[1,1.25]}
 		camera={{position:[0,0,10],fov:37}}
 		gl={{alpha:true,antialias:false,powerPreference:'low-power'}}
-		>
-			<MarketModel/>
-		</Canvas>;
+		fallback={<div className={`market-depth-fallback ${className}`} aria-hidden="true"><span className="market-depth-fallback-mark">A<i>↑</i></span></div>}>
+		<ambientLight intensity={.48}/>
+		<pointLight position={[2,3,5]} intensity={3.5} color="#f0d596"/>
+		<pointLight position={[-4,-2,3]} intensity={1.4} color="#5e9d76"/>
+		<MarketModel/>
+	</Canvas>;
 }

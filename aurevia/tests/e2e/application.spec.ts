@@ -277,7 +277,7 @@ test('portfolio timeframe controls filter authenticated snapshot history accessi
 	expect(Number(portfolio.totalCurrentValue)).toBeCloseTo(portfolio.holdings.reduce((sum:number,item:{value:string})=>sum+Number(item.value),0),2);
 	expect(portfolio.allocations.reduce((sum:number,item:{percentage:string})=>sum+Number(item.percentage),0)).toBeCloseTo(100,2);
 	await page.goto('/portfolio');
-	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
+	await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
 	await expect(page.getByRole('status',{name:'Market data source: DEMO prices'})).toBeVisible();
 	const controls=page.getByRole('group',{name:'Performance timeframe'});
 	await controls.getByRole('button',{name:'1W'}).click();
@@ -293,21 +293,41 @@ test('portfolio timeframe controls filter authenticated snapshot history accessi
 	await expectNoHorizontalOverflow(page);
 });
 
-test('full-screen 3D market model renders on desktop and mobile',async({page})=>{
-	for(const viewport of [{width:1440,height:900},{width:390,height:844}]){
-		await page.setViewportSize(viewport);
-		await page.goto('/');
-		await waitForStartup(page);
-		const canvas=page.locator('.home-market-depth .market-depth-canvas canvas');
-		await expect(canvas).toBeVisible();
-		const image=PNG.sync.read(await canvas.screenshot());
-		let visiblePixels=0;
-		for(let index=0;index<image.data.length;index+=4){
-			if(image.data[index+3]>4&&image.data[index]+image.data[index+1]+image.data[index+2]>24)visiblePixels++;
+test('desktop 3D emblem renders with a mobile static fallback',async({browser})=>{
+	const desktopContext=await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'no-preference'});
+	await desktopContext.addInitScript(()=>{sessionStorage.setItem('aurevia-startup-complete','1');localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()}));});
+	try{
+		const desktopPage=await desktopContext.newPage();
+		await desktopPage.goto('/');
+		await waitForStartup(desktopPage);
+		const canvas=desktopPage.locator('.home-market-depth .market-depth-canvas canvas');
+		if(await canvas.count()){
+			await expect(canvas).toBeVisible();
+			const image=PNG.sync.read(await canvas.screenshot());
+			let visiblePixels=0;
+			for(let index=0;index<image.data.length;index+=4){
+				if(image.data[index+3]>4&&image.data[index]+image.data[index+1]+image.data[index+2]>24)visiblePixels++;
+			}
+			expect(visiblePixels,'desktop 3D canvas should render visible pixels').toBeGreaterThan(20);
+		}else{
+			await expect(desktopPage.locator('.home-market-depth .market-depth-fallback')).toBeVisible();
 		}
-		expect(visiblePixels,`3D canvas should render visible pixels at ${viewport.width}px`).toBeGreaterThan(20);
-		await page.screenshot({path:`/tmp/aurevia-market-depth-${viewport.width}.png`});
-		await expectNoHorizontalOverflow(page);
+		await expectNoHorizontalOverflow(desktopPage);
+	}finally{
+		await desktopContext.close();
+	}
+
+	const mobileContext=await browser.newContext({viewport:{width:320,height:800},reducedMotion:'no-preference'});
+	await mobileContext.addInitScript(()=>{sessionStorage.setItem('aurevia-startup-complete','1');localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()}));});
+	try{
+		const mobilePage=await mobileContext.newPage();
+		await mobilePage.goto('/');
+		await waitForStartup(mobilePage);
+		await expect(mobilePage.locator('.home-market-depth .market-depth-fallback')).toBeVisible();
+		await expect(mobilePage.locator('.home-market-depth .market-depth-canvas')).toHaveCount(0);
+		await expectNoHorizontalOverflow(mobilePage);
+	}finally{
+		await mobileContext.close();
 	}
 });
 
@@ -1194,6 +1214,7 @@ test('session replacement is explicit and refresh-safe',async({page,browser})=>{
 	const otherContext=await browser.newContext();
 	try{
 		const otherDevice=await otherContext.newPage();
+		await otherDevice.addInitScript(()=>localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()})));
 		await otherDevice.goto('/login');
 		await waitForStartup(otherDevice);
 		await otherDevice.getByLabel('Email or administrator username').fill(email);

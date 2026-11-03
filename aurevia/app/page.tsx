@@ -1,5 +1,6 @@
 'use client';
 
+import {useEffect,useRef} from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
@@ -12,10 +13,31 @@ import PublicResourceLinks from '@/components/PublicResourceLinks';
 import NewsFeedPanel from '@/components/NewsFeedPanel';
 import {useLocale} from '@/lib/i18n-context';
 
-const MarketDepthScene=dynamic(()=>import('@/components/MarketDepthScene'),{ssr:false});
+const HomeDepthScene=dynamic(()=>import('@/components/HomeDepthScene'),{ssr:false});
 
 export default function Home(){
 	const {translate}=useLocale();
+	const homeRef=useRef<HTMLElement>(null);
+	useEffect(()=>{
+		const home=homeRef.current;
+		if(!home||window.matchMedia('(prefers-reduced-motion: reduce)').matches||!('IntersectionObserver' in window))return;
+		const sections=home.querySelectorAll<HTMLElement>(':scope > .home-section, :scope > .experience-section, :scope > .preview-section, :scope > .education-section, :scope > .home-cta');
+		if(!sections.length)return;
+		home.classList.add('home-motion-ready');
+		const observer=new IntersectionObserver(entries=>{
+			for(const entry of entries){
+				if(entry.isIntersecting){
+					entry.target.classList.add('is-revealed');
+					observer.unobserve(entry.target);
+				}
+			}
+		},{threshold:.08,rootMargin:'0px 0px -32px 0px'});
+		sections.forEach(section=>observer.observe(section));
+		return()=>{
+			observer.disconnect();
+			home.classList.remove('home-motion-ready');
+		};
+	},[]);
 	const principles=[
 		{icon:LockKeyhole,title:translate('accountAccessPrinciple'),copy:translate('accountAccessDescription')},
 		{icon:WalletCards,title:translate('portfolioVisibilityPrinciple'),copy:translate('portfolioVisibilityDescription')},
@@ -50,7 +72,7 @@ export default function Home(){
 	];
 	return <>
 		<Nav/>
-		<main className="home-root">
+		<main className="home-root" ref={homeRef}>
 			<section className="home-hero">
 				<div className="home-hero-grid" aria-hidden="true"/>
 				<div className="home-hero-copy">
@@ -60,7 +82,15 @@ export default function Home(){
 					<p className="home-hero-lede">{translate('homeHeroDescription')}</p>
 					<div className="home-hero-actions"><HomeAccountActions variant="hero"/></div>
 				</div>
-				<div className="home-hero-visual"><div className="home-market-depth" aria-hidden="true"><MarketDepthScene className="market-depth-canvas--hero"/></div><HomeMarketPreview/><div className="hero-caption"><span>{translate('marketView')}</span></div></div>
+				<div className="home-hero-visual" onPointerMove={event=>{
+					if(event.pointerType==='touch')return;
+					const bounds=event.currentTarget.getBoundingClientRect();
+					event.currentTarget.style.setProperty('--pointer-x',`${((event.clientX-bounds.left)/bounds.width-.5)*3}deg`);
+					event.currentTarget.style.setProperty('--pointer-y',`${(.5-(event.clientY-bounds.top)/bounds.height)*3}deg`);
+				}} onPointerLeave={event=>{
+					event.currentTarget.style.setProperty('--pointer-x','0deg');
+					event.currentTarget.style.setProperty('--pointer-y','0deg');
+				}}><div className="home-market-depth" aria-hidden="true"><HomeDepthScene/></div><HomeMarketPreview/><div className="hero-caption"><span>{translate('marketView')}</span></div></div>
 				<a className="home-scroll-cue" href="#platform"><span>{translate('scrollToExplore')}</span><ChevronDown size={15}/></a>
 			</section>
 

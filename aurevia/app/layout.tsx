@@ -8,7 +8,7 @@ import Providers from '@/components/Providers';
 import {normalizeLocale} from '@/lib/i18n';
 
 export const metadata={title:'Aurevia Exchange',description:'Aurevia Exchange — a secure, account-first digital markets platform'};
-export const viewport={width:'device-width',initialScale:1,viewportFit:'cover',themeColor:'#0B0F1A'};
+export const viewport={width:'device-width',initialScale:1,viewportFit:'cover',themeColor:'#07110d'};
 
 export default async function RootLayout({children}:{children:ReactNode}){
   const cookieStore=await cookies();

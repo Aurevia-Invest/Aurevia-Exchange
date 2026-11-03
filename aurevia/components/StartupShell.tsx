@@ -2,13 +2,10 @@
 
 import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
 import type {ReactNode} from 'react';
-import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import {usePathname} from 'next/navigation';
 import {useSession} from 'next-auth/react';
 import AureviaStartup from '@/components/AureviaStartup';
-
-const MarketDepthScene=dynamic(()=>import('@/components/MarketDepthScene'),{ssr:false});
 
 const startupKey='aurevia-startup-complete';
 const exitDurationMs=180;
@@ -78,7 +75,7 @@ export default function StartupShell({children}:{children:ReactNode}){
 	},[markStartupComplete,ready,showStartup,status]);
 
 	return <div className="app-shell">
-		<div className="scene-depth" aria-hidden="true"><MarketDepthScene/></div>
+		<div className="scene-depth" aria-hidden="true"/>
 		<div className="scene-content"><div ref={contentRef} aria-hidden={showStartup}>{children}</div>{showStartup&&<AureviaStartup isExiting={isExiting}/>}
 			{showPageTransition&&<div className="page-transition-loading" role="status" aria-live="polite"><Image src="/aurevia-logo.png" alt="" width={64} height={64} priority/><p>Loading the next page…</p></div>}
 		</div>

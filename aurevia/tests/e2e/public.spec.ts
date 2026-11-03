@@ -1,4 +1,4 @@
-import {test,expect,expectNoHorizontalOverflow,waitForStartup} from './fixtures';
+import {test,expect,expectNoHorizontalOverflow,loginAs,waitForStartup} from './fixtures';
 
 const viewports=[
 	{width:320,height:800},
@@ -16,6 +16,12 @@ const viewports=[
 ];
 
 const publicRoutes=['/','/login','/register','/markets','/stories','/client-stories','/about','/education','/support','/waitlist','/terms','/privacy','/risk-disclosure','/forgot-password','/reset-password'];
+
+function fixture(name:string){
+	const value=process.env[`AUREVIA_E2E_${name}`];
+	if(!value)throw new Error(`Playwright fixture ${name} is unavailable.`);
+	return value;
+}
 
 test.describe('public routes and responsive layout',()=>{
 	for(const viewport of viewports){
@@ -57,6 +63,7 @@ test('homepage hero actions remain usable with reduced motion',async({browser,pa
 	await expect(page.locator('.home-hero-actions a[href="/register"]')).toBeVisible();
 	await expect(page.locator('.home-hero-actions a[href="/login"]')).toBeVisible();
 	await expectNoHorizontalOverflow(page);
+	await expect(page.locator('.market-depth-fallback')).toBeVisible();
 
 	const nextSession=await browser.newContext({viewport:{width:1280,height:900},reducedMotion:'reduce'});
 	try{
@@ -65,8 +72,39 @@ test('homepage hero actions remain usable with reduced motion',async({browser,pa
 		await waitForStartup(nextPage);
 		await expect(nextPage.locator('.home-hero').locator('h1').first()).toBeVisible();
 		await expect(nextPage.locator('.home-hero-actions a[href="/register"]')).toBeVisible();
+		await expect(nextPage.locator('.market-depth-fallback')).toBeVisible();
+		await expect(nextPage.locator('.market-depth-canvas')).toHaveCount(0);
 		await expectNoHorizontalOverflow(nextPage);
 	}finally{await nextSession.close();}
+});
+
+test('homepage uses a static 3D fallback on narrow mobile screens',async({page})=>{
+	await page.setViewportSize({width:320,height:800});
+	await page.goto('/');
+	await expect(page.locator('.market-depth-fallback')).toBeVisible();
+	await expect(page.locator('.market-depth-canvas')).toHaveCount(0);
+	await expectNoHorizontalOverflow(page);
+});
+
+test('first-visit policy consent handles choices and unlocks the platform',async({page})=>{
+	await page.goto('/');
+	const dialog=page.getByRole('dialog',{name:'Review before continuing'});
+	await expect(dialog).toBeVisible();
+	await expect(dialog).toContainText('DEMO is practice only');
+	await dialog.getByRole('button',{name:'Cancel'}).click();
+	await expect(page.getByRole('dialog',{name:'Choice deferred'})).toBeVisible();
+	expect(await page.evaluate(()=>localStorage.getItem('aurevia-policy-consent-v1'))).toBeNull();
+	await page.getByRole('button',{name:'Return to choices'}).click();
+	await page.getByRole('dialog',{name:'Review before continuing'}).getByRole('button',{name:'Reject'}).click();
+	await expect(page.getByRole('dialog',{name:'Access paused'})).toBeVisible();
+	expect(JSON.parse(await page.evaluate(()=>localStorage.getItem('aurevia-policy-consent-v1')||'null'))).toMatchObject({version:1,choice:'rejected'});
+	await page.getByRole('button',{name:'Accept terms & continue'}).click();
+	await expect(page.getByRole('dialog')).toBeHidden();
+	await expect(page.locator('.home-hero h1').first()).toBeVisible();
+	expect(JSON.parse(await page.evaluate(()=>localStorage.getItem('aurevia-policy-consent-v1')||'null'))).toMatchObject({version:1,choice:'accepted'});
+	await page.reload();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await expect(page.locator('.home-hero h1').first()).toBeVisible();
 });
 
 test('homepage labels internal reference prices as non-live market data',async({page})=>{
@@ -88,13 +126,15 @@ test('homepage clearly labels stock and crypto trading modes',async({page})=>{
 });
 
 test('site theme preference switches globally and persists across navigation',async({page})=>{
-	await page.goto('/');
+	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await page.goto('/about-me');
 	const themeToggle=page.getByRole('button',{name:'Switch to light mode'});
 	await themeToggle.click();
 	await expect(page.locator('html')).toHaveAttribute('data-theme','light');
 	await expect(page.locator('body')).toHaveCSS('background-color','rgb(249, 251, 253)');
-	await page.goto('/about');
+	await page.goto('/dashboard');
 	await expect(page.locator('html')).toHaveAttribute('data-theme','light');
+	await page.goto('/about-me');
 	await page.getByRole('button',{name:'Switch to dark mode'}).click();
 	await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
 });

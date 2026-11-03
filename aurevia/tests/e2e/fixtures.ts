@@ -22,6 +22,7 @@ export async function loginAs(page:Page,email:string,password:string){
 	const loginIp=isolatedLoginIp();
 	const addIsolatedLoginIp=(route:import('@playwright/test').Route)=>route.continue({headers:{...route.request().headers(),'x-forwarded-for':loginIp}});
 	const administrator=email.toLowerCase()===process.env.AUREVIA_E2E_ADMIN_EMAIL?.toLowerCase();
+	await page.addInitScript(()=>localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()})));
 	await page.route(credentialCallback,addIsolatedLoginIp);
 	try{
 		await page.goto(administrator?'/admin/login':'/login');
@@ -77,6 +78,9 @@ export async function expectNoHorizontalOverflow(page:Page){
 }
 
 test.beforeEach(async({page},testInfo)=>{
+	if(!testInfo.title.includes('first-visit policy consent')){
+		await page.addInitScript(()=>localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()})));
+	}
 	const testClientIp=`198.51.100.${randomInt(1,255)}`;
 	await page.route('**/api/auth/callback/credentials**',route=>route.continue({headers:{...route.request().headers(),'x-forwarded-for':testClientIp}}));
 	await page.route('**/api/demo/ai-recommendations',route=>route.fulfill({

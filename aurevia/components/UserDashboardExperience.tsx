@@ -7,6 +7,7 @@ import {Cell,Pie, PieChart,ResponsiveContainer,Tooltip} from 'recharts';
 import {Activity,ArrowDownLeft,ArrowLeftRight,ArrowRight,ArrowUpRight,Bell,BriefcaseBusiness,ChartNoAxesCombined,ChevronDown,Clock3,ExternalLink,Eye,EyeOff,Home,LifeBuoy,LineChart,Plus,RefreshCw,Search,ShieldCheck,Star,WalletCards} from 'lucide-react';
 import {useSession} from 'next-auth/react';
 import Nav from '@/components/Nav';
+import AureviaLoading from '@/components/AureviaLoading';
 import ProfileAvatar from '@/components/ProfileAvatar';
 import NewsFeedPanel from '@/components/NewsFeedPanel';
 import LivePriceChart from '@/components/LivePriceChart';
@@ -282,7 +283,7 @@ export default function UserDashboardExperience(){
 		try{await Promise.all([load(false),refreshQuotesRef.current()])}
 		finally{setSyncingAll(false)}
 	},[load]);
-	if(loading&&!overview)return <><Nav/><DashboardSidebar name={session?.user?.name||session?.user?.email||''} tier={accountTier}/><main className="user-dashboard-page"><div className="user-dashboard-loading" role="status"><span className="user-dashboard-spinner"/>Loading your account dashboard…</div></main></>;
+	if(loading&&!overview)return <><Nav/><DashboardSidebar name={session?.user?.name||session?.user?.email||''} tier={accountTier}/><main className="user-dashboard-page"><AureviaLoading variant="inline" label="Loading your account dashboard" className="user-dashboard-loading"/></main></>;
 
 	return <><Nav/><DashboardSidebar name={overview?.profile.name||session?.user?.email||''} tier={accountTier||overview?.profile.tier||''}/><main className="user-dashboard-page">
 		{error&&<div className="user-dashboard-error" role="alert"><span>{error}</span><button type="button" onClick={()=>void load(true)}>Retry</button></div>}

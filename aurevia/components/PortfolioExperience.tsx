@@ -7,6 +7,7 @@ import {ArrowDownLeft,ArrowUpRight,Bitcoin,Briefcase,BriefcaseBusiness,Building2
 import Link from 'next/link';
 import {useSession} from 'next-auth/react';
 import Nav from '@/components/Nav';
+import AureviaLoading from '@/components/AureviaLoading';
 import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
 import PortfolioAssistant from '@/components/PortfolioAssistant';
 import TradingJournalAssistant from '@/components/TradingJournalAssistant';
@@ -133,7 +134,7 @@ export default function PortfolioExperience(){
 		{data?.accountMode==='REAL'&&<div className="account-callout mb-4"><span>REAL wallet balances are Aurevia’s internal ledger. Alpaca Paper holdings are valued separately using fresh external provider quotes and are not wallet cash or withdrawable. BTC credits require manual verification; investment return targets are estimates, not settled funds.</span></div>}
 		{notice&&<p className="mb-3 text-sm text-profit" role="status">{notice}</p>}
 		{error&&<div className="account-callout mb-4" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load(true)}>{translate('portfolioRetry')}</button></div>}
-		{loading&&!data?<p className="account-empty" role="status">{translate('portfolioLoading')}</p>:data&&<>
+		{loading&&!data?<AureviaLoading variant="inline" label={translate('portfolioLoading')} className="account-empty"/>:data&&<>
 			<section className="portfolio-hero">
 				<div className="portfolio-value">
 					<span>Aurevia account value</span>

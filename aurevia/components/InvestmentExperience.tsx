@@ -4,6 +4,7 @@ import {FormEvent,useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {useSession} from 'next-auth/react';
 import {ArrowUpRight,RefreshCw,ShieldCheck} from 'lucide-react';
 import Nav from '@/components/Nav';
+import AureviaLoading from '@/components/AureviaLoading';
 import {InvestmentCompletionCard,InvestmentProgressCard} from '@/components/InvestmentProgressCard';
 import {useLocale} from '@/lib/i18n-context';
 import {formatUsd} from '@/lib/currency-format';
@@ -116,7 +117,7 @@ export default function InvestmentExperience(){
   {notice&&<p className="mb-3 text-sm text-profit" role="status">{notice}</p>}{error&&<div className="account-callout mb-3" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load(true)}><RefreshCw size={14}/> Retry</button></div>}
   <section id="opportunities" className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('availableOpportunities')}</h2><p className="account-panel-subtitle">{translate('targetFigures')}</p></div>{data&&<span className="muted text-sm">{translate('availableCashLabel')} {amount(data.availableBalance,translate('investmentNotSet'))}</span>}</div>
    {data&&data.opportunities.length>0&&<div className="investment-opportunity-filters"><label className="account-label">Search opportunities<input className="input" type="search" value={search} onChange={event=>setSearch(event.target.value)} placeholder="Name, category or asset"/></label><label className="account-label">Category<select className="input" value={category} onChange={event=>setCategory(event.target.value)}><option value="ALL">All categories</option>{categories.map(item=><option key={item}>{item}</option>)}</select></label></div>}
-   {loading&&!data?<p className="account-empty" role="status">{translate('loadingOpportunities')}</p>:data?.opportunities.length&&visibleOpportunities.length?<div className="mt-4 grid gap-4 lg:grid-cols-2">{visibleOpportunities.map(opportunity=>{
+   {loading&&!data?<AureviaLoading variant="inline" label={translate('loadingOpportunities')} className="account-empty"/>:data?.opportunities.length&&visibleOpportunities.length?<div className="mt-4 grid gap-4 lg:grid-cols-2">{visibleOpportunities.map(opportunity=>{
     const value=Number(amounts[opportunity.id]||0);const target=opportunity.targetReturnPercent===null?null:value*(1+Number(opportunity.targetReturnPercent)/100);
     return <article className="investment-opportunity" key={opportunity.id}>
      <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="account-kicker">{opportunity.category}{opportunity.assetSymbol?` · ${opportunity.assetSymbol}`:''}</span><h3>{opportunity.title}</h3></div><span className="status-pill">{opportunity.riskLevel.replaceAll('_',' ')}</span></div>

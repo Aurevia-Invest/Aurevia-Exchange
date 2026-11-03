@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import {useSession} from 'next-auth/react';
 import {useCallback,useEffect,useState,type ReactNode} from 'react';
-import {Activity,ArrowRight,ArrowUpRight,BadgeCheck,Bell,Building2,CircleDollarSign,Clock3,Eye,Landmark,LineChart,LoaderCircle,ShieldCheck,Sparkles,TrendingUp,UserRound,WalletCards,X} from 'lucide-react';
+import {Activity,ArrowRight,ArrowUpRight,BadgeCheck,Bell,Building2,CircleDollarSign,Clock3,Eye,Landmark,LineChart,ShieldCheck,Sparkles,TrendingUp,UserRound,WalletCards,X} from 'lucide-react';
 import Nav from '@/components/Nav';
+import AureviaLoading from '@/components/AureviaLoading';
 import ProfileAvatar from '@/components/ProfileAvatar';
 import DashboardCryptoTrade from '@/components/DashboardCryptoTrade';
 import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
@@ -27,7 +28,7 @@ export default function DashboardExperience(){
   const load=useCallback(async()=>{try{const response=await fetch('/api/dashboard',{cache:'no-store'});const result=await response.json();if(!response.ok)throw new Error(result.error||translate('dashboardError'));setData(result);setError('')}catch(exception){setError(exception instanceof Error?exception.message:translate('dashboardError'));}finally{setLoading(false)}},[translate]);
   useEffect(()=>{void load()},[load,session?.user?.accountMode]);
   const marketQuery=useQuery({queryKey:['dashboard-market',data?.marketInstruments.map(i=>i.symbol).join(',')],queryFn:async()=>{const symbols=data?.marketInstruments.map(i=>i.symbol)||[];if(!symbols.length)return {quotes:[]};const response=await fetch(`/api/live-markets?symbols=${encodeURIComponent(symbols.join(','))}`,{cache:'no-store'});const body=await response.json();if(!response.ok)throw new Error(body.error||'Market feed unavailable.');return body as {quotes:Array<MarketQuote|{asset:{id:string};error:string}>}},enabled:!!data&&data.marketInstruments.length>0,refetchInterval:30_000});
-  if(loading&&!data)return <><Nav/><main className="account-page dashboard-loading"><LoaderCircle size={24} className="gold animate-spin"/><p>{translate('loadingWorkspace')}</p></main></>;
+  if(loading&&!data)return <><Nav/><main className="account-page dashboard-loading"><AureviaLoading variant="inline" label={translate('loadingWorkspace')}/></main></>;
   if(error&&!data)return <><Nav/><main className="account-page"><div className="account-callout" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load()}>{translate('retry')}</button></div></main></>;
   if(!data)return null;
   const profile=data.profile;const mode=data.accountMode;const verified=profile.verified;const totalPnl=Number(data.unrealized);const isDemo=mode==='DEMO';const firstName=profile.name?.trim().split(/\s+/)[0]||translate('account');

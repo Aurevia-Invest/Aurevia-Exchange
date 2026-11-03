@@ -1,0 +1,124 @@
+.aurevia-loading-screen{
+	position:fixed;
+	inset:0;
+	z-index:250;
+	display:flex;
+	align-items:center;
+	justify-content:center;
+	gap:clamp(20px,4vh,34px);
+	overflow:hidden;
+	padding:24px;
+	background:
+		radial-gradient(ellipse at 50% 42%,rgba(28,78,56,.52),transparent 43%),
+		radial-gradient(ellipse at 50% 105%,rgba(128,91,36,.12),transparent 42%),
+		linear-gradient(155deg,#030806,#08140e 54%,#040906);
+	color:#f2eee2;
+	isolation:isolate;
+}
+.aurevia-loading-screen:before{
+	position:absolute;
+	z-index:-1;
+	inset:0;
+	background:linear-gradient(115deg,transparent 30%,rgba(235,211,154,.035) 50%,transparent 70%);
+	content:"";
+	pointer-events:none;
+}
+.aurevia-loading-emblem{
+	position:relative;
+	display:grid;
+	width:clamp(94px,18vw,138px);
+	aspect-ratio:1;
+	flex:none;
+	place-items:center;
+	perspective:520px;
+}
+.aurevia-loading-emblem img{
+	position:relative;
+	z-index:2;
+	width:54%;
+	height:54%;
+	object-fit:contain;
+	filter:drop-shadow(0 0 15px rgba(225,190,115,.38)) drop-shadow(0 11px 22px rgba(0,0,0,.5));
+	animation:aurevia-loader-emblem 3.2s ease-in-out infinite;
+}
+.aurevia-loading-orbit{
+	position:absolute;
+	inset:9%;
+	border:1px solid rgba(222,190,126,.25);
+	border-radius:50%;
+	box-shadow:0 0 20px rgba(197,164,107,.06),inset 0 0 15px rgba(197,164,107,.035);
+}
+.aurevia-loading-orbit-one{transform:rotateX(68deg) rotateZ(-14deg);animation:aurevia-loader-orbit 8s linear infinite}
+.aurevia-loading-orbit-two{inset:2%;border-color:rgba(222,190,126,.13);transform:rotateY(64deg) rotateZ(25deg);animation:aurevia-loader-orbit-reverse 11s linear infinite}
+.aurevia-loading-orbit-three{inset:17%;border-color:rgba(244,221,167,.18);transform:rotateX(73deg) rotateZ(55deg);animation:aurevia-loader-orbit 6.5s linear infinite}
+.aurevia-loading-particle{
+	position:absolute;
+	z-index:3;
+	width:4px;
+	height:4px;
+	border-radius:50%;
+	background:#e6c980;
+	box-shadow:0 0 9px 2px rgba(218,180,102,.6);
+	animation:aurevia-loader-particle 2.8s ease-in-out infinite;
+}
+.aurevia-loading-particle-one{top:12%;left:29%}
+.aurevia-loading-particle-two{right:11%;bottom:31%;animation-delay:-.9s}
+.aurevia-loading-particle-three{bottom:12%;left:36%;animation-delay:-1.8s}
+.aurevia-loading-copy{width:min(330px,90vw);text-align:center}
+.aurevia-loading-wordmark{margin:0;color:#f0eadb;font-size:clamp(15px,2.4vw,19px);font-weight:650;letter-spacing:.24em}
+.aurevia-loading-wordmark span{color:#d5b875;font-size:.72em;letter-spacing:.32em}
+.aurevia-loading-label{margin:18px 0 0;color:#e5e3d8;font-size:13px;letter-spacing:.045em}
+.aurevia-loading-detail{margin:8px 0 0;color:#99a59c;font-size:11px;letter-spacing:.025em}
+.aurevia-loading-track{
+	width:min(220px,70vw);
+	height:2px;
+	margin:22px auto 0;
+	overflow:hidden;
+	border-radius:99px;
+	background:rgba(210,191,148,.13);
+}
+.aurevia-loading-track span{
+	display:block;
+	width:36%;
+	height:100%;
+	border-radius:inherit;
+	background:linear-gradient(90deg,transparent,#a67d35 22%,#f0d99d 56%,#a67d35 82%,transparent);
+	box-shadow:0 0 9px rgba(223,190,122,.45);
+	animation:aurevia-loader-progress 1.6s ease-in-out infinite;
+}
+.aurevia-loading-inline{
+	display:flex;
+	align-items:center;
+	justify-content:center;
+	gap:12px;
+	color:#ddd8c9;
+}
+.aurevia-loading-inline .aurevia-loading-emblem{width:44px}
+.aurevia-loading-inline .aurevia-loading-emblem img{width:58%;height:58%}
+.aurevia-loading-inline .aurevia-loading-orbit-one{inset:4%}
+.aurevia-loading-inline .aurevia-loading-orbit-two{inset:-8%}
+.aurevia-loading-inline .aurevia-loading-orbit-three{inset:18%}
+.aurevia-loading-inline .aurevia-loading-particle{width:3px;height:3px}
+.aurevia-loading-inline .aurevia-loading-copy{width:auto;text-align:left}
+.aurevia-loading-inline .aurevia-loading-wordmark{font-size:9px;letter-spacing:.17em}
+.aurevia-loading-inline .aurevia-loading-wordmark span{letter-spacing:.2em}
+.aurevia-loading-inline .aurevia-loading-label{margin:4px 0 0;color:#aab3a9;font-size:12px}
+.user-dashboard-loading.aurevia-loading-inline{min-height:65vh;font-size:11px}
+.aurevia-loading-screen.startup-screen{z-index:9999}
+.aurevia-loading-screen.startup-screen.is-exiting{opacity:0;visibility:hidden;pointer-events:none}
+@keyframes aurevia-loader-orbit{to{rotate:1 0 0 360deg}}
+@keyframes aurevia-loader-orbit-reverse{to{rotate:0 1 0 -360deg}}
+@keyframes aurevia-loader-emblem{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-3px) scale(1.035)}}
+@keyframes aurevia-loader-particle{0%,100%{opacity:.42;transform:scale(.75)}50%{opacity:1;transform:scale(1.3)}}
+@keyframes aurevia-loader-progress{0%{transform:translateX(-120%)}100%{transform:translateX(310%)}}
+@media(max-width:600px){
+	.aurevia-loading-screen{flex-direction:column;gap:14px;padding:20px}
+	.aurevia-loading-screen .aurevia-loading-emblem{width:clamp(88px,27vw,112px)}
+	.aurevia-loading-label{margin-top:13px;font-size:12px}
+	.aurevia-loading-track{margin-top:18px}
+}
+@media(prefers-reduced-motion:reduce){
+	.aurevia-loading *,
+	.aurevia-loading:before{animation:none!important;transition:none!important}
+	.aurevia-loading-track span{width:100%;opacity:.6}
+}

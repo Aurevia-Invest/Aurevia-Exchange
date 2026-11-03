@@ -3,13 +3,13 @@ import {beforeEach,describe,expect,it,vi} from 'vitest';
 
 const mocks=vi.hoisted(()=>({
 	requireAdmin:vi.fn(),transaction:vi.fn(),ensureUserLedger:vi.fn(),ensureSystemAccount:vi.fn(),
-	postDoubleEntry:vi.fn(),balance:vi.fn(),createNotification:vi.fn(),rateLimit:vi.fn(),
+	postDoubleEntry:vi.fn(),postWithdrawalDebitWithFee:vi.fn(),balance:vi.fn(),createNotification:vi.fn(),rateLimit:vi.fn(),
 	decryptWithdrawalDestination:vi.fn(),getRealWithdrawableBalance:vi.fn(),
 }));
 
 vi.mock('@/lib/auth',()=>({requireAdmin:mocks.requireAdmin}));
 vi.mock('@/lib/db',()=>({db:{$transaction:mocks.transaction}}));
-vi.mock('@/lib/ledger',()=>({ensureUserLedger:mocks.ensureUserLedger,ensureSystemAccount:mocks.ensureSystemAccount,postDoubleEntry:mocks.postDoubleEntry,balance:mocks.balance}));
+vi.mock('@/lib/ledger',()=>({ensureUserLedger:mocks.ensureUserLedger,ensureSystemAccount:mocks.ensureSystemAccount,postDoubleEntry:mocks.postDoubleEntry,postWithdrawalDebitWithFee:mocks.postWithdrawalDebitWithFee,balance:mocks.balance}));
 vi.mock('@/lib/notifications',()=>({createNotification:mocks.createNotification}));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit}));
 vi.mock('@/lib/serializers',()=>({jsonSafe:(value:unknown)=>value}));
@@ -33,6 +33,8 @@ beforeEach(()=>{
 	current={
 		id:withdrawalId,userId:'user-1',type:FundingType.WITHDRAWAL,accountMode:AccountMode.REAL,
 		status:FundingStatus.PENDING_REVIEW,currency:'USD',amount:new Prisma.Decimal('25.00'),
+		feeAmount:new Prisma.Decimal('2.50'),feePercent:new Prisma.Decimal('10'),
+		creditedAmount:new Prisma.Decimal('22.50'),creditedCurrency:'USD',
 		withdrawalDestinationId:'destination-1',adminNote:null,
 	};
 	const auditedActions=new Map<string,string>();
@@ -62,8 +64,9 @@ beforeEach(()=>{
 	mocks.requireAdmin.mockResolvedValue({id:'admin-1'});
 	mocks.transaction.mockImplementation(async(callback:(value:unknown)=>Promise<unknown>)=>callback(tx));
 	mocks.ensureUserLedger.mockResolvedValue({id:'user-ledger',currency:'USD'});
-	mocks.ensureSystemAccount.mockResolvedValue({id:'withdrawal-clearing',currency:'USD'});
+	mocks.ensureSystemAccount.mockImplementation(async(_tx:unknown,code:string)=>({id:code.includes('FEE')?'withdrawal-fee':'withdrawal-clearing',currency:'USD'}));
 	mocks.postDoubleEntry.mockResolvedValue(undefined);
+	mocks.postWithdrawalDebitWithFee.mockResolvedValue(undefined);
 	mocks.balance.mockResolvedValue(new Prisma.Decimal('100.00'));
 	mocks.createNotification.mockResolvedValue(undefined);
 	mocks.getRealWithdrawableBalance.mockResolvedValue(new Prisma.Decimal('100.00'));
@@ -92,10 +95,11 @@ describe('administrator withdrawal lifecycle',()=>{
 		expect(completed.status).toBe(200);
 		expect(body.status).toBe(FundingStatus.COMPLETED);
 		expect(body.processingReference).toBe('bank-ref-123');
-		expect(mocks.postDoubleEntry).toHaveBeenCalledTimes(1);
-		expect(mocks.postDoubleEntry).toHaveBeenCalledWith(tx,expect.objectContaining({
-			reference:`FUNDING:${withdrawalId}:EXTERNAL_WITHDRAWAL`,debitAccountId:'user-ledger',
-			creditAccountId:'withdrawal-clearing',amount:new Prisma.Decimal('25.00'),
+		expect(mocks.postWithdrawalDebitWithFee).toHaveBeenCalledTimes(1);
+		expect(mocks.postWithdrawalDebitWithFee).toHaveBeenCalledWith(tx,expect.objectContaining({
+			reference:`FUNDING:${withdrawalId}:EXTERNAL_WITHDRAWAL`,userAccountId:'user-ledger',
+			payoutAccountId:'withdrawal-clearing',feeAccountId:'withdrawal-fee',
+			grossAmount:new Prisma.Decimal('25.00'),netPayout:new Prisma.Decimal('22.50'),feeAmount:new Prisma.Decimal('2.50'),
 		}));
 		expect(mocks.getRealWithdrawableBalance).toHaveBeenCalledWith(tx,'user-1',new Prisma.Decimal('100.00'),withdrawalId);
 	});
@@ -107,7 +111,7 @@ describe('administrator withdrawal lifecycle',()=>{
 		const response=await POST(request('COMPLETE',{processingReference:'bank-ref-123',confirmExternalProcessing:true}));
 
 		expect(response.status).toBe(409);
-		expect(mocks.postDoubleEntry).not.toHaveBeenCalled();
+		expect(mocks.postWithdrawalDebitWithFee).not.toHaveBeenCalled();
 	});
 
 	it('rejects invalid state transitions and crypto confirmations without a transaction hash',async()=>{
@@ -117,19 +121,19 @@ describe('administrator withdrawal lifecycle',()=>{
 		mocks.decryptWithdrawalDestination.mockReturnValue({type:'CRYPTOCURRENCY',network:'BITCOIN_MAINNET'});
 		const invalidHash=await POST(request('COMPLETE',{processingReference:'bank-ref-123',confirmExternalProcessing:true}));
 		expect(invalidHash.status).toBe(409);
-		expect(mocks.postDoubleEntry).not.toHaveBeenCalled();
+		expect(mocks.postWithdrawalDebitWithFee).not.toHaveBeenCalled();
 	});
 
 	it('releases rejected and failed reservations without ledger changes',async()=>{
 		const rejected=await POST(request('REJECT',{note:'Destination details do not meet policy'}));
 		expect(rejected.status).toBe(200);
 		expect(current.status).toBe(FundingStatus.REJECTED);
-		expect(mocks.postDoubleEntry).not.toHaveBeenCalled();
+		expect(mocks.postWithdrawalDebitWithFee).not.toHaveBeenCalled();
 		current.status=FundingStatus.PROCESSING;
 		const failed=await POST(request('FAIL',{note:'Transfer was not accepted by the receiving institution'}));
 		expect(failed.status).toBe(200);
 		expect(current.status).toBe(FundingStatus.FAILED);
-		expect(mocks.postDoubleEntry).not.toHaveBeenCalled();
+		expect(mocks.postWithdrawalDebitWithFee).not.toHaveBeenCalled();
 	});
 
 	it('uses a serializable transaction and prevents completion when other reservations consume the balance',async()=>{

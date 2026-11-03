@@ -89,6 +89,6 @@ export function InvestmentCompletionCard({investment}:{investment:InvestmentProg
 		<div><b>{settled?'Investment completed':'Investment period complete'}</b><p>{settled
 			?`The server automatically credited the recorded payout of ${formatUsd(investment.simulatedPayout||investment.amount)} to your ${investment.accountMode} internal USD ledger. The live earnings figure was an estimate; this settled amount is available in your wallet. No claim or separate move is needed.`
 			:'The investment period is complete and settlement is pending. No payout is available in your balance until settlement is recorded.'}</p></div>
-		{settled&&<div className="investment-completion-actions"><Link href="/wallet"><WalletCards size={13}/>View wallet</Link><Link href="/investments">Browse investments <ArrowRight size={13}/></Link></div>}
+		{settled&&<div className="investment-completion-actions">{investment.accountMode==='REAL'&&<Link href="/wallet?action=WITHDRAWAL"><WalletCards size={13}/>Request withdrawal</Link>}<Link href="/wallet"><WalletCards size={13}/>View wallet</Link><Link href="/investments">Browse investments <ArrowRight size={13}/></Link></div>}
 	</div>;
 }

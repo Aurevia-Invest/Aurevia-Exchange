@@ -138,7 +138,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 	const rows:Array<{label:string;value:string;emphasis?:boolean}>=[
 		{label:'ACCOUNT',value:`${currentReceipt.name||'Account holder'} · ${currentReceipt.accountMode||'Mode not recorded'} · ${gateway}`},
 		...(currentReceipt.aureviaExchangeId?[{label:'AUREVIA EXCHANGE ID',value:currentReceipt.aureviaExchangeId}]:[]),
-		{label:'AMOUNT',value:amountLabel(currentReceipt.amount,currentReceipt.currency)},
+		{label:isWithdrawal?'GROSS WITHDRAWAL':'AMOUNT',value:amountLabel(currentReceipt.amount,currentReceipt.currency)},
 		{label:'FEE',value:feeLabel},
 		{label:'TOTAL',value:total===null?'Not available':amountLabel(total,currentReceipt.currency),emphasis:true},
 		{label:'METHOD',value:currentReceipt.method||'Not recorded'},
@@ -154,7 +154,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 		}
 	if(isWithdrawal)rows.splice(1,0,{label:'DESTINATION',value:`${recipientName} · ${recipientNumber}`});
 	if(currentReceipt.processingReference)rows.splice(rows.length-2,0,{label:'PROCESSING REFERENCE',value:currentReceipt.processingReference});
-	if(currentReceipt.creditedAmount!==undefined&&currentReceipt.creditedAmount!==null)rows.splice(2,0,{label:'LEDGER CREDIT',value:amountLabel(currentReceipt.creditedAmount,currentReceipt.creditedCurrency||currentReceipt.currency)});
+	if(currentReceipt.creditedAmount!==undefined&&currentReceipt.creditedAmount!==null)rows.splice(2,0,{label:isWithdrawal?'NET PAYOUT':'LEDGER CREDIT',value:amountLabel(currentReceipt.creditedAmount,currentReceipt.creditedCurrency||currentReceipt.currency)});
 	const description=explanation;
 
 	async function exportPdf(){

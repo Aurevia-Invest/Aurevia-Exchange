@@ -126,6 +126,10 @@ describe('wallet withdrawal destination snapshot',()=>{
 
 		expect(response.status).toBe(201);
 		expect(body.status).toBe(FundingStatus.PENDING_REVIEW);
+		expect((storedRequest?.feeAmount as Prisma.Decimal).toString()).toBe('2');
+		expect((storedRequest?.feePercent as Prisma.Decimal).toString()).toBe('10');
+		expect((storedRequest?.creditedAmount as Prisma.Decimal).toString()).toBe('18');
+		expect(storedRequest?.creditedCurrency).toBe('USD');
 		expect(storedRequest).toMatchObject({
 			transactionReference:'a'.repeat(64),
 			network:'BITCOIN_MAINNET',
@@ -163,6 +167,18 @@ describe('wallet withdrawal destination snapshot',()=>{
 		}));
 
 		expect(response.status).toBe(400);
+		expect(tx.fundingRequest.create).not.toHaveBeenCalled();
+	});
+
+	it('rejects a withdrawal too small to apply the disclosed commission',async()=>{
+		const response=await POST(new Request('https://aurevia.test/api/wallet',{
+			method:'POST',
+			headers:{'content-type':'application/json','Idempotency-Key':'small-withdrawal-rejected'},
+			body:JSON.stringify({type:FundingType.WITHDRAWAL,amount:0.04,currency:'USD',withdrawalDestinationId:destination.id,destinationConfirmed:true}),
+		}));
+
+		expect(response.status).toBe(400);
+		expect((await response.json()).error).toContain('at least $0.05');
 		expect(tx.fundingRequest.create).not.toHaveBeenCalled();
 	});
 });

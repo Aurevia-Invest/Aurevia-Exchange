@@ -15,6 +15,7 @@ import {getRealWithdrawableBalance} from '@/lib/real-withdrawals';
 import {decryptWithdrawalDestination} from '@/lib/withdrawal-destinations';
 import {rateLimit} from '@/lib/rate-limit';
 import {normalizeBitcoinWithdrawalSubmission} from '@/lib/bitcoin-withdrawal-submission';
+import {calculateWithdrawalAmounts,WITHDRAWAL_COMMISSION_PERCENT} from '@/lib/withdrawal-fee';
 
 const schema=z.object({
 	type:z.nativeEnum(FundingType),
@@ -151,6 +152,10 @@ export async function POST(req:Request){
 		const currency='USD';
 		const amount=roundUsdAmount(parsed.amount);
 		if(amount.lte(0))throw new Error('INVALID_AMOUNT');
+		const withdrawalAmounts=parsed.type===FundingType.WITHDRAWAL?calculateWithdrawalAmounts(amount.toString()):null;
+		if(withdrawalAmounts&&(!withdrawalAmounts.feeCents||withdrawalAmounts.netCents<=0))throw new Error('WITHDRAWAL_AMOUNT_BELOW_COMMISSION_MINIMUM');
+		const withdrawalFee=withdrawalAmounts?new Prisma.Decimal(withdrawalAmounts.feeCents).div(100):null;
+		const withdrawalNet=withdrawalAmounts?new Prisma.Decimal(withdrawalAmounts.netCents).div(100):null;
 		const transactionReference=bitcoinSubmission?.transactionReference||parsed.transactionReference||null;
 		const referenceInfo=bitcoinSubmission?.referenceInfo??parsed.referenceInfo??null;
 		const senderInfo=bitcoinSubmission?.senderInfo??parsed.senderInfo??null;
@@ -188,6 +193,7 @@ export async function POST(req:Request){
 				type:parsed.type,
 				method:destination?.type==='BANK_TRANSFER'?'Bank transfer':destination?.type==='CRYPTOCURRENCY'?'Cryptocurrency wallet':`Internal REAL ${parsed.type.toLowerCase()} request`,
 				amount,
+				...(withdrawalFee&&withdrawalNet?{feeAmount:withdrawalFee,feePercent:new Prisma.Decimal(WITHDRAWAL_COMMISSION_PERCENT),creditedAmount:withdrawalNet,creditedCurrency:currency}:{}),
 				currency,
 				status:FundingStatus.PENDING_REVIEW,
 				accountMode:currentUser.accountMode,
@@ -208,12 +214,11 @@ export async function POST(req:Request){
 				network:destination.network,asset:destination.asset,maskedLabel:destination.maskedLabel,
 				ciphertext:destination.ciphertext,iv:destination.iv,authTag:destination.authTag,
 			}});
-			await tx.auditLog.create({data:{actorId:user.id,action:'FUNDING_SUBMITTED',entity:'FUNDING',entityId:request.id,metadata:{type:request.type,accountMode:request.accountMode,currency:request.currency,amount:request.amount.toString(),hasEvidence:!!receiptKey,transactionReference,withdrawalDestinationId:destination?.id||null,withdrawalMethod:destination?.type||null,externalEvidenceUserSubmitted:!!receiptKey||!!transactionReference}}});
-			await tx.auditLog.create({data:{actorId:user.id,action:'FUNDING_SUBMITTED',entity:'FUNDING',entityId:request.id,metadata:{type:request.type,accountMode:request.accountMode,currency:request.currency,amount:request.amount.toString(),hasEvidence:!!receiptKey,transactionReference,network:request.network,hasSenderInfo:!!request.senderInfo,hasDestinationInfo:!!request.destinationInfo,withdrawalDestinationId:destination?.id||null,withdrawalMethod:destination?.type||null,externalEvidenceUserSubmitted:!!receiptKey||!!transactionReference}}});
+			await tx.auditLog.create({data:{actorId:user.id,action:'FUNDING_SUBMITTED',entity:'FUNDING',entityId:request.id,metadata:{type:request.type,accountMode:request.accountMode,currency:request.currency,amount:request.amount.toString(),feeAmount:request.feeAmount?.toString()??null,feePercent:request.feePercent?.toString()??null,netPayout:request.creditedAmount?.toString()??null,hasEvidence:!!receiptKey,transactionReference,withdrawalDestinationId:destination?.id||null,withdrawalMethod:destination?.type||null,externalEvidenceUserSubmitted:!!receiptKey||!!transactionReference}}});
 			if(receiptKey)await tx.auditLog.create({data:{actorId:user.id,action:'PAYMENT_RECEIPT_UPLOADED',entity:'FUNDING',entityId:request.id,metadata:{accountMode:request.accountMode,...evidenceMetadata}}});
 			const notificationType=request.type===FundingType.DEPOSIT?NotificationType.DEPOSIT:NotificationType.WITHDRAWAL;
-			await createNotification(tx,{userId:user.id,type:notificationType,title:`REAL ${request.type.toLowerCase()} request submitted`,message:request.type===FundingType.WITHDRAWAL?'Your withdrawal request is reserved for administrator review. Approval does not initiate or confirm an external transfer.':'Your request is pending administrator review. This is an internal Aurevia ledger request; no external payment or transfer is initiated.',dedupeKey:`funding:${request.id}:submitted`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:`/wallet/transactions/${request.id}`});
-			await notifyActiveAdmins(tx,{type:notificationType,title:`New REAL ${request.type.toLowerCase()} request`,message:`A REAL account ${request.type.toLowerCase()} request for ${request.amount.toFixed(2)} USD awaits administrator review. Any attached file or reference is user-submitted information only; no external payment is processed.`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
+			await createNotification(tx,{userId:user.id,type:notificationType,title:`REAL ${request.type.toLowerCase()} request submitted`,message:request.type===FundingType.WITHDRAWAL?`Your withdrawal request is reserved for administrator review. The disclosed ${WITHDRAWAL_COMMISSION_PERCENT}% commission (${request.feeAmount?.toFixed(2)} USD) will be deducted internally only if the payout is completed. Approval does not initiate or confirm an external transfer.`:'Your request is pending administrator review. This is an internal Aurevia ledger request; no external payment or transfer is initiated.',dedupeKey:`funding:${request.id}:submitted`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:`/wallet/transactions/${request.id}`});
+			await notifyActiveAdmins(tx,{type:notificationType,title:`New REAL ${request.type.toLowerCase()} request`,message:`A REAL account ${request.type.toLowerCase()} request for ${request.amount.toFixed(2)} USD awaits administrator review.${request.type===FundingType.WITHDRAWAL?` Disclosed commission: ${request.feeAmount?.toFixed(2)} USD; net payout: ${request.creditedAmount?.toFixed(2)} USD.`:''} Any attached file or reference is user-submitted information only; no external payment is processed.`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
 			return {request,replay:false};
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
 		if(result.replay&&receiptKey)await deletePrivateObject('receipt',user.id,receiptKey);
@@ -221,7 +226,7 @@ export async function POST(req:Request){
 		receiptKey=undefined;
 		let emailDelivery:'sent'|'not-configured'|'failed'='not-configured';
 		if(!result.replay){
-			const delivery=await sendSupportEmail(`New internal ${result.request.type.toLowerCase()} request`,[`Request: ${result.request.id}`,`User: ${user.id}`,`Account mode: ${result.request.accountMode}`,`Amount: ${result.request.amount.toString()} ${result.request.currency}`,`Status: ${result.request.status}`].join('\n'));
+			const delivery=await sendSupportEmail(`New internal ${result.request.type.toLowerCase()} request`,[`Request: ${result.request.id}`,`User: ${user.id}`,`Account mode: ${result.request.accountMode}`,`Amount: ${result.request.amount.toString()} ${result.request.currency}`,...(result.request.type===FundingType.WITHDRAWAL?[`Commission (${result.request.feePercent?.toString()||WITHDRAWAL_COMMISSION_PERCENT}%): ${result.request.feeAmount?.toString()||'Not recorded'} ${result.request.currency}`,`Net payout: ${result.request.creditedAmount?.toString()||'Not recorded'} ${result.request.creditedCurrency||result.request.currency}`]:[]),`Status: ${result.request.status}`].join('\n'));
 			emailDelivery=emailDeliveryStatus(delivery);
 		}
 		const withdrawalDestination=destination?{id:destination.id,type:destination.type,nickname:destination.nickname,countryCode:destination.countryCode,network:destination.network,asset:destination.asset,maskedLabel:destination.maskedLabel}:null;
@@ -238,8 +243,8 @@ export async function POST(req:Request){
 		if(error instanceof Error&&error.message==='WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED')return NextResponse.json({error:'Secure destination storage is not configured. Contact Aurevia support.'},{status:503});
 		if(error instanceof Error&&error.message==='WITHDRAWAL_DESTINATION_DECRYPTION_FAILED')return NextResponse.json({error:'The saved destination could not be verified. Contact Aurevia support.'},{status:503});
 		if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2034')return NextResponse.json({error:'The account changed while submitting this request. Refresh and try again.'},{status:409});
-		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','DEPOSITS_DISABLED','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED','BITCOIN_DETAILS_NOT_ALLOWED','BITCOIN_NETWORK_REQUIRED','BTC_WITHDRAWAL_DESTINATION_REQUIRED','INVALID_BTC_TXID','INVALID_BTC_SENDER_ADDRESS'];
-		if(error instanceof Error&&known.includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:error.message==='IDEMPOTENCY_KEY_REUSED'?409:error.message==='DEPOSITS_DISABLED'||error.message==='ACCOUNT_RESTRICTED'||error.message==='WITHDRAWAL_DISABLED'||error.message==='REAL_KYC_REQUIRED'||error.message==='FIRST_TRADE_REQUIRED'?403:400});
+		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','DEPOSITS_DISABLED','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED','BITCOIN_DETAILS_NOT_ALLOWED','BITCOIN_NETWORK_REQUIRED','BTC_WITHDRAWAL_DESTINATION_REQUIRED','INVALID_BTC_TXID','INVALID_BTC_SENDER_ADDRESS','WITHDRAWAL_AMOUNT_BELOW_COMMISSION_MINIMUM'];
+		if(error instanceof Error&&known.includes(error.message))return NextResponse.json({error:error.message==='WITHDRAWAL_AMOUNT_BELOW_COMMISSION_MINIMUM'?'Withdrawal must be at least $0.05 so the 10% commission rounds to at least $0.01.':error.message.replaceAll('_',' ').toLowerCase()},{status:error.message==='IDEMPOTENCY_KEY_REUSED'?409:error.message==='DEPOSITS_DISABLED'||error.message==='ACCOUNT_RESTRICTED'||error.message==='WITHDRAWAL_DISABLED'||error.message==='REAL_KYC_REQUIRED'||error.message==='FIRST_TRADE_REQUIRED'?403:400});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
 		if(['P1001','P1002','P1017','P2021','P2022'].includes(code))return NextResponse.json({error:'Funding service is temporarily unavailable.'},{status:503});
 		console.error(`Funding request failed (${/^[A-Z0-9_]{2,32}$/.test(code)?code:error instanceof Error?error.name:'UnknownError'}).`);

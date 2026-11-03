@@ -3,7 +3,7 @@ import {AccountMode,FundingStatus,FundingType,NotificationType,Prisma} from '@pr
 import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry} from '@/lib/ledger';
+import {balance,ensureSystemAccount,ensureUserLedger,postWithdrawalDebitWithFee} from '@/lib/ledger';
 import {createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
 import {jsonSafe} from '@/lib/serializers';
@@ -94,8 +94,12 @@ export async function POST(request:Request){
 							return ledgerBalance.minus(others._sum.amount??new Prisma.Decimal(0));
 						})();
 					if(available.lt(current.amount))throw new Error('INSUFFICIENT_WITHDRAWABLE_FUNDS');
-					const system=await ensureSystemAccount(tx,`SYSTEM:MANUAL_WITHDRAWAL:REAL:${current.currency}`,`Administrator-recorded external withdrawal clearing`,current.currency,AccountMode.REAL);
-					await postDoubleEntry(tx,{reference:`FUNDING:${current.id}:EXTERNAL_WITHDRAWAL`,description:'Administrator-confirmed external withdrawal; internal ledger debit',debitAccountId:account.id,creditAccountId:system.id,amount:current.amount});
+					const fee=current.feeAmount??new Prisma.Decimal(0);
+					const netPayout=current.creditedAmount??current.amount.minus(fee);
+					if(fee.lt(0)||netPayout.lt(0)||!netPayout.plus(fee).equals(current.amount))throw new Error('INVALID_WITHDRAWAL_ALLOCATION');
+					const payoutAccount=await ensureSystemAccount(tx,`SYSTEM:MANUAL_WITHDRAWAL:REAL:${current.currency}`,`Administrator-recorded external withdrawal clearing`,current.currency,AccountMode.REAL);
+					const feeAccount=fee.gt(0)?await ensureSystemAccount(tx,`SYSTEM:MANUAL_WITHDRAWAL_FEE:REAL:${current.currency}`,`REAL withdrawal commission revenue`,current.currency,AccountMode.REAL):payoutAccount;
+					await postWithdrawalDebitWithFee(tx,{reference:`FUNDING:${current.id}:EXTERNAL_WITHDRAWAL`,description:'Administrator-confirmed external withdrawal; net payout and commission allocated in ledger',userAccountId:account.id,payoutAccountId:payoutAccount.id,feeAccountId:feeAccount.id,grossAmount:current.amount,netPayout,feeAmount:fee});
 					update={status:FundingStatus.COMPLETED,processingReference:input.processingReference,processingConfirmedAt:stamp,settlementReference:`FUNDING:${current.id}:EXTERNAL_WITHDRAWAL`,settledAt:stamp,adminNote:input.note||current.adminNote};
 					nextStatus=FundingStatus.COMPLETED;
 					break;
@@ -110,13 +114,17 @@ export async function POST(request:Request){
 				note:input.note||null,processingReference:input.action==='COMPLETE'?input.processingReference:null,
 				externalProcessingAdminConfirmed:input.action==='COMPLETE',withdrawalMethod:destination?.type||null,network:destination?.network||null,
 				ledgerDebitReference:input.action==='COMPLETE'?`FUNDING:${current.id}:EXTERNAL_WITHDRAWAL`:null,
+				grossAmount:input.action==='COMPLETE'?current.amount.toString():null,
+				feeAmount:input.action==='COMPLETE'?(current.feeAmount?.toString()??'0'):null,
+				feePercent:input.action==='COMPLETE'?(current.feePercent?.toString()??null):null,
+				netPayout:input.action==='COMPLETE'?(current.creditedAmount?.toString()??current.amount.toString()):null,
 			}}});
 			const notificationMessage:Record<typeof input.action,string>={
-				APPROVE:'Your withdrawal request was approved. The amount remains reserved; no external transfer has yet been confirmed.',
+				APPROVE:`Your withdrawal request was approved. The amount remains reserved; no external transfer has yet been confirmed. The disclosed commission is ${current.feeAmount?.toFixed(2)??'0.00'} ${current.currency}, and the net payout is ${current.creditedAmount?.toFixed(2)??current.amount.toFixed(2)} ${current.currency}.`,
 				REJECT:'Your withdrawal request was rejected. The reservation has been released and no ledger debit was posted. Review the request record for details.',
 				REQUEST_INFO:'An administrator needs more information about your withdrawal request. No payout was initiated. Review the request record for details.',
 				PROCESS:'Your withdrawal request is being processed by an administrator. This status is not proof of payment.',
-				COMPLETE:'An administrator recorded your withdrawal as externally processed and posted the matching internal ledger debit. Aurevia did not independently verify a bank or blockchain provider.',
+				COMPLETE:`An administrator recorded your net payout of ${(current.creditedAmount??current.amount).toFixed(2)} ${current.currency} as externally processed and allocated the ${current.feeAmount?.toFixed(2)??'0.00'} ${current.currency} commission in Aurevia’s ledger. Aurevia did not independently verify a bank or blockchain provider.`,
 				FAIL:'Your withdrawal processing failed. The reservation has been released and no ledger debit was posted. Review the request record for details.',
 			};
 			await createNotification(tx,{userId:current.userId,type:NotificationType.WITHDRAWAL,title:`Withdrawal ${nextStatus.toLowerCase().replaceAll('_',' ')}`,message:notificationMessage[input.action],dedupeKey:`withdrawal:${current.id}:${idempotencyKey}`,relatedEntity:'FUNDING',relatedId:current.id,actionUrl:`/wallet/transactions/${current.id}`});

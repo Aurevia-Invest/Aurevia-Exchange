@@ -56,6 +56,32 @@ export async function postGrossCreditWithFee(tx:Tx,args:{reference:string;descri
  if(feeValue.gt(0))entries.push({account:{connect:{id:args.feeAccountId}},accountMode,type:EntryType.CREDIT,amount:feeValue});
  await tx.ledgerTransaction.create({data:{reference:args.reference,description:args.description,accountMode,entries:{create:entries}}});
 }
+export async function postWithdrawalDebitWithFee(tx:Tx,args:{reference:string;description:string;userAccountId:string;payoutAccountId:string;feeAccountId:string;grossAmount:Prisma.Decimal|string|number;netPayout:Prisma.Decimal|string|number;feeAmount:Prisma.Decimal|string|number}){
+ const gross=new D(args.grossAmount);
+ const payout=new D(args.netPayout);
+ const fee=new D(args.feeAmount);
+ if(gross.lte(0)||payout.lt(0)||fee.lt(0)||!payout.plus(fee).equals(gross))throw new Error('INVALID_WITHDRAWAL_ALLOCATION');
+ const accountIds=[args.userAccountId,args.payoutAccountId,args.feeAccountId];
+ const accounts=await tx.ledgerAccount.findMany({where:{id:{in:accountIds}},select:{id:true,currency:true,accountMode:true}});
+ if(accounts.length!==new Set(accountIds).size)throw new Error('LEDGER_ACCOUNT_NOT_FOUND');
+ const currencies=new Set(accounts.map(account=>account.currency.toUpperCase()));
+ const modes=new Set(accounts.map(account=>account.accountMode));
+ if(currencies.size!==1)throw new Error('LEDGER_CURRENCY_MISMATCH');
+ if(modes.size!==1)throw new Error('LEDGER_MODE_MISMATCH');
+ const accountMode=accounts[0].accountMode;
+ const currency=accounts[0].currency.toUpperCase();
+ const round=(value:Prisma.Decimal)=>currency==='USD'?roundUsdAmount(value):value;
+ const debitAmount=round(gross);
+ const payoutAmount=round(payout);
+ const feeValue=round(fee);
+ if(debitAmount.lte(0)||!payoutAmount.plus(feeValue).equals(debitAmount))throw new Error('INVALID_WITHDRAWAL_ALLOCATION');
+ const entries:Prisma.LedgerEntryCreateWithoutTransactionInput[]=[
+  {account:{connect:{id:args.userAccountId}},accountMode,type:EntryType.DEBIT,amount:debitAmount},
+  {account:{connect:{id:args.payoutAccountId}},accountMode,type:EntryType.CREDIT,amount:payoutAmount},
+ ];
+ if(feeValue.gt(0))entries.push({account:{connect:{id:args.feeAccountId}},accountMode,type:EntryType.CREDIT,amount:feeValue});
+ await tx.ledgerTransaction.create({data:{reference:args.reference,description:args.description,accountMode,entries:{create:entries}}});
+}
 export async function postLoanRepayment(tx:Tx,args:{reference:string;description:string;cashAccountId:string;receivableAccountId:string;interestAccountId:string;lateFeeAccountId:string;principalAmount:Prisma.Decimal|string|number;interestAmount:Prisma.Decimal|string|number;lateFeeAmount:Prisma.Decimal|string|number}){
  const principal=roundUsdAmount(args.principalAmount);
  const interest=roundUsdAmount(args.interestAmount);

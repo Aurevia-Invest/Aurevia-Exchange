@@ -135,7 +135,7 @@ describe('Akedly V2 server integration',()=>{
 		expect(akedlyReadiness()).toEqual({enabled:false,missing:['AKEDLY_ENABLED=true'],ready:false});
 	});
 
-	it('retains the HTTP status and only a safe provider code for a rejected attempt',async()=>{
+	it('retains the HTTP status and redacts contact data from a rejected provider message',async()=>{
 		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
 			status:'error',
 			error:{code:'invalid_signature',message:'private provider response for person@example.invalid'},
@@ -147,8 +147,53 @@ describe('Akedly V2 server integration',()=>{
 			httpStatus:401,
 			providerCode:'INVALID_SIGNATURE',
 		});
-		expect(JSON.stringify(failure)).not.toContain('private provider response');
 		expect(JSON.stringify(failure)).not.toContain('person@example.invalid');
+		expect(failure).toMatchObject({
+			providerMessage:'private provider response for [redacted-email]',
+			providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+		});
+	});
+
+	it('captures a redacted provider response message and endpoint for support correlation',async()=>{
+		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
+			status:'error',
+			data:{attemptId:'attempt_1234567890'},
+			error:{
+				code:'invalid_phone_number',
+				message:'Rejected +2348031234567 for person@example.invalid; OTP 123456. API key=secret-value',
+			},
+		}),{status:400,headers:{'content-type':'application/json'}})));
+
+		const failure=await createAkedlyAttempt({phoneNumber:'+2348031234567'}).catch(error=>error);
+
+		expect(failure).toMatchObject({
+			message:'AKEDLY_ATTEMPT_REJECTED',
+			httpStatus:400,
+			providerCode:'INVALID_PHONE_NUMBER',
+			providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+			providerAttemptId:'attempt_1234567890',
+			failureTimestamp:expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+			providerMessage:'Rejected [redacted-number] for [redacted-email]; OTP [redacted-code]. API key=[redacted]',
+		});
+		expect(JSON.stringify(failure)).not.toContain('+2348031234567');
+		expect(JSON.stringify(failure)).not.toContain('person@example.invalid');
+		expect(failure.providerMessage).not.toMatch(/\b123456\b/);
+		expect(JSON.stringify(failure)).not.toContain('secret-value');
+	});
+
+	it('retains the failed endpoint and timestamp for provider timeouts',async()=>{
+		vi.stubGlobal('fetch',vi.fn(async()=>{
+			throw new DOMException('request timed out','TimeoutError');
+		}));
+
+		const failure=await createAkedlyAttempt({phoneNumber:'+12125550123'}).catch(error=>error);
+
+		expect(failure).toMatchObject({
+			message:'AKEDLY_PROVIDER_UNAVAILABLE',
+			providerCode:'PROVIDER_TIMEOUT',
+			providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+			failureTimestamp:expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+		});
 	});
 
 	it.each([
@@ -168,7 +213,7 @@ describe('Akedly V2 server integration',()=>{
 			httpStatus,
 			providerCode:code,
 		});
-		expect(JSON.stringify(failure)).not.toContain('private provider details');
+		expect(failure.providerMessage).toBe('private provider details');
 		expect(JSON.stringify(failure)).not.toContain('+2348031234567');
 	});
 
@@ -186,7 +231,7 @@ describe('Akedly V2 server integration',()=>{
 			providerCode:'CHANNEL_QUOTA_EXCEEDED',
 			retryAfterSeconds:75,
 		});
-		expect(JSON.stringify(failure)).not.toContain('private provider response');
+		expect(failure.providerMessage).toBe('private provider response');
 	});
 
 	it('retains a provider error code returned with HTTP success',async()=>{
@@ -200,8 +245,9 @@ describe('Akedly V2 server integration',()=>{
 		expect(failure).toMatchObject({
 			message:'AKEDLY_ATTEMPT_REJECTED',
 			providerCode:'CAPTCHA_NOT_VERIFIED',
+			httpStatus:200,
 		});
-		expect(JSON.stringify(failure)).not.toContain('private provider response');
+		expect(failure.providerMessage).toBe('private provider response');
 	});
 
 	it('uses an authenticated server-side attempt status lookup',async()=>{

@@ -18,11 +18,12 @@ const mocks=vi.hoisted(()=>({
 		readonly httpStatus?:number;
 		readonly providerCode?:string;
 		readonly retryAfterSeconds?:number;
-		constructor(httpStatus?:number,providerCode?:string,retryAfterSeconds?:number){
+		constructor(httpStatus?:number,providerCode?:string,retryAfterSeconds?:number,details:Record<string,unknown>={}){
 			super('AKEDLY_ATTEMPT_REJECTED');
 			this.httpStatus=httpStatus;
 			this.providerCode=providerCode;
 			this.retryAfterSeconds=retryAfterSeconds;
+			Object.assign(this,details);
 		}
 	},
 	startAkedly:vi.fn(),
@@ -263,6 +264,49 @@ describe('registration verification resend',()=>{
 		expect(mocks.deliverCode).not.toHaveBeenCalled();
 	});
 
+	it('returns a correlated configuration diagnosis when Akedly is not ready',async()=>{
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-phone',
+			email:'new-registration@example.invalid',
+			phone:'+2348031234567',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+
+		const response=await POST(registrationRequest());
+		const result=await response.json();
+
+		expect(response.status).toBe(503);
+		expect(result).toMatchObject({
+			code:'PHONE_VERIFICATION_UNAVAILABLE',
+			error:expect.stringContaining('needs configuration'),
+			requestId:expect.any(String),
+			referenceId:expect.any(String),
+			diagnostics:{integrationEnabled:false,missingConfiguration:['AKEDLY_API_KEY']},
+		});
+		expect(result.referenceId).toBe(result.requestId);
+		expect(warning).toHaveBeenCalledWith(
+			'[registration-verification] Akedly is unavailable for a pending phone registration.',
+			expect.objectContaining({
+				requestId:result.referenceId,
+				referenceId:result.referenceId,
+				endpoint:'/api/register/resend',
+				failureCode:'AKEDLY_NOT_READY',
+				providerCode:'AKEDLY_NOT_READY',
+				providerEndpoint:null,
+				providerAttemptId:null,
+				providerHttpStatus:null,
+				providerMessage:null,
+				failureTimestamp:expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+				missing:['AKEDLY_API_KEY'],
+			}),
+		);
+		expect(mocks.startAkedlyRegistration).not.toHaveBeenCalled();
+		expect(mocks.deliverCode).not.toHaveBeenCalled();
+		warning.mockRestore();
+	});
+
 	it('does not fall back to email when new-registration phone verification fails',async()=>{
 		mocks.akedlyConfigured.mockReturnValue(true);
 		mocks.startAkedlyRegistration.mockRejectedValue(new Error('AKEDLY_PROVIDER_UNAVAILABLE'));
@@ -281,6 +325,53 @@ describe('registration verification resend',()=>{
 		expect(await response.json()).toMatchObject({error:expect.stringContaining('Phone verification')});
 		expect(mocks.deliverCode).not.toHaveBeenCalled();
 		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+	});
+
+	it('tells the user to correct provider-rejected phone numbers',async()=>{
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new mocks.AkedlyProviderError(400,'INVALID_PHONE_NUMBER'));
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-phone',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:'+2348031234567',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({
+			error:expect.stringContaining('valid phone number in international format'),
+			requestId:expect.any(String),
+			referenceId:expect.any(String),
+		});
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+		expect(mocks.deliverCode).not.toHaveBeenCalled();
+	});
+
+	it('gives retry guidance for provider timeouts while retaining the registration',async()=>{
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new mocks.AkedlyProviderError(504,'PROVIDER_TIMEOUT'));
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-phone',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:'+2348031234567',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+
+		const response=await POST(registrationRequest());
+
+		expect(response.status).toBe(503);
+		expect(await response.json()).toMatchObject({
+			error:expect.stringContaining('temporarily unavailable while the provider responds'),
+			referenceId:expect.any(String),
+		});
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+		expect(mocks.deliverCode).not.toHaveBeenCalled();
 	});
 
 	it('shows safe country-policy guidance without exposing provider response details',async()=>{
@@ -303,6 +394,57 @@ describe('registration verification resend',()=>{
 		expect(JSON.stringify(result)).not.toContain('DESTINATION_COUNTRY_BLOCKED');
 		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
 		expect(mocks.deliverCode).not.toHaveBeenCalled();
+	});
+
+	it('logs correlated provider diagnostics without returning provider details to the browser',async()=>{
+		mocks.akedlyConfigured.mockReturnValue(true);
+		mocks.startAkedlyRegistration.mockRejectedValue(new mocks.AkedlyProviderError(
+			401,
+			'INVALID_SIGNATURE',
+			undefined,
+			{
+				providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+				providerAttemptId:'attempt_1234567890',
+				providerMessage:'signature rejected for [redacted-number]',
+				failureTimestamp:'2026-11-03T17:00:00.000Z',
+			},
+		));
+		mocks.registrationAttemptFindUnique.mockResolvedValue({
+			id:'registration-phone',
+			email:'new-registration@example.invalid',
+			name:'New User',
+			phone:'+2348031234567',
+			expiresAt:new Date(Date.now()+60_000),
+			verification:null,
+		});
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+
+		const response=await POST(registrationRequest());
+		const result=await response.json();
+
+		expect(response.status).toBe(503);
+		expect(result).toMatchObject({requestId:expect.any(String),referenceId:expect.any(String)});
+		expect(result.referenceId).toBe(result.requestId);
+		expect(JSON.stringify(result)).not.toContain('INVALID_SIGNATURE');
+		expect(JSON.stringify(result)).not.toContain('redacted-number');
+		expect(warning).toHaveBeenCalledWith(
+			'[registration-verification] Akedly phone initiation failed; legacy email delivery is not used for new registrations.',
+			expect.objectContaining({
+				requestId:result.referenceId,
+				referenceId:result.referenceId,
+				endpoint:'/api/register/resend',
+				failureCode:'AKEDLY_ATTEMPT_REJECTED',
+				providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+				providerAttemptId:'attempt_1234567890',
+				providerHttpStatus:401,
+				providerCode:'INVALID_SIGNATURE',
+				providerMessage:'signature rejected for [redacted-number]',
+				failureTimestamp:'2026-11-03T17:00:00.000Z',
+			}),
+		);
+		expect(mocks.registrationAttemptDeleteMany).not.toHaveBeenCalled();
+		expect(mocks.deliverCode).not.toHaveBeenCalled();
+		warning.mockRestore();
 	});
 
 	it.each([

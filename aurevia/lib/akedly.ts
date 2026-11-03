@@ -4,19 +4,35 @@ import {getServerConfiguration} from '@/lib/config/env';
 
 const API_BASE_URL='https://api.akedly.io';
 const WIDGET_ORIGIN='https://auth.akedly.io';
+const CREATE_ATTEMPT_ENDPOINT=`${API_BASE_URL}/api/v1/widget-sdk/create-attempt`;
 const MAX_WEBHOOK_BYTES=64*1024;
+
+type AkedlyProviderErrorDetails={
+	providerEndpoint?:string;
+	providerAttemptId?:string;
+	providerMessage?:string;
+	failureTimestamp?:string;
+};
 
 export class AkedlyProviderError extends Error{
 	readonly httpStatus?:number;
 	readonly providerCode?:string;
 	readonly retryAfterSeconds?:number;
+	readonly providerEndpoint:string;
+	readonly providerAttemptId?:string;
+	readonly providerMessage?:string;
+	readonly failureTimestamp:string;
 
-	constructor(category:string,httpStatus?:number,providerCode?:string,retryAfterSeconds?:number){
+	constructor(category:string,httpStatus?:number,providerCode?:string,retryAfterSeconds?:number,details:AkedlyProviderErrorDetails={}){
 		super(category);
 		this.name='AkedlyProviderError';
 		this.httpStatus=httpStatus;
 		this.providerCode=providerCode;
 		this.retryAfterSeconds=retryAfterSeconds;
+		this.providerEndpoint=details.providerEndpoint||CREATE_ATTEMPT_ENDPOINT;
+		this.providerAttemptId=details.providerAttemptId;
+		this.providerMessage=details.providerMessage;
+		this.failureTimestamp=details.failureTimestamp||new Date().toISOString();
 	}
 }
 
@@ -78,32 +94,57 @@ export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyA
 	};
 	let response:Response;
 	try{
-		response=await fetch(`${API_BASE_URL}/api/v1/widget-sdk/create-attempt`,{
+		response=await fetch(CREATE_ATTEMPT_ENDPOINT,{
 			method:'POST',
 			headers:{'content-type':'application/json'},
 			body:JSON.stringify(body),
 			signal:AbortSignal.timeout(8000),
 			redirect:'error',
 		});
-	}catch{
-		throw new Error('AKEDLY_PROVIDER_UNAVAILABLE');
+	}catch(error){
+		throw new AkedlyProviderError(
+			'AKEDLY_PROVIDER_UNAVAILABLE',
+			undefined,
+			error instanceof Error&&error.name==='TimeoutError'?'PROVIDER_TIMEOUT':'NETWORK_ERROR',
+			undefined,
+			{providerEndpoint:CREATE_ATTEMPT_ENDPOINT},
+		);
 	}
 	const result=await response.json().catch(()=>null) as unknown;
+	const providerAttempt=providerAttemptId(result);
+	const providerMessage=providerErrorMessage(result,contact,config);
+	const providerDetails={
+		providerEndpoint:CREATE_ATTEMPT_ENDPOINT,
+		...(providerAttempt?{providerAttemptId:providerAttempt}:{}),
+		...(providerMessage?{providerMessage}:{}),
+	};
 	if(!response.ok||(isRecord(result)&&result.status==='error')){
 		throw new AkedlyProviderError(
 			'AKEDLY_ATTEMPT_REJECTED',
-			response.ok?undefined:response.status,
+			response.status,
 			providerErrorCode(result),
 			providerRetryAfterSeconds(response,result),
+			providerDetails,
 		);
 	}
-	if(!isRecord(result)||result.status!=='success'||!isRecord(result.data))throw new Error('AKEDLY_INVALID_PROVIDER_RESPONSE');
+	if(!isRecord(result)||result.status!=='success'||!isRecord(result.data)){
+		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,undefined,undefined,providerDetails);
+	}
 	const {attemptId,iframeUrl,expiresAt}=result.data;
-	if(typeof attemptId!=='string'||attemptId.length<8||attemptId.length>200)throw new Error('AKEDLY_INVALID_PROVIDER_RESPONSE');
-	if(typeof iframeUrl!=='string'||!isSafeWidgetUrl(iframeUrl,attemptId))throw new Error('AKEDLY_INVALID_WIDGET_URL');
-	if(typeof expiresAt!=='string')throw new Error('AKEDLY_INVALID_PROVIDER_RESPONSE');
+	if(typeof attemptId!=='string'||attemptId.length<8||attemptId.length>200){
+		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,undefined,undefined,providerDetails);
+	}
+	const attemptDetails={...providerDetails,providerAttemptId:attemptId};
+	if(typeof iframeUrl!=='string'||!isSafeWidgetUrl(iframeUrl,attemptId)){
+		throw new AkedlyProviderError('AKEDLY_INVALID_WIDGET_URL',response.status,undefined,undefined,attemptDetails);
+	}
+	if(typeof expiresAt!=='string'){
+		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,undefined,undefined,attemptDetails);
+	}
 	const expiry=new Date(expiresAt);
-	if(!Number.isFinite(expiry.getTime())||expiry.getTime()<=Date.now()||expiry.getTime()>Date.now()+10*60_000)throw new Error('AKEDLY_INVALID_PROVIDER_RESPONSE');
+	if(!Number.isFinite(expiry.getTime())||expiry.getTime()<=Date.now()||expiry.getTime()>Date.now()+10*60_000){
+		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,undefined,undefined,attemptDetails);
+	}
 	return {attemptId,iframeUrl,expiresAt:expiry};
 }
 
@@ -228,6 +269,40 @@ function providerErrorCode(value:unknown){
 		??data?.code??data?.errorCode??data?.error_code;
 	if(typeof candidate!=='string'||!/^[A-Za-z][A-Za-z0-9_.-]{1,63}$/.test(candidate))return undefined;
 	return candidate.toUpperCase();
+}
+
+function providerAttemptId(value:unknown){
+	if(!isRecord(value))return undefined;
+	const nested=isRecord(value.error)?value.error:null;
+	const data=isRecord(value.data)?value.data:null;
+	const candidate=value.attemptId??nested?.attemptId??data?.attemptId;
+	return typeof candidate==='string'&&/^[A-Za-z0-9_-]{8,200}$/.test(candidate)?candidate:undefined;
+}
+
+function providerErrorMessage(value:unknown,contact:AkedlyContact,config:ReturnType<typeof assertAkedlyConfigured>){
+	if(!isRecord(value))return undefined;
+	const nested=isRecord(value.error)?value.error:null;
+	const data=isRecord(value.data)?value.data:null;
+	const candidate=value.message??nested?.message??data?.message;
+	if(typeof candidate!=='string')return undefined;
+	let message=candidate.trim();
+	if(contact.email)message=message.replaceAll(contact.email,'[redacted-email]');
+	if(contact.phoneNumber)message=message.replaceAll(contact.phoneNumber,'[redacted-number]');
+	for(const secret of [
+		config.apiKey,
+		config.publicKey,
+		config.widgetSecret,
+		config.webhookSecret,
+	]){
+		if(secret)message=message.replaceAll(secret,'[redacted-secret]');
+	}
+	message=message
+		.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,'[redacted-email]')
+		.replace(/(?<![\p{L}\p{N}])\+?[\p{Nd}][\p{Nd}\s().-]{5,}[\p{Nd}](?![\p{L}\p{N}])/gu,'[redacted-number]')
+		.replace(/(?<![\p{L}\p{N}])[\p{Nd}]{4,8}(?![\p{L}\p{N}])/gu,'[redacted-code]')
+		.replace(/\b(api[_ -]?key|secret|token|password)\s*[:=]\s*\S+/gi,'$1=[redacted]')
+		.slice(0,240);
+	return message||undefined;
 }
 
 function providerRetryAfterSeconds(response:Response,value:unknown){

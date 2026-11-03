@@ -14,6 +14,14 @@ import {clearRegistrationCookie,hashRegistrationToken,registrationTokenFromReque
 const schema=z.object({email:z.string().trim().email().max(254)});
 const genericResponse={message:'If the account is eligible, email verification can continue after the resend cooldown.'};
 const RESEND_RATE_LIMIT_WINDOW_MS=10*60_000;
+const INVALID_PHONE_CODES=[
+	'INVALID_PHONE',
+	'INVALID_PHONE_NUMBER',
+	'INVALID_DESTINATION',
+	'PHONE_NUMBER_INVALID',
+	'PHONE_INVALID',
+	'PHONE_NUMBER_FORMAT_INVALID',
+];
 
 function rateLimitResend(ip:string|null,email:string){
 	if(ip)rateLimit(`akedly-register-ip:${ip}`,5,RESEND_RATE_LIMIT_WINDOW_MS);
@@ -43,9 +51,19 @@ function deliveryStatusUnknownResponse(resendAfter:Date){
 	},{status:503,headers:{'Retry-After':String(retryAfterSeconds),'Cache-Control':'no-store'}});
 }
 
-function akedlyFailureDiagnostic(error:unknown){
+function akedlyFailureDiagnostic(error:unknown,requestId:string){
+	const category=error instanceof Error?error.message:'unknown';
 	return {
-		category:error instanceof Error?error.message:'unknown',
+		requestId,
+		referenceId:requestId,
+		endpoint:'/api/register/resend',
+		failureCode:category,
+		category,
+		failureTimestamp:error instanceof AkedlyProviderError?error.failureTimestamp:new Date().toISOString(),
+		providerEndpoint:error instanceof AkedlyProviderError?error.providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+		providerAttemptId:error instanceof AkedlyProviderError?error.providerAttemptId||null:null,
+		providerHttpStatus:error instanceof AkedlyProviderError?error.httpStatus||null:null,
+		providerMessage:error instanceof AkedlyProviderError?error.providerMessage||null:null,
 		...(error instanceof AkedlyProviderError&&error.httpStatus?{httpStatus:error.httpStatus}:{}),
 		...(error instanceof AkedlyProviderError&&error.providerCode?{providerCode:error.providerCode}:{}),
 	};
@@ -57,6 +75,13 @@ function phoneInitiationFailureResponse(error:unknown,requestId:string){
 	let message='Phone verification could not be initiated. Your registration is saved; please retry later.';
 	if(['API_KEY_SCOPE_DENIED','INVALID_API_KEY','INVALID_SIGNATURE','PIPELINE_NOT_CONFIGURED','PIPELINE_OWNERSHIP_MISMATCH','WIDGET_INACTIVE'].includes(providerCode||'')){
 		message='Phone verification is unavailable because the verification service could not authorize this request. Your registration is saved; please retry later or contact support if this continues.';
+	}else if(INVALID_PHONE_CODES.includes(providerCode||'')){
+		message='Enter a valid phone number in international format and try again. Your registration is saved.';
+	}else if(['CIRCUIT_BREAKER_OPEN','CIRCUIT_BREAKER_TRIGGERED'].includes(providerCode||'')){
+		message='Phone verification is temporarily unavailable while the provider recovers. Your registration is saved; wait a few minutes before retrying.';
+	}else if(['NETWORK_ERROR','PROVIDER_TIMEOUT'].includes(providerCode||'')
+		||(error instanceof AkedlyProviderError&&(error.httpStatus===408||(error.httpStatus??0)>=500))){
+		message='Phone verification is temporarily unavailable while the provider responds. Your registration is saved; please wait briefly and retry.';
 	}else if(providerCode==='DESTINATION_COUNTRY_BLOCKED'||providerCode==='NATIONAL_PIPELINE_RESTRICTION'){
 		message='The configured verification route is not available for this phone destination. Your registration is saved; contact support or use a supported number.';
 	}else if(providerCode==='CHANNEL_QUOTA_EXCEEDED'){
@@ -69,8 +94,6 @@ function phoneInitiationFailureResponse(error:unknown,requestId:string){
 		message='The security verification service is temporarily unavailable. Your registration is saved; wait a few minutes before retrying.';
 	}else if(providerCode==='CAPTCHA_NOT_VERIFIED'){
 		message='Complete the security check in the verification widget before requesting a code. Your registration is saved.';
-	}else if(['CIRCUIT_BREAKER_OPEN','CIRCUIT_BREAKER_TRIGGERED'].includes(providerCode||'')){
-		message='Phone verification is temporarily unavailable while the provider recovers. Your registration is saved; wait a few minutes before retrying.';
 	}else if([
 		'RATE_LIMITED',
 		'RATE_LIMIT_EXCEEDED',
@@ -86,7 +109,9 @@ function phoneInitiationFailureResponse(error:unknown,requestId:string){
 	].includes(providerCode||'')||(error instanceof AkedlyProviderError&&error.httpStatus===429)){
 		message='Too many verification requests were made. Your registration is saved; wait before retrying.';
 	}
-	const status=error instanceof AkedlyProviderError&&(error.httpStatus===429||[
+	const status=error instanceof AkedlyProviderError&&INVALID_PHONE_CODES.includes(providerCode||'')
+		?400
+		:error instanceof AkedlyProviderError&&(error.httpStatus===429||[
 		'RATE_LIMITED',
 		'RATE_LIMIT_EXCEEDED',
 		'TOO_MANY_REQUESTS',
@@ -98,9 +123,9 @@ function phoneInitiationFailureResponse(error:unknown,requestId:string){
 		'RATE_LIMIT_WIDGET_OTP',
 		'RATE_LIMIT_PHONENUMBER_OTP',
 		'RATE_LIMIT_DEVICEID_OTP',
-	].includes(providerCode||''))?429:503;
+		].includes(providerCode||''))?429:503;
 	return NextResponse.json(
-		{error:message,requestId,...(retryAfterSeconds?{retryAfterSeconds}:{})},
+		{error:message,requestId,referenceId:requestId,...(retryAfterSeconds?{retryAfterSeconds}:{})},
 		{status,headers:{...(retryAfterSeconds?{'Retry-After':String(retryAfterSeconds)}:{}),'Cache-Control':'no-store'}},
 	);
 }
@@ -147,12 +172,32 @@ export async function POST(request:Request){
 			}
 			const akedly=akedlyReadiness();
 			if(registrationChannel===VerificationChannel.SMS&&!akedly.ready){
-				console.warn('[registration-verification] Akedly is unavailable for a pending phone registration.',{
+				const failureTimestamp=new Date().toISOString();
+				const diagnostic={
 					requestId,
+					referenceId:requestId,
+					endpoint:'/api/register/resend',
+					failureCode:'AKEDLY_NOT_READY',
+					providerCode:'AKEDLY_NOT_READY',
+					providerEndpoint:null,
+					providerAttemptId:null,
+					providerHttpStatus:null,
+					providerMessage:null,
+					failureTimestamp,
 					enabled:akedly.enabled,
 					missing:akedly.missing,
-				});
-				return NextResponse.json({error:'Phone verification is unavailable right now. Your registration is saved. Please try again later; if this continues, contact support.'},{status:503,headers:{'Cache-Control':'no-store'}});
+				};
+				console.warn('[registration-verification] Akedly is unavailable for a pending phone registration.',diagnostic);
+				return NextResponse.json({
+					code:'PHONE_VERIFICATION_UNAVAILABLE',
+					error:'Phone verification is temporarily unavailable because the verification service needs configuration. Your registration is saved; please try again later or contact support.',
+					requestId,
+					referenceId:requestId,
+					diagnostics:{
+						integrationEnabled:akedly.enabled,
+						missingConfiguration:akedly.missing,
+					},
+				},{status:503,headers:{'Cache-Control':'no-store'}});
 			}
 			if(registrationChannel===VerificationChannel.EMAIL&&!akedly.ready&&!hasConfiguredVerificationProvider(VerificationChannel.EMAIL)){
 				return NextResponse.json({error:'Email verification is temporarily unavailable. Your registration is saved; please retry later.'},{status:503,headers:{'Cache-Control':'no-store'}});
@@ -186,20 +231,19 @@ export async function POST(request:Request){
 					if(!providerFailure)throw error;
 					if(registrationChannel===VerificationChannel.SMS){
 						console.warn('[registration-verification] Akedly phone initiation failed; legacy email delivery is not used for new registrations.',{
-							requestId,
-							...akedlyFailureDiagnostic(error),
+							...akedlyFailureDiagnostic(error,requestId),
 						});
 						return phoneInitiationFailureResponse(error,requestId);
 					}
 					if(!hasConfiguredVerificationProvider(VerificationChannel.EMAIL)){
 						console.warn('[registration-verification] Akedly initiation failed and no email fallback is configured.',{
-							...akedlyFailureDiagnostic(error),
+							...akedlyFailureDiagnostic(error,requestId),
 						});
 						return NextResponse.json({error:'Email verification could not be initiated. Your registration is saved; please retry later.'},{status:503,headers:{'Cache-Control':'no-store'}});
 					}
 					akedlyFallback=true;
 					console.warn('[registration-verification] Akedly initiation failed; using the configured email fallback.',{
-						...akedlyFailureDiagnostic(error),
+						...akedlyFailureDiagnostic(error,requestId),
 					});
 				}
 			}
@@ -324,7 +368,7 @@ export async function POST(request:Request){
 				if(!providerFailure||!hasConfiguredVerificationProvider(VerificationChannel.EMAIL))throw error;
 				akedlyFallback=true;
 				console.warn('[registration-verification] Akedly initiation failed; using the configured email fallback.',{
-					...akedlyFailureDiagnostic(error),
+					...akedlyFailureDiagnostic(error,requestId),
 				});
 			}
 		}

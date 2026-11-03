@@ -285,7 +285,8 @@ export default function RegistrationExperience(){
 				const retryMessage=response.status===429&&Number.isFinite(retryAfter)&&retryAfter>0
 					?` You can retry in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
 					:'';
-				setError(`${result.requestId?`${result.error||translate('registrationFailed')} (Reference: ${result.requestId})`:result.error||translate('registrationFailed')}${readinessDetail}${retryMessage}`);return;
+				const referenceId=typeof result.referenceId==='string'?result.referenceId:result.requestId;
+				setError(`${referenceId?`${result.error||translate('registrationFailed')} (Reference: ${referenceId})`:result.error||translate('registrationFailed')}${readinessDetail}${retryMessage}`);return;
 			}
 			const verificationParams=new URLSearchParams({email:result.email||details.email});
 			if(result.existingVerification)verificationParams.set('existing','1');

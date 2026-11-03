@@ -12,6 +12,8 @@ type FeedItem={
 	category:string;
 	publishedAt:string|null;
 	thumbnailUrl:string|null;
+	contentType:string;
+	mediaSource:{kind:'video'|'embed';url:string}|null;
 	source:{key:string;displayName:string;providerType:string};
 };
 
@@ -101,7 +103,7 @@ export default function NewsFeedPanel({compact=false}:{compact?:boolean}){
 		<section className={`news-feed-panel ${compact?'is-compact':''}`} aria-label="External news and updates">
 			<header className="news-feed-header">
 				<div>
-					<p className="eyebrow">EXTERNAL SOURCES</p>
+					<p className="eyebrow">NEWS & UPDATES</p>
 					<h2 className="news-feed-title"><Newspaper size={20} aria-hidden="true"/> News & updates</h2>
 				</div>
 				<div className="news-feed-tools">
@@ -112,6 +114,7 @@ export default function NewsFeedPanel({compact=false}:{compact?:boolean}){
 						<option value="ECONOMIC_NEWS">Economic news</option>
 						<option value="MARKET_NEWS">Market news</option>
 						<option value="GENERAL">General</option>
+						<option value="VIDEO">Video</option>
 					</select>
 					<button type="button" className="btn bg-white/5" onClick={()=>void load(1,false)} disabled={loading} aria-label="Refresh news">
 						{loading?<LoaderCircle size={14} className="animate-spin"/>:<RefreshCw size={14}/>}
@@ -150,6 +153,8 @@ export default function NewsFeedPanel({compact=false}:{compact?:boolean}){
 								<a className="news-feed-item-title" href={item.canonicalUrl} target="_blank" rel="noopener noreferrer">
 									{item.title} <ExternalLink size={14} aria-hidden="true"/>
 								</a>
+								{item.mediaSource?.kind==='video'&&<video className="mt-3 aspect-video w-full rounded-md bg-black" controls playsInline preload="metadata"><source src={item.mediaSource.url}/></video>}
+								{item.mediaSource?.kind==='embed'&&<div className="mt-3 aspect-video overflow-hidden rounded-md bg-black"><iframe className="h-full w-full" src={item.mediaSource.url} title={item.title} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"/></div>}
 								{item.summary&&<p className="news-feed-summary">{item.summary}</p>}
 								<span className="news-feed-publisher muted text-xs">{item.publisher} · {item.category.replaceAll('_',' ').toLowerCase()}</span>
 							</div>

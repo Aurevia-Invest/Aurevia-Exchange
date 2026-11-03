@@ -22,6 +22,7 @@ describe('broadcast lifecycle policy',()=>{
 		expect(broadcastMediaSource(null)).toBeNull();
 		expect(broadcastMediaSource('https://youtu.be/AbCdEf12345')).toEqual({kind:'embed',url:'https://www.youtube-nocookie.com/embed/AbCdEf12345'});
 		expect(broadcastMediaSource('https://player.vimeo.com/video/123456')).toEqual({kind:'embed',url:'https://player.vimeo.com/video/123456'});
+		expect(broadcastMediaSource('https://vimeo.com/123456')).toEqual({kind:'embed',url:'https://player.vimeo.com/video/123456'});
 		expect(broadcastMediaSource('https://media.example.test/archive.mp4')).toEqual({kind:'video',url:'https://media.example.test/archive.mp4'});
 		expect(broadcastMediaSource('https://example.test/page')).toBeNull();
 	});

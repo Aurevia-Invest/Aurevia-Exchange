@@ -46,6 +46,8 @@ The public `/stories` feed and homepage/dashboard story strips read only publish
 
 Anonymous views use a random, HTTP-only visitor cookie whose value is hashed before storage; view and external-link counts are deduplicated per story, action, and UTC day. No visitor IP address is stored for Stories analytics.
 
+Administrators can publish external news links from `/admin/news-feed` and select the news category. These posts appear on the News page and dashboard news panels. YouTube, Vimeo, and direct MP4/WebM/OGG links display inline; other HTTPS links are presented as outbound cards because arbitrary websites may block framing or expose unsafe embedded content. Posts can be hidden from the public feeds without deleting their audit history.
+
 ### Financial engine
 - PostgreSQL persistence
 - Prisma transactions

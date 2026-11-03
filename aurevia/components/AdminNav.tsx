@@ -5,7 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import {signOut,useSession} from 'next-auth/react';
 import {usePathname,useRouter,useSearchParams} from 'next/navigation';
-import {Activity,ArrowLeft,ArrowRight,BadgeCheck,Bell,BriefcaseBusiness,Building2,ClipboardCheck,CreditCard,FileCheck2,Handshake,LayoutDashboard,LogOut,Menu,MessageSquareText,Radio,ReceiptText,Search,Settings2,ShieldCheck,SlidersHorizontal,Sparkles,Trash2,UsersRound,X} from 'lucide-react';
+import {Activity,ArrowLeft,ArrowRight,BadgeCheck,Bell,BriefcaseBusiness,Building2,ClipboardCheck,CreditCard,FileCheck2,Handshake,LayoutDashboard,LogOut,Menu,MessageSquareText,Newspaper,Radio,ReceiptText,Search,Settings2,ShieldCheck,SlidersHorizontal,Sparkles,Trash2,UsersRound,X} from 'lucide-react';
 import ProfileAvatar from '@/components/ProfileAvatar';
 import ThemeToggle from '@/components/ThemeToggle';
 
@@ -37,6 +37,7 @@ const groups=[
 		{href:'/admin/support',label:'Support',icon:MessageSquareText},
 		{href:'/admin/cards',label:'Cards',icon:CreditCard},
 		{href:'/admin/tax-services',label:'Tax services',icon:ShieldCheck},
+		{href:'/admin/news-feed',label:'News feed posts',icon:Newspaper},
 		{href:'/admin/stories',label:'Stories',icon:Radio},
 		{href:'/admin/content',label:'Client stories',icon:Radio},
 		{href:'/admin/broadcasts',label:'Broadcasts',icon:Radio},

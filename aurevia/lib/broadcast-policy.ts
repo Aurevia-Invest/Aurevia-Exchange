@@ -40,8 +40,8 @@ export function broadcastMediaSource(value:string|null):{kind:'video'|'embed';ur
 		const videoId=url.pathname==='/watch'?url.searchParams.get('v'):url.pathname.split('/').at(-1);
 		return videoId&&/^[A-Za-z0-9_-]{6,20}$/.test(videoId)?{kind:'embed',url:`https://www.youtube-nocookie.com/embed/${videoId}`}:null;
 	}
-	if(host==='player.vimeo.com'&&url.pathname.startsWith('/video/')){
-		const videoId=url.pathname.split('/')[2];
+	if(host==='vimeo.com'||host==='www.vimeo.com'||host==='player.vimeo.com'){
+		const videoId=url.pathname.split('/').filter(Boolean).at(-1)||'';
 		return videoId&&/^\d{1,20}$/.test(videoId)?{kind:'embed',url:`https://player.vimeo.com/video/${videoId}`}:null;
 	}
 	return null;

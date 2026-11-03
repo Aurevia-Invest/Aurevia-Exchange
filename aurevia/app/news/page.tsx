@@ -12,7 +12,7 @@ export default function NewsPage(){
 				<div>
 					<span className="account-kicker">UPDATES</span>
 					<h1>News & updates</h1>
-					<p>Headlines imported from configured external sources. Links open the original publisher.</p>
+					<p>Headlines from configured publishers and links shared by Aurevia administrators.</p>
 				</div>
 			</header>
 			<NewsFeedPanel/>

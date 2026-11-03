@@ -2,6 +2,7 @@ import {NextResponse} from 'next/server';
 import {NewsFeedCategory,NewsFeedItemStatus,Prisma} from '@prisma/client';
 import {db} from '@/lib/db';
 import {jsonSafe} from '@/lib/serializers';
+import {editorialMediaSource} from '@/lib/news-feed/editorial';
 
 export const dynamic='force-dynamic';
 
@@ -48,6 +49,7 @@ export async function GET(request:Request){
 				contentType:item.contentType,
 				publishedAt:item.publishedAt,
 				thumbnailUrl:item.thumbnailUrl,
+				mediaSource:item.contentType==='editorial-link'?editorialMediaSource(item.canonicalUrl):null,
 				source:{key:item.source.key,displayName:item.source.displayName,providerType:item.source.providerType},
 			})),
 			page,

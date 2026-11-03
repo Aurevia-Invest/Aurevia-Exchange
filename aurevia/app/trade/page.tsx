@@ -165,7 +165,7 @@ export default function Trade() {
           if(activeMode==="REAL"){
             setItems([]);
             setSelected("");
-            setMsg("Unable to load fresh provider quotes. No simulated prices are shown for REAL orders.");
+            setMsg("Unable to load fresh provider quotes. Internal reference prices are not used for REAL orders.");
           }else setMsg("Unable to load trading data. Refresh to try again.");
         }
       }
@@ -179,13 +179,13 @@ export default function Trade() {
         setItems(market);
         setSelected(current=>market.some(item=>item.id===current)?current:market[0]?.id||"");
         if(activeMode==="DEMO")updateStore(market);
-        if(activeMode==="REAL"&&!market.length)setMsg("Live provider quotes are temporarily unavailable. No simulated prices are being shown.");
+        if(activeMode==="REAL"&&!market.length)setMsg("Live provider quotes are temporarily unavailable. Internal reference prices are not used for REAL orders.");
         else setMsg(current=>current.startsWith("Live provider quotes")||current.startsWith("No fresh provider quotes")?"":current);
       }catch{
         if(active&&activeMode==="REAL"){
           setItems([]);
           setSelected("");
-          setMsg("Unable to refresh provider quotes. No simulated prices are shown for REAL orders.");
+          setMsg("Unable to refresh provider quotes. Internal reference prices are not used for REAL orders.");
         }
       }
     };
@@ -258,7 +258,7 @@ export default function Trade() {
         const result=await response.json();
         if(!response.ok)throw new Error(typeof result.error==="string"?result.error:"Provider chart data is unavailable.");
         const history=result as {candles:typeof liveCandles;source?:string};
-        if(!history.source||!isExternalMarketDataSource(history.source))throw new Error("Provider chart data is unavailable; internal practice prices are not shown in REAL mode.");
+        if(!history.source||!isExternalMarketDataSource(history.source))throw new Error("Provider chart data is unavailable; internal reference prices are not used in REAL mode.");
         return history;
       })
       .then(result=>{if(active)setLiveCandles(result.candles);})
@@ -412,7 +412,7 @@ export default function Trade() {
                     {cur?.liveQuote?
                       <LivePriceChart candles={liveCandles} quote={cur.liveQuote} timeframe={chartTimeframe} loading={chartLoading} error={chartError}/>
                       :<p className="live-chart-message" role="status">{chartError||"Waiting for a fresh provider quote."}</p>}
-                    <p className="trade-chart-note">{cur?.liveQuote?`Provider data · quote ${new Date(cur.liveQuote.updatedAt).toLocaleTimeString()}`:"No simulated market data is shown for REAL orders."}</p>
+                    <p className="trade-chart-note">{cur?.liveQuote?`Provider data · quote ${new Date(cur.liveQuote.updatedAt).toLocaleTimeString()}`:"Internal reference prices are not used for REAL orders."}</p>
                   </div>
                   :<>
                     <PriceChart price={cur?.price ?? 0} />

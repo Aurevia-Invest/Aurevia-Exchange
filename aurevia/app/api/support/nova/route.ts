@@ -79,7 +79,7 @@ export async function POST(request:Request){
 							}else{
 								const observedAt=new Date().toISOString();
 								orderDraft={instrumentId:instrument.id,symbol:instrument.symbol,side:orderIntent.side,type:'MARKET',quantity:orderIntent.quantity,expectedPrice,observedAt,estimatedValue:Number((expectedPrice*orderIntent.quantity).toFixed(6)),accountMode:'DEMO'};
-								orderAnswer=`I prepared a DEMO-only market order preview for ${orderIntent.side} ${orderIntent.quantity} ${instrument.symbol} at the current simulated reference price. Estimated notional: ${orderDraft.estimatedValue}. This is simulated, the price can change before submission, and the order is not placed until you explicitly confirm below.`;
+								orderAnswer=`I prepared a DEMO-only market order preview for ${orderIntent.side} ${orderIntent.quantity} ${instrument.symbol} at the current internal reference price. Estimated notional: ${orderDraft.estimatedValue}. This is a DEMO order, the price can change before submission, and the order is not placed until you explicitly confirm below.`;
 								await db.auditLog.create({data:{actorId:userId,action:'NOVA_DEMO_ORDER_PREPARED',entity:'NOVA_ACTIVITY',entityId:input.conversationId||null,metadata:{eventTypes:['DEMO_ORDER_PREPARED'],accountMode:'DEMO',symbol:instrument.symbol,externalAction:false,providerResult:'not-applicable'}}});
 							}
 						}
@@ -90,7 +90,7 @@ export async function POST(request:Request){
 						}else{
 							const observedAt=new Date().toISOString();
 							orderDraft={instrumentId:instrument.id,symbol:instrument.symbol,side:orderIntent.side,type:'MARKET',quantity:orderIntent.quantity,expectedPrice,observedAt,estimatedValue:Number((expectedPrice*orderIntent.quantity).toFixed(6)),accountMode:'DEMO'};
-							orderAnswer=`I prepared a DEMO-only market order preview for ${orderIntent.side} ${orderIntent.quantity} ${instrument.symbol} at the current simulated reference price. Estimated notional: ${orderDraft.estimatedValue}. This is simulated, the price can change before submission, and the order is not placed until you explicitly confirm below.`;
+							orderAnswer=`I prepared a DEMO-only market order preview for ${orderIntent.side} ${orderIntent.quantity} ${instrument.symbol} at the current internal reference price. Estimated notional: ${orderDraft.estimatedValue}. This is a DEMO order, the price can change before submission, and the order is not placed until you explicitly confirm below.`;
 							await db.auditLog.create({data:{actorId:userId,action:'NOVA_DEMO_ORDER_PREPARED',entity:'NOVA_ACTIVITY',entityId:input.conversationId||null,metadata:{eventTypes:['DEMO_ORDER_PREPARED'],accountMode:'DEMO',symbol:instrument.symbol,externalAction:false,providerResult:'not-applicable'}}});
 						}
 					}

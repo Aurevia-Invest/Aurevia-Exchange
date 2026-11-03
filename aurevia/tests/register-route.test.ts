@@ -55,10 +55,14 @@ const payload={
 	captchaToken:'verified-turnstile-token',
 };
 
-function request(body:unknown=payload,forwardedFor='192.0.2.5'){
+function request(body:unknown=payload,forwardedFor='192.0.2.5',requestId?:string){
 	return new Request('https://aurevia.test/api/register',{
 		method:'POST',
-		headers:{'content-type':'application/json','x-forwarded-for':forwardedFor},
+		headers:{
+			'content-type':'application/json',
+			'x-forwarded-for':forwardedFor,
+			...(requestId?{'x-aurevia-request-id':requestId}:{}),
+		},
 		body:JSON.stringify(body),
 	});
 }
@@ -110,9 +114,17 @@ describe('registration privacy boundary',()=>{
 
 	it('fails closed on CAPTCHA and does not persist registration data',async()=>{
 		mocks.verifyTurnstile.mockResolvedValue(false);
-		const response=await POST(request());
+		const requestId='e75c6069-6dc9-4de5-8a58-e8257d8f8e03';
+		const response=await POST(request(payload,'192.0.2.5',requestId));
+		const body=await response.json();
 
 		expect(response.status).toBe(400);
+		expect(body).toMatchObject({
+			code:'REGISTRATION_SECURITY_REJECTED',
+			requestId,
+			referenceId:requestId,
+		});
+		expect(mocks.verifyTurnstile).toHaveBeenCalledWith(payload.captchaToken,requestId);
 		expect(mocks.rateLimit.mock.calls).toEqual([
 			['register-captcha-ip:192.0.2.5',10,600_000],
 			['register-captcha-email:new-user@example.invalid',5,600_000],
@@ -221,10 +233,26 @@ describe('registration privacy boundary',()=>{
 
 	it('does not persist details when server-side CAPTCHA verification is unavailable',async()=>{
 		mocks.verifyTurnstile.mockRejectedValue(new Error('TURNSTILE_PROVIDER_UNAVAILABLE'));
-		const response=await POST(request());
+		const requestId='8f9bdc70-c3f2-4e1f-b28b-e4e0896cd3e2';
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+		const response=await POST(request(payload,'192.0.2.5',requestId));
+		const body=await response.json();
 
 		expect(response.status).toBe(503);
+		expect(body).toMatchObject({
+			code:'REGISTRATION_SECURITY_UNAVAILABLE',
+			requestId,
+			referenceId:requestId,
+		});
+		expect(warning).toHaveBeenCalledWith('Registration Turnstile verification is unavailable.',expect.objectContaining({
+			requestId,
+			referenceId:requestId,
+			endpoint:'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+			errorCode:'TURNSTILE_PROVIDER_UNAVAILABLE',
+			failureTimestamp:expect.any(String),
+		}));
 		expect(mocks.attemptCreate).not.toHaveBeenCalled();
+		warning.mockRestore();
 	});
 
 	it('recovers a concurrent pending-attempt collision when the submitted password matches',async()=>{

@@ -19,6 +19,8 @@ type ExistingAccountIssue='account'|'unavailable'|'pending'|'phone';
 type TurnstileOptions={
 	sitekey:string;
 	action:string;
+	theme:'dark';
+	size:'flexible';
 	callback:(token:string)=>void;
 	'before-interactive-callback':()=>void;
 	'after-interactive-callback':()=>void;
@@ -35,6 +37,27 @@ declare global {
 			remove:(widgetId:string)=>void;
 		};
 	}
+}
+
+function createRegistrationRequestId(){
+	if(typeof window==='undefined'||!window.crypto?.getRandomValues)return null;
+	if(window.crypto.randomUUID)return window.crypto.randomUUID();
+	const bytes=window.crypto.getRandomValues(new Uint8Array(16));
+	bytes[6]=(bytes[6]&0x0f)|0x40;
+	bytes[8]=(bytes[8]&0x3f)|0x80;
+	const hex=[...bytes].map(value=>value.toString(16).padStart(2,'0')).join('');
+	return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
+
+function logTurnstileClientFailure(stage:string,reason:string){
+	const referenceId=createRegistrationRequestId();
+	console.warn('[registration-turnstile] Client verification failed.',{
+		...(referenceId?{requestId:referenceId,referenceId}:{}),
+		stage,
+		reason,
+		hostname:window.location.hostname,
+		failureTimestamp:new Date().toISOString(),
+	});
 }
 
 let turnstileScriptPromise:Promise<void>|null=null;
@@ -64,17 +87,26 @@ function loadTurnstileScript(){
 		const timeout=setTimeout(()=>finish(new Error('Turnstile script loading timed out.')),15_000);
 		script.addEventListener('load',onLoad,{once:true});
 		script.addEventListener('error',onError,{once:true});
+		if(existing?.dataset.aureviaLoaded==='true'){
+			onLoad();
+			return;
+		}
 		if(!existing){
 			script.src=TURNSTILE_SCRIPT_URL;
 			script.async=true;
 			script.defer=true;
 			script.dataset.aureviaTurnstile='true';
+			script.addEventListener('load',()=>{script.dataset.aureviaLoaded='true'},{once:true});
 			document.head.appendChild(script);
 		}else if(window.turnstile){
 			finish();
 		}
 	});
 	return turnstileScriptPromise;
+}
+
+function isRecord(value:unknown):value is Record<string,unknown>{
+	return typeof value==='object'&&value!==null&&!Array.isArray(value);
 }
 
 const initialDetails:RegistrationDetails={firstName:'',lastName:'',dateOfBirth:'',residenceCountry:'',phoneCountry:'US',phoneNumber:'',email:'',password:'',confirmPassword:'',accountMode:'DEMO'};
@@ -146,13 +178,17 @@ export default function RegistrationExperience(){
 			.then(result=>{
 				if(cancelled)return;
 				if(result.available!==true||typeof result.siteKey!=='string'||!result.siteKey.trim()){
+					logTurnstileClientFailure('configuration','turnstile_unavailable');
 					setCaptchaUnavailable(true);
 					return;
 				}
 				setCaptchaSiteKey(result.siteKey);
 			})
-			.catch(()=>{
-				if(!cancelled)setCaptchaUnavailable(true);
+			.catch(error=>{
+				if(!cancelled){
+					logTurnstileClientFailure('configuration',error instanceof Error?error.name:'UNKNOWN_ERROR');
+					setCaptchaUnavailable(true);
+				}
 			})
 			.finally(()=>{
 				if(!cancelled)setCaptchaConfigLoaded(true);
@@ -167,8 +203,9 @@ export default function RegistrationExperience(){
 		setCaptchaStatus('loading');
 		void loadTurnstileScript().then(()=>{
 			if(active)setCaptchaLoaded(true);
-		}).catch(()=>{
+		}).catch(error=>{
 			if(active){
+				logTurnstileClientFailure('script-load',error instanceof Error?error.name:'UNKNOWN_ERROR');
 				setCaptchaUnavailable(true);
 				setCaptchaStatus('failed');
 			}
@@ -189,6 +226,8 @@ export default function RegistrationExperience(){
 				const widgetId=window.turnstile.render(captchaContainer.current,{
 					sitekey:captchaSiteKey,
 					action:'register',
+					theme:'dark',
+					size:'flexible',
 					callback:token=>{
 						clearCaptchaVerificationTimeout();
 						setCaptchaToken(token);
@@ -208,13 +247,27 @@ export default function RegistrationExperience(){
 						clearCaptchaVerificationTimeout();
 						setCaptchaStatus('ready');
 					},
-					'expired-callback':()=>resetTurnstileAfterFailure('expired','The security check expired. Please retry it.'),
-					'timeout-callback':()=>resetTurnstileAfterFailure('failed','Security verification took too long. Retry the security check.'),
-					'error-callback':()=>resetTurnstileAfterFailure('failed','Security verification could not be completed. Retry the security check.'),
+					'expired-callback':()=>{
+						logTurnstileClientFailure('widget','token-expired');
+						resetTurnstileAfterFailure('expired','The security check expired. Please retry it.');
+					},
+					'timeout-callback':()=>{
+						logTurnstileClientFailure('widget','challenge-timeout');
+						resetTurnstileAfterFailure('failed','Security verification took too long. Retry the security check.');
+					},
+					'error-callback':()=>{
+						logTurnstileClientFailure('widget','challenge-error');
+						resetTurnstileAfterFailure('failed','Security verification could not be completed. Retry the security check.');
+					},
 				});
 				captchaWidgetId.current=widgetId;
 				setCaptchaStatus('ready');
-			}catch{
+			}catch(error){
+				console.warn('[registration-turnstile] Widget initialization failed.',{
+					endpoint:TURNSTILE_SCRIPT_URL,
+					reason:error instanceof Error?error.name:'UNKNOWN_ERROR',
+					failureTimestamp:new Date().toISOString(),
+				});
 				setCaptchaUnavailable(true);
 				setCaptchaStatus('failed');
 			}
@@ -265,18 +318,66 @@ export default function RegistrationExperience(){
 		if(invalid||!residence)return;
 		if(!captchaToken){setError('Complete the registration security check before creating your account.');return;}
 		const submittedCaptchaToken=captchaToken;
+		const requestId=createRegistrationRequestId();
 		submissionInFlight.current=true;
 		setBusy(true);
+		const controller=new AbortController();
+		let timedOut=false;
+		const requestTimeout=window.setTimeout(()=>{
+			timedOut=true;
+			controller.abort();
+		},30_000);
 		try{
-			const response=await fetch('/api/register',{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted,captchaToken:submittedCaptchaToken})});
-			const result=await response.json().catch(()=>({}));
+			let response:Response;
+			try{
+				response=await fetch('/api/register',{
+					method:'POST',
+					headers:{
+						'content-type':'application/json',
+						'accept':'application/json',
+						...(requestId?{'x-aurevia-request-id':requestId}:{}),
+					},
+					body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted,captchaToken:submittedCaptchaToken}),
+					signal:controller.signal,
+				});
+			}catch(exception){
+				const referenceId=requestId||createRegistrationRequestId();
+				const reason=timedOut?'timeout':exception instanceof Error?exception.name:'UNKNOWN_ERROR';
+				console.warn('[registration] Browser request did not receive an API response.',{
+					...(referenceId?{requestId:referenceId,referenceId}:{}),
+					endpoint:'/api/register',
+					reason,
+					failureTimestamp:new Date().toISOString(),
+				});
+				setError(timedOut
+					?`The registration request timed out. Your form details are still here; check your connection and retry.${referenceId?` Reference: ${referenceId}`:''}`
+					:`Unable to connect to the registration service. Your form details are still here; check your connection and retry.${referenceId?` Reference: ${referenceId}`:''}`);
+				return;
+			}
+			let result:Record<string,unknown>;
+			try{
+				const body:unknown=await response.json();
+				if(!isRecord(body))throw new Error('INVALID_RESPONSE_BODY');
+				result=body;
+			}catch{
+				console.warn('[registration] API returned a non-JSON response.',{
+					...(requestId?{requestId,referenceId:requestId}:{}),
+					endpoint:'/api/register',
+					httpStatus:response.status,
+					contentType:response.headers.get('content-type')||'unknown',
+					failureTimestamp:new Date().toISOString(),
+				});
+				setError(`The registration service returned an unexpected response (HTTP ${response.status}). Please retry.${requestId?` Reference: ${requestId}`:''}`);
+				return;
+			}
 			if(!response.ok){
 				if(result.code==='ACCOUNT_ALREADY_VERIFIED'||result.code==='ACCOUNT_ALREADY_EXISTS')setExistingAccountIssue('account');
 				else if(result.code==='ACCOUNT_UNAVAILABLE')setExistingAccountIssue('unavailable');
 				else if(result.code==='REGISTRATION_IN_PROGRESS')setExistingAccountIssue('pending');
 				else if(result.code==='PHONE_ALREADY_IN_USE')setExistingAccountIssue('phone');
-				const missingConfiguration=Array.isArray(result.diagnostics?.missingConfiguration)
-					?result.diagnostics.missingConfiguration.filter((item:unknown):item is string=>typeof item==='string')
+				const diagnostics=isRecord(result.diagnostics)?result.diagnostics:{};
+				const missingConfiguration=Array.isArray(diagnostics.missingConfiguration)
+					?diagnostics.missingConfiguration.filter((item:unknown):item is string=>typeof item==='string')
 					:[];
 				const readinessDetail=result.code==='PHONE_VERIFICATION_UNAVAILABLE'&&missingConfiguration.length
 					?` Configuration needs attention: ${missingConfiguration.join(', ')}.`
@@ -285,15 +386,36 @@ export default function RegistrationExperience(){
 				const retryMessage=response.status===429&&Number.isFinite(retryAfter)&&retryAfter>0
 					?` You can retry in ${retryAfter>=60?`${Math.ceil(retryAfter/60)} minute(s)`:`${retryAfter} second(s)`}.`
 					:'';
-				const referenceId=typeof result.referenceId==='string'?result.referenceId:result.requestId;
-				setError(`${referenceId?`${result.error||translate('registrationFailed')} (Reference: ${referenceId})`:result.error||translate('registrationFailed')}${readinessDetail}${retryMessage}`);return;
+				const referenceId=typeof result.referenceId==='string'?result.referenceId:typeof result.requestId==='string'?result.requestId:requestId;
+				const message=typeof result.error==='string'?result.error:translate('registrationFailed');
+				setError(`${referenceId?`${message} (Reference: ${referenceId})`:message}${readinessDetail}${retryMessage}`);return;
+			}
+			if(result.verificationRequired!==true||typeof result.email!=='string'){
+				console.warn('[registration] API returned an incomplete success response.',{
+					...(requestId?{requestId,referenceId:requestId}:{}),
+					endpoint:'/api/register',
+					httpStatus:response.status,
+					failureTimestamp:new Date().toISOString(),
+				});
+				setError(`The registration service returned an incomplete response. Please retry.${requestId?` Reference: ${requestId}`:''}`);
+				return;
 			}
 			const verificationParams=new URLSearchParams({email:result.email||details.email});
 			if(result.existingVerification)verificationParams.set('existing','1');
 			router.replace(`/verify-email?${verificationParams.toString()}`);
 			router.refresh();
-		}catch{setError(translate('unableRegistration'));}
+		}catch(exception){
+			const referenceId=requestId||createRegistrationRequestId();
+			console.error('[registration] Client could not process the API response.',{
+				...(referenceId?{requestId:referenceId,referenceId}:{}),
+				endpoint:'/api/register',
+				errorName:exception instanceof Error?exception.name:'UnknownError',
+				failureTimestamp:new Date().toISOString(),
+			});
+			setError(`Registration could not continue after the service response. Please retry.${referenceId?` Reference: ${referenceId}`:''}`);
+		}
 		finally{
+			window.clearTimeout(requestTimeout);
 			submissionInFlight.current=false;
 			setBusy(false);
 			setCaptchaToken('');

@@ -81,7 +81,10 @@ async function resumePendingAttempt(attempt:PendingRegistrationAttempt,password:
 }
 
 export async function POST(request:Request){
-	const requestId=randomUUID();
+	const clientRequestId=request.headers.get('x-aurevia-request-id')||'';
+	const requestId=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientRequestId)
+		?clientRequestId.toLowerCase()
+		:randomUUID();
 	try{
 		const input=schema.parse(await request.json());
 		const email=input.email.toLowerCase();
@@ -91,8 +94,19 @@ export async function POST(request:Request){
 			captchaValid=await verifyRegistrationTurnstile(input.captchaToken,requestId);
 		}catch(error){
 			if(error instanceof Error&&error.message.startsWith('TURNSTILE_')){
-				console.warn('Registration Turnstile verification is unavailable.',{requestId,errorCode:error.message});
-				return NextResponse.json({error:'Registration security checks are temporarily unavailable. Please try again later.'},{status:503});
+				console.warn('Registration Turnstile verification is unavailable.',{
+					requestId,
+					referenceId:requestId,
+					endpoint:'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+					errorCode:error.message,
+					failureTimestamp:new Date().toISOString(),
+				});
+				return NextResponse.json({
+					code:'REGISTRATION_SECURITY_UNAVAILABLE',
+					error:'Registration security checks are temporarily unavailable. Please try again later.',
+					requestId,
+					referenceId:requestId,
+				},{status:503,headers:{'Cache-Control':'no-store'}});
 			}
 			throw error;
 		}
@@ -100,7 +114,12 @@ export async function POST(request:Request){
 		if(!captchaValid){
 			if(clientIp)rateLimit(`register-captcha-ip:${clientIp}`,10,10*60_000);
 			rateLimit(`register-captcha-email:${email}`,5,10*60_000);
-			return NextResponse.json({error:'Complete the registration security check and try again.'},{status:400});
+			return NextResponse.json({
+				code:'REGISTRATION_SECURITY_REJECTED',
+				error:'Complete the registration security check and try again.',
+				requestId,
+				referenceId:requestId,
+			},{status:400,headers:{'Cache-Control':'no-store'}});
 		}
 
 		if(clientIp)rateLimit(`register:${clientIp}`,5,60*60_000);

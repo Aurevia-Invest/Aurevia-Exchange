@@ -76,14 +76,17 @@ async function currentInternalPrice(asset:LiveMarketAsset,now:number){
 export async function getInternalMarketQuote(asset:LiveMarketAsset):Promise<MarketQuote>{
 	const now=Date.now();
 	const current=await currentInternalPrice(asset,now);
-	const {price,reference}=current;
-	const previousClose=current.open;
+	return buildInternalMarketQuote(asset,current.price,current.reference,current.open,now);
+}
+
+function buildInternalMarketQuote(asset:LiveMarketAsset,price:number,reference:number,open:number,now:number):MarketQuote{
+	const previousClose=open;
 	const change=price-previousClose;
 	const sparkline=Array.from({length:28},(_,index)=>internalPriceAt(asset,reference,now-(27-index)*300_000));
 	const recent=[...sparkline.slice(-12),price];
 	return {
 		asset,price,change,changePercent:change/previousClose*100,previousClose,
-		open:current.open,
+		open,
 		volume:null,
 		dayLow:Math.min(...recent),dayHigh:Math.max(...recent),fiftyTwoWeekLow:reference*0.82,
 		fiftyTwoWeekHigh:reference*1.18,updatedAt:new Date(now).toISOString(),isStale:false,
@@ -91,8 +94,20 @@ export async function getInternalMarketQuote(asset:LiveMarketAsset):Promise<Mark
 	};
 }
 
-export async function getInternalMarketHistory(asset:LiveMarketAsset,timeframe:TimeframeId){
-	const quote=await getInternalMarketQuote(asset);
+function referenceMarketQuote(asset:LiveMarketAsset,now:number):MarketQuote{
+	const reference=referencePrices[asset.id];
+	if(!Number.isFinite(reference)||reference<=0)throw new Error(`Internal market price is unavailable for ${asset.id}.`);
+	const dayStart=Math.floor(now/86_400_000)*86_400_000;
+	return buildInternalMarketQuote(
+		asset,
+		internalPriceAt(asset,reference,now),
+		reference,
+		internalPriceAt(asset,reference,dayStart),
+		now,
+	);
+}
+
+function marketHistoryFromQuote(asset:LiveMarketAsset,timeframe:TimeframeId,quote:MarketQuote){
 	const now=Math.floor(Date.now()/1000);
 	const span=timeframeDays[timeframe]*86_400;
 	const step=span/239;
@@ -105,4 +120,14 @@ export async function getInternalMarketHistory(asset:LiveMarketAsset,timeframe:T
 		return {time,open,high:Math.max(open,close)*1.0008,low:Math.min(open,close)*0.9992,close,volume:null};
 	});
 	return {quote,candles,timeframe,interval:timeframeIntervals[timeframe],source:'Aurevia Internal'};
+}
+
+export async function getInternalMarketHistory(asset:LiveMarketAsset,timeframe:TimeframeId){
+	const quote=await getInternalMarketQuote(asset);
+	return marketHistoryFromQuote(asset,timeframe,quote);
+}
+
+export function getReferenceMarketHistory(asset:LiveMarketAsset,timeframe:TimeframeId){
+	const quote=referenceMarketQuote(asset,Date.now());
+	return marketHistoryFromQuote(asset,timeframe,quote);
 }

@@ -3,11 +3,19 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({
 	finnhubQuote:vi.fn(),
 	finnhubHistory:vi.fn(),
+	internalQuote:vi.fn(),
+	internalHistory:vi.fn(),
+	referenceHistory:vi.fn(),
 }));
 
 vi.mock('@/lib/live-market',()=>({
 	getMarketQuote:mocks.finnhubQuote,
 	getMarketHistory:mocks.finnhubHistory,
+}));
+vi.mock('@/lib/internal-market-data',()=>({
+	getInternalMarketQuote:mocks.internalQuote,
+	getInternalMarketHistory:mocks.internalHistory,
+	getReferenceMarketHistory:mocks.referenceHistory,
 }));
 import {getMarketHistoryWithFallback,getMarketQuoteWithFallback} from '@/lib/market-data-service';
 
@@ -16,6 +24,9 @@ const asset={id:'AAPL',ticker:'AAPL',name:'Apple Inc.',type:'STOCK' as const,cur
 beforeEach(()=>{
 	mocks.finnhubQuote.mockReset();
 	mocks.finnhubHistory.mockReset();
+	mocks.internalQuote.mockReset().mockResolvedValue({source:'Aurevia Internal',price:230});
+	mocks.internalHistory.mockReset().mockResolvedValue({source:'Aurevia Internal'});
+	mocks.referenceHistory.mockReset().mockResolvedValue({source:'Aurevia Internal'});
 	vi.spyOn(console,'warn').mockImplementation(()=>undefined);
 });
 afterEach(()=>vi.restoreAllMocks());
@@ -49,5 +60,17 @@ describe('market-data provider boundaries',()=>{
 		mocks.finnhubHistory.mockRejectedValue(new Error('provider offline'));
 		await expect(getMarketHistoryWithFallback(asset,'1d','server-key')).resolves.toMatchObject({source:'Aurevia Internal'});
 		expect(console.warn).toHaveBeenCalledOnce();
+	});
+
+	it('uses database-independent reference history if the internal market database is unavailable',async()=>{
+		mocks.finnhubHistory.mockRejectedValue(new Error('provider offline'));
+		mocks.internalHistory.mockRejectedValue(new Error('database connection unavailable'));
+		mocks.referenceHistory.mockResolvedValue({source:'Aurevia Internal',candles:[{close:230}]});
+
+		await expect(getMarketHistoryWithFallback(asset,'1d','server-key')).resolves.toMatchObject({
+			source:'Aurevia Internal',candles:[{close:230}],
+		});
+		expect(mocks.referenceHistory).toHaveBeenCalledWith(asset,'1d');
+		expect(console.warn).toHaveBeenCalledTimes(2);
 	});
 });

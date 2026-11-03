@@ -58,6 +58,50 @@ describe('Akedly V2 server integration',()=>{
 		vi.unstubAllGlobals();
 	});
 
+	it('matches a fixed V2 phone-signature regression vector and rejects altered inputs',async()=>{
+		const timestamp=1_701_552_354_000;
+		const now=vi.spyOn(Date,'now').mockReturnValue(timestamp);
+		let requestBody:Record<string,unknown>|undefined;
+		vi.stubGlobal('fetch',vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{
+			requestBody=JSON.parse(String(init?.body)) as Record<string,unknown>;
+			return providerResponse();
+		}));
+
+		try{
+			await createAkedlyAttempt({phoneNumber:'+12125550123'});
+			if(!requestBody)throw new Error('Akedly request was not captured.');
+			const body=requestBody;
+			const signingMessage=JSON.stringify({
+				apiKey:'test-api-key',
+				publicKey:'test-public-key',
+				timestamp,
+				phoneNumber:'+12125550123',
+			});
+			const wrongSecret=createHmac('sha256','incorrect-widget-secret').update(signingMessage,'utf8').digest('hex');
+			const wrongTimestamp=createHmac('sha256','test-widget-secret').update(JSON.stringify({
+				apiKey:'test-api-key',
+				publicKey:'test-public-key',
+				timestamp:timestamp+1,
+				phoneNumber:'+12125550123',
+			}),'utf8').digest('hex');
+			const wrongPhone=createHmac('sha256','test-widget-secret').update(JSON.stringify({
+				apiKey:'test-api-key',
+				publicKey:'test-public-key',
+				timestamp,
+				phoneNumber:'+12125550124',
+			}),'utf8').digest('hex');
+
+			expect(body.timestamp).toBe(timestamp);
+			expect(body.signature).toBe('74e2277749d796ae81db8b307d8337a1984fa10966c5e1859cf7cce41763cdb9');
+			expect(body.signature).toMatch(/^[a-f0-9]{64}$/);
+			expect(body.signature).not.toBe(wrongSecret);
+			expect(body.signature).not.toBe(wrongTimestamp);
+			expect(body.signature).not.toBe(wrongPhone);
+		}finally{
+			now.mockRestore();
+		}
+	});
+
 	it('signs the email-only request without adding the email to the HMAC message',async()=>{
 		let requestBody:Record<string,unknown>|undefined;
 		vi.stubGlobal('fetch',vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{

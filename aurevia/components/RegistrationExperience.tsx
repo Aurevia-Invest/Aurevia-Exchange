@@ -378,7 +378,7 @@ export default function RegistrationExperience(){
 				return;
 			}
 			if(!response.ok){
-				if(result.code==='ACCOUNT_ALREADY_EXISTS')setExistingAccountIssue('account');
+				if(result.code==='ACCOUNT_ACCESS_REQUIRED'||result.code==='ACCOUNT_ALREADY_EXISTS')setExistingAccountIssue('account');
 				else if(result.code==='ACCOUNT_UNAVAILABLE')setExistingAccountIssue('unavailable');
 				else if(result.code==='REGISTRATION_IN_PROGRESS')setExistingAccountIssue('pending');
 				else if(result.code==='PHONE_ALREADY_IN_USE')setExistingAccountIssue('phone');
@@ -397,7 +397,7 @@ export default function RegistrationExperience(){
 				const message=typeof result.error==='string'?result.error:translate('registrationFailed');
 				setError(`${referenceId?`${message} (Reference: ${referenceId})`:message}${readinessDetail}${retryMessage}`);return;
 			}
-			if(result.created!==true||typeof result.email!=='string'){
+			if((result.created!==true&&result.accountMatched!==true)||typeof result.email!=='string'){
 				console.warn('[registration] API returned an incomplete success response.',{
 					...(requestId?{requestId,referenceId:requestId}:{}),
 					endpoint:'/api/register',
@@ -415,6 +415,7 @@ export default function RegistrationExperience(){
 				redirect:false,
 			});
 			if(!login?.ok){
+				setExistingAccountIssue('account');
 				setError('Your account was created, but automatic sign-in failed. Sign in with your new email and password to continue.');
 				return;
 			}
@@ -475,7 +476,7 @@ export default function RegistrationExperience(){
 				{captchaLoaded&&!captchaUnavailable&&<p className="text-sm muted" role="status">{captchaStatus==='verifying'?'Verifying the security check…':captchaStatus==='verified'?'Security verification successful.':captchaStatus==='expired'?'Security verification expired. Retry to continue.':captchaStatus==='failed'?'Security verification failed. Retry to continue.':'Complete the security check to continue.'}</p>}
 				{captchaLoaded&&!captchaUnavailable&&(captchaStatus==='expired'||captchaStatus==='failed')&&<button className="auth-link text-sm" type="button" onClick={retryCaptcha}>Retry security check</button>}
 				{error&&<p className="auth-error" role="alert">{error}</p>}
-				{existingAccountIssue==='account'&&<p className="text-sm leading-6 muted">Already have an account? <Link href="/login" className="auth-link">Sign in</Link> or <Link href="/forgot-password" className="auth-link">reset your password</Link>.</p>}
+				{existingAccountIssue==='account'&&<p className="text-sm leading-6 muted">You can <Link href="/login" className="auth-link" onClick={()=>{try{window.sessionStorage.setItem('aurevia-signin-email',details.email.trim())}catch(exception){console.warn('Unable to preserve email for registration sign-in handoff.',{errorName:exception instanceof Error?exception.name:'UnknownError'})}}}>Sign in</Link> or <Link href="/forgot-password" className="auth-link">reset your password</Link> if you already have an account.</p>}
 				{existingAccountIssue==='unavailable'&&<p className="text-sm leading-6 muted">This account was not changed or reactivated. <Link href="/support" className="auth-link">Contact support</Link> for account-specific help.</p>}
 				{existingAccountIssue==='pending'&&<p className="text-sm leading-6 muted">Your account may already have been created. Try signing in or wait briefly before retrying.</p>}
 				{existingAccountIssue==='phone'&&<p className="text-sm leading-6 muted">Use a phone number not associated with another account.</p>}

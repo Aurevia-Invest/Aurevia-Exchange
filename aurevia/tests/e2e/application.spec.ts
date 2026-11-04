@@ -968,6 +968,10 @@ test('registration page refresh and Turnstile retries do not submit and render t
 
 test('signup validates Turnstile then creates and signs in an account without phone OTP',async({page})=>{
 	const email=`immediate-signup-${randomUUID()}@example.invalid`;
+	let registrationRequests=0;
+	page.on('request',request=>{
+		if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/register')registrationRequests++;
+	});
 	await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',route=>route.fulfill({
 		status:200,
 		contentType:'application/javascript',
@@ -1002,16 +1006,63 @@ test('signup validates Turnstile then creates and signs in an account without ph
 		options?.callback?.('isolated-test-turnstile-token');
 	});
 	await expect(registrationForm.getByRole('button',{name:'Create account'})).toBeEnabled();
-	await registrationForm.getByRole('button',{name:'Create account'}).click();
+	await registrationForm.evaluate((form:HTMLFormElement)=>{
+		form.requestSubmit();
+		form.requestSubmit();
+	});
 	await page.waitForURL(url=>url.pathname==='/dashboard');
 	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
+	expect(registrationRequests).toBe(1);
 
 	const signedIn=await page.request.get('/api/auth/session').then(response=>response.json());
 	expect(signedIn.user.email).toBe(email);
 	expect(await db.user.findUnique({where:{email},select:{status:true,phone:true,phoneVerified:true,phoneVerifiedAt:true}})).toEqual({
 		status:'ACTIVE',phone:'+447400123456',phoneVerified:false,phoneVerifiedAt:null,
 	});
+	expect(await db.user.count({where:{email}})).toBe(1);
 	expect(await db.registrationAttempt.findUnique({where:{email}})).toBeNull();
+});
+
+test('duplicate signup offers sign-in with the typed email prefilled',async({page})=>{
+	const email=`duplicate-signup-${randomUUID()}@example.invalid`;
+	await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',route=>route.fulfill({
+		status:200,
+		contentType:'application/javascript',
+		body:`window.__aureviaTurnstileOptions=null;window.turnstile={render:function(_container,options){window.__aureviaTurnstileOptions=options;return 'test-widget';},reset:function(){},remove:function(){}};`,
+	}));
+	await page.route('**/api/register',route=>route.fulfill({
+		status:409,
+		contentType:'application/json',
+		body:JSON.stringify({
+			code:'ACCOUNT_ACCESS_REQUIRED',
+			error:'We could not complete signup. Sign in or reset your password if you already have an account.',
+			requestId:'e75c6069-6dc9-4de5-8a58-e8257d8f8e03',
+		}),
+	}));
+	await page.goto('/register');
+	await waitForStartup(page);
+	const registrationForm=page.locator('form.register-form').first();
+	await registrationForm.locator('input[autocomplete="given-name"]').fill('Temporary');
+	await registrationForm.locator('input[autocomplete="family-name"]').fill('Browser Test');
+	await registrationForm.locator('input[type="date"]').fill('2000-02-29');
+	const residencePicker=page.getByRole('button',{name:/country of residence/i});
+	await residencePicker.click();
+	const residenceDialog=page.getByRole('dialog',{name:'Select country of residence'});
+	await residenceDialog.getByRole('searchbox').fill('United States');
+	await residenceDialog.getByRole('option',{name:/United States.*US.*\+1/}).click();
+	await registrationForm.getByLabel('Email address').fill(email);
+	await registrationForm.getByLabel('Password',{exact:true}).fill('SecureTestPassword1');
+	await registrationForm.getByLabel('Confirm password').fill('SecureTestPassword1');
+	await registrationForm.getByRole('checkbox').check();
+	await page.evaluate(()=>{
+		const options=(window as Window & {__aureviaTurnstileOptions?:{callback?:(token:string)=>void}}).__aureviaTurnstileOptions;
+		options?.callback?.('isolated-test-turnstile-token');
+	});
+	await registrationForm.getByRole('button',{name:'Create account'}).click();
+	await expect(page.getByText(/We could not complete signup/)).toBeVisible();
+	await page.locator('p').filter({hasText:'You can'}).getByRole('link',{name:'Sign in'}).click();
+	await page.waitForURL(/\/login$/);
+	await expect(page.getByLabel('Email or administrator username')).toHaveValue(email);
 });
 
 test('existing account can sign in without signup verification',async({page})=>{

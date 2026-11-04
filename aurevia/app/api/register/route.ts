@@ -29,11 +29,47 @@ function requestReference(request:Request){
 		:randomUUID();
 }
 
+function emailUniqueConstraint(error:Prisma.PrismaClientKnownRequestError){
+	const target=error.meta?.target;
+	return Array.isArray(target)
+		?target.includes('email')
+		:target==='email'||target==='User_email_key';
+}
+
+function accountAccessRequired(requestId:string){
+	return NextResponse.json({
+		code:'ACCOUNT_ACCESS_REQUIRED',
+		error:'We could not complete signup. Sign in or reset your password if you already have an account.',
+		requestId,
+		referenceId:requestId,
+	},{status:409,headers:{'Cache-Control':'no-store'}});
+}
+
+async function matchExistingAccount(email:string,password:string,requestId:string){
+	const existingUser=await db.user.findFirst({
+		where:{email:{equals:email,mode:'insensitive'}},
+		select:{email:true,passwordHash:true,status:true},
+	});
+	if(!existingUser)return null;
+	if(existingUser.status==='ACTIVE'&&await bcrypt.compare(password,existingUser.passwordHash)){
+		return NextResponse.json({
+			created:false,
+			accountMatched:true,
+			email:existingUser.email,
+			message:'Signing you in…',
+			requestId,
+		},{status:200,headers:{'Cache-Control':'no-store'}});
+	}
+	return accountAccessRequired(requestId);
+}
+
 export async function POST(request:Request){
 	const requestId=requestReference(request);
+	let parsedInput:z.infer<typeof schema>|null=null;
 	try{
 		const input=schema.parse(await request.json());
-		const email=input.email.toLowerCase();
+		parsedInput=input;
+		const email=input.email.trim().toLowerCase();
 
 		let captchaValid=false;
 		try{
@@ -72,25 +108,26 @@ export async function POST(request:Request){
 		rateLimit(`register-email:${email}`,3,60*60_000);
 		const dateOfBirth=parseDateOfBirth(input.dateOfBirth);
 		if(!dateOfBirth)return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
-		const existingUser=await db.user.findUnique({where:{email},select:{id:true}});
-		if(existingUser)return NextResponse.json({
-			code:'ACCOUNT_ALREADY_EXISTS',
-			error:'An account already uses this email. Sign in or reset its password to recover access.',
-			requestId,
-			referenceId:requestId,
-		},{status:409,headers:{'Cache-Control':'no-store'}});
+		const existingResponse=await matchExistingAccount(email,input.password,requestId);
+		if(existingResponse)return existingResponse;
 
 		const passwordHash=await bcrypt.hash(input.password,12);
-		await db.$transaction(async tx=>createImmediateRegistration(tx,{
-			email,
-			passwordHash,
-			name:input.name.replace(/\s+/g,' ').trim(),
-			country:input.country,
-			phone:input.phone||null,
-			dateOfBirth,
-			accountMode:input.accountMode,
-			termsAcceptedAt:new Date(),
-		}),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+		try{
+			await db.$transaction(async tx=>createImmediateRegistration(tx,{
+				email,
+				passwordHash,
+				name:input.name.replace(/\s+/g,' ').trim(),
+				country:input.country,
+				phone:input.phone||null,
+				dateOfBirth,
+				accountMode:input.accountMode,
+				termsAcceptedAt:new Date(),
+			}),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+		}catch(error){
+			const recoveredAccount=await matchExistingAccount(email,input.password,requestId);
+			if(recoveredAccount)return recoveredAccount;
+			throw error;
+		}
 		return NextResponse.json({
 			created:true,
 			email,
@@ -104,24 +141,26 @@ export async function POST(request:Request){
 			if(error.issues.some(issue=>issue.path[0]==='captchaToken'))return NextResponse.json({error:'Complete the registration security check and try again.'},{status:400});
 			return NextResponse.json({error:'Check your name, email, country, password, and consent details.'},{status:400});
 		}
-		if(error instanceof Error&&error.message==='REGISTRATION_EMAIL_ALREADY_EXISTS')return NextResponse.json({
-			code:'ACCOUNT_ALREADY_EXISTS',
-			error:'An account already uses this email. Sign in or reset its password to recover access.',
-			requestId,
-			referenceId:requestId,
-		},{status:409,headers:{'Cache-Control':'no-store'}});
+		if(error instanceof Error&&error.message==='REGISTRATION_EMAIL_ALREADY_EXISTS'){
+			const existingResponse=parsedInput
+				?await matchExistingAccount(parsedInput.email.trim().toLowerCase(),parsedInput.password,requestId)
+				:null;
+			if(existingResponse)return existingResponse;
+			return accountAccessRequired(requestId);
+		}
 		if(error instanceof Error&&error.message==='REGISTRATION_PHONE_ALREADY_IN_USE')return NextResponse.json({
 			code:'PHONE_ALREADY_IN_USE',
 			error:'This phone number is already associated with another account. Use a different number.',
 			requestId,
 			referenceId:requestId,
 		},{status:409,headers:{'Cache-Control':'no-store'}});
-		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({
-			code:'REGISTRATION_IN_PROGRESS',
-			error:'An account is being created for these details. Sign in or retry shortly.',
-			requestId,
-			referenceId:requestId,
-		},{status:409,headers:{'Cache-Control':'no-store'}});
+		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'&&emailUniqueConstraint(error)){
+			if(parsedInput){
+				const existingResponse=await matchExistingAccount(parsedInput.email.trim().toLowerCase(),parsedInput.password,requestId);
+				if(existingResponse)return existingResponse;
+			}
+			return accountAccessRequired(requestId);
+		}
 		if(error instanceof RateLimitError)return NextResponse.json(
 			{error:'Too many registration attempts. Try again later.',retryAfterSeconds:error.retryAfterSeconds},
 			{status:429,headers:{'Retry-After':String(error.retryAfterSeconds),'Cache-Control':'no-store'}},

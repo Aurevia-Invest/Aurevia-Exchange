@@ -1,7 +1,9 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
+import {Prisma} from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
 const mocks=vi.hoisted(()=>({
-	userFindUnique:vi.fn(),
+	userFindFirst:vi.fn(),
 	transaction:vi.fn(),
 	createAccount:vi.fn(),
 	verifyTurnstile:vi.fn(),
@@ -17,7 +19,7 @@ const mocks=vi.hoisted(()=>({
 }));
 
 vi.mock('@/lib/db',()=>({db:{
-	user:{findUnique:mocks.userFindUnique},
+	user:{findFirst:mocks.userFindFirst},
 	$transaction:mocks.transaction,
 }}));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
@@ -55,7 +57,7 @@ describe('immediate registration',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
 		mocks.verifyTurnstile.mockResolvedValue(true);
-		mocks.userFindUnique.mockResolvedValue(null);
+		mocks.userFindFirst.mockResolvedValue(null);
 		mocks.trustedProxyClientIp.mockReturnValue('192.0.2.5');
 		mocks.rateLimit.mockReturnValue(undefined);
 		mocks.createAccount.mockResolvedValue({id:'user-1'});
@@ -73,6 +75,7 @@ describe('immediate registration',()=>{
 		expect(body).not.toHaveProperty('verificationRequired');
 		expect(JSON.stringify(body)).not.toContain(payload.password);
 		expect(mocks.verifyTurnstile).toHaveBeenCalledWith(payload.captchaToken,'e75c6069-6dc9-4de5-8a58-e8257d8f8e03');
+		expect(mocks.verifyTurnstile).toHaveBeenCalledOnce();
 		expect(mocks.createAccount).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({
 			email:payload.email,
 			passwordHash:expect.any(String),
@@ -93,7 +96,7 @@ describe('immediate registration',()=>{
 
 		expect(response.status).toBe(400);
 		expect(await response.json()).toMatchObject({code:'REGISTRATION_SECURITY_REJECTED'});
-		expect(mocks.userFindUnique).not.toHaveBeenCalled();
+		expect(mocks.userFindFirst).not.toHaveBeenCalled();
 		expect(mocks.transaction).not.toHaveBeenCalled();
 		expect(mocks.createAccount).not.toHaveBeenCalled();
 	});
@@ -106,20 +109,74 @@ describe('immediate registration',()=>{
 
 		expect(response.status).toBe(503);
 		expect(await response.json()).toMatchObject({code:'REGISTRATION_SECURITY_UNAVAILABLE'});
-		expect(mocks.userFindUnique).not.toHaveBeenCalled();
+		expect(mocks.userFindFirst).not.toHaveBeenCalled();
 		expect(mocks.createAccount).not.toHaveBeenCalled();
 		expect(warning).toHaveBeenCalledOnce();
 		warning.mockRestore();
 	});
 
-	it('does not replace an existing account',async()=>{
-		mocks.userFindUnique.mockResolvedValue({id:'existing-user'});
-		const response=await POST(request());
+	it('treats a case-variant retry with the correct password as sign-in',async()=>{
+		const passwordHash=await bcrypt.hash(payload.password,4);
+		mocks.userFindFirst.mockResolvedValue({
+			email:payload.email,
+			passwordHash,
+			status:'ACTIVE',
+		});
+		const response=await POST(request({...payload,email:'  NEW-USER@EXAMPLE.INVALID  '}));
 
-		expect(response.status).toBe(409);
-		expect(await response.json()).toMatchObject({code:'ACCOUNT_ALREADY_EXISTS'});
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({created:false,accountMatched:true,email:payload.email});
+		expect(mocks.userFindFirst).toHaveBeenCalledWith({
+			where:{email:{equals:payload.email,mode:'insensitive'}},
+			select:{email:true,passwordHash:true,status:true},
+		});
 		expect(mocks.createAccount).not.toHaveBeenCalled();
 		expect(mocks.transaction).not.toHaveBeenCalled();
+	});
+
+	it('does not reveal an existing email when the supplied password is wrong',async()=>{
+		mocks.userFindFirst.mockResolvedValue({
+			email:payload.email,
+			passwordHash:await bcrypt.hash('AnotherPassword2',4),
+			status:'ACTIVE',
+		});
+		const response=await POST(request());
+		const body=await response.json();
+
+		expect(response.status).toBe(409);
+		expect(body).toMatchObject({code:'ACCOUNT_ACCESS_REQUIRED'});
+		expect(body.error).not.toContain('already uses this email');
+		expect(JSON.stringify(body)).not.toContain(payload.email);
+		expect(mocks.createAccount).not.toHaveBeenCalled();
+		expect(mocks.transaction).not.toHaveBeenCalled();
+	});
+
+	it('recovers a matching account after an email unique-constraint race',async()=>{
+		const passwordHash=await bcrypt.hash(payload.password,4);
+		mocks.userFindFirst
+			.mockResolvedValueOnce(null)
+			.mockResolvedValueOnce({email:payload.email,passwordHash,status:'ACTIVE'});
+		mocks.transaction.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('Duplicate email',{
+			code:'P2002',clientVersion:'test',meta:{target:['email']},
+		}));
+
+		const response=await POST(request());
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({created:false,accountMatched:true,email:payload.email});
+	});
+
+	it('does not map unrelated unique constraints to the duplicate-email response',async()=>{
+		mocks.transaction.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('Duplicate phone',{
+			code:'P2002',clientVersion:'test',meta:{target:['phone']},
+		}));
+		const error=vi.spyOn(console,'error').mockImplementation(()=>undefined);
+
+		const response=await POST(request());
+
+		expect(response.status).toBe(500);
+		expect(await response.json()).not.toMatchObject({code:'ACCOUNT_ACCESS_REQUIRED'});
+		error.mockRestore();
 	});
 
 	it('maps a phone number collision to a safe user-facing error',async()=>{

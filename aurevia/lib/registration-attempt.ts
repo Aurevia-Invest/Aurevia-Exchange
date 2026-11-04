@@ -22,7 +22,7 @@ export async function createImmediateRegistration(
 	await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.email})::bigint)`;
 	if(input.phone)await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.phone})::bigint)`;
 
-	if(await tx.user.findUnique({where:{email:input.email},select:{id:true}}))throw new Error('REGISTRATION_EMAIL_ALREADY_EXISTS');
+	if(await tx.user.findFirst({where:{email:{equals:input.email,mode:'insensitive'}},select:{id:true}}))throw new Error('REGISTRATION_EMAIL_ALREADY_EXISTS');
 	if(input.phone&&await tx.user.findFirst({where:{phone:input.phone},select:{id:true}}))throw new Error('REGISTRATION_PHONE_ALREADY_IN_USE');
 
 	let userCreated=false;
@@ -50,7 +50,7 @@ export async function createImmediateRegistration(
 			userCreated=true;
 			break;
 		}
-		if(await tx.user.findUnique({where:{email:input.email},select:{id:true}}))throw new Error('REGISTRATION_EMAIL_ALREADY_EXISTS');
+		if(await tx.user.findFirst({where:{email:{equals:input.email,mode:'insensitive'}},select:{id:true}}))throw new Error('REGISTRATION_EMAIL_ALREADY_EXISTS');
 		if(input.phone&&await tx.user.findFirst({where:{phone:input.phone},select:{id:true}}))throw new Error('REGISTRATION_PHONE_ALREADY_IN_USE');
 	}
 	if(!userCreated)throw new Error('AUREVIA_ID_COLLISION_RETRIES_EXHAUSTED');

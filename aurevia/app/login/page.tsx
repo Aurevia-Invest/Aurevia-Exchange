@@ -25,6 +25,17 @@ export default function Login(){
 
 	useEffect(()=>{
 		const query=new URLSearchParams(window.location.search);
+		try{
+			const registrationEmail=window.sessionStorage.getItem('aurevia-signin-email');
+			if(registrationEmail){
+				setIdentifier(registrationEmail);
+				window.sessionStorage.removeItem('aurevia-signin-email');
+			}
+		}catch(error){
+			console.warn('Unable to restore the registration email for sign-in.',{
+				errorName:error instanceof Error?error.name:'UnknownError',
+			});
+		}
 		setRegistered(query.get('registered')==='1');
 		setCallbackUrl(safeInternalPath(query.get('callbackUrl')||'/dashboard'));
 	},[]);

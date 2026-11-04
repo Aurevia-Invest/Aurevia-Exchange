@@ -203,7 +203,7 @@ test('provider health distinguishes paper trading from disabled live services',a
 	await expect(page.getByText(/When enabled, REAL-mode orders use this shared Alpaca Paper account/)).toBeVisible();
 });
 
-test('DEMO accounts can view and complete profile-based tier progression while KYC remains gated',async({page})=>{
+test('users can submit all Tier 3 requirements before administrator KYC review',async({page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await page.goto('/kyc');
 	await expect(page.getByRole('heading',{name:'REAL mode required'})).toBeVisible();
@@ -1787,13 +1787,29 @@ test('profile completion and administrator identity review progress the account 
 
 	const isolated=await db.user.findUniqueOrThrow({where:{email:user.email},select:{id:true}});
 	const submittedAt=new Date();
+	const kycSubmission=await page.request.post('/api/kyc',{data:{
+		legalName:'Profile Complete User',
+		dob:'1990-01-01',
+		address:'123 Test Street, Test City',
+		idType:'PASSPORT',
+		idNumber:`E2E-${randomUUID()}`,
+	}});
+	expect(kycSubmission.ok()).toBe(true);
+	const documentBytes=Buffer.from('%PDF-1.4\n% KYC E2E document\n');
+	for(const kind of ['IDENTITY_DOCUMENT','SELFIE','PROOF_OF_ADDRESS']){
+		const documentUpload=await page.request.post('/api/kyc/documents',{multipart:{
+			kind,
+			file:{name:`${kind.toLowerCase()}.pdf`,mimeType:'application/pdf',buffer:documentBytes},
+		}});
+		expect(documentUpload.status()).toBe(201);
+	}
 	await db.$transaction(async tx=>{
-		await tx.user.update({where:{id:isolated.id},data:{phoneVerified:true,phoneVerifiedAt:submittedAt,kycStatus:'APPROVED',verifiedAt:submittedAt}});
-		await tx.kycProfile.create({data:{userId:isolated.id,legalName:'Profile Complete User',dob:new Date('1990-01-01'),address:'Test address',idType:'PASSPORT',idNumber:'E2E-IDENTITY',submittedAt,reviewedAt:submittedAt}});
-		await tx.kycDocument.create({data:{userId:isolated.id,kind:'IDENTITY_DOCUMENT',filename:'tier-review-test.jpg',storageKey:`e2e/tier-review/${randomUUID()}.jpg`,mimeType:'image/jpeg',size:1024,status:'APPROVED',reviewedAt:submittedAt}});
-		await tx.kycDocument.create({data:{userId:isolated.id,kind:'SELFIE',filename:'tier-review-selfie.jpg',storageKey:`e2e/tier-review/${randomUUID()}.jpg`,mimeType:'image/jpeg',size:1024,status:'APPROVED',reviewedAt:submittedAt}});
-		await tx.kycDocument.create({data:{userId:isolated.id,kind:'PROOF_OF_ADDRESS',filename:'tier-review-address.pdf',storageKey:`e2e/tier-review/${randomUUID()}.pdf`,mimeType:'application/pdf',size:1024,status:'APPROVED',reviewedAt:submittedAt}});
+		await tx.user.update({where:{id:isolated.id},data:{phoneVerified:true,phoneVerifiedAt:submittedAt}});
 	});
+	const eligibility=await page.request.get('/api/tier-requests').then(response=>response.json());
+	expect(eligibility.canRequest).toBe(true);
+	expect(eligibility.requirements.identityApproved).toBe(false);
+	expect(eligibility.requirements.identityDocumentApproved).toBe(false);
 	const submittedRequest=await page.request.post('/api/tier-requests',{data:{message:'Isolated tier progression review.'}});
 	expect(submittedRequest.status()).toBe(201);
 	const requestRecord=await submittedRequest.json();
@@ -1801,10 +1817,17 @@ test('profile completion and administrator identity review progress the account 
 	const adminContext=await browser.newContext();
 	const adminPage=await adminContext.newPage();
 	await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+	const prematureApproval=await adminPage.request.patch('/api/admin/tier-requests',{data:{id:requestRecord.id,status:'APPROVED',reason:'Must wait for evidence review.'}});
+	expect(prematureApproval.status()).toBe(409);
 	const informationNeeded=await adminPage.request.patch('/api/admin/tier-requests',{data:{id:requestRecord.id,status:'NEEDS_INFORMATION',reason:'Please confirm the identity record.'}});
 	expect(informationNeeded.ok()).toBe(true);
 	const userReply=await page.request.patch('/api/tier-requests',{data:{id:requestRecord.id,message:'The submitted identity record is accurate.'}});
 	expect(userReply.ok()).toBe(true);
+	await db.$transaction(async tx=>{
+		await tx.user.update({where:{id:isolated.id},data:{kycStatus:'APPROVED',verifiedAt:submittedAt}});
+		await tx.kycProfile.update({where:{userId:isolated.id},data:{reviewedAt:submittedAt}});
+		await tx.kycDocument.updateMany({where:{userId:isolated.id,status:'SUBMITTED'},data:{status:'APPROVED',reviewedAt:submittedAt}});
+	});
 	const approved=await adminPage.request.patch('/api/admin/tier-requests',{data:{id:requestRecord.id,status:'APPROVED',reason:'Identity record reviewed in the isolated test.'}});
 	expect(approved.ok()).toBe(true);
 	await adminPage.goto('/admin/tiers');

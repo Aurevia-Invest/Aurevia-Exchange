@@ -71,7 +71,7 @@ describe('phone verification provider fallback',()=>{
 		vi.clearAllMocks();
 		mocks.requireUser.mockResolvedValue({id:'user-1'});
 		mocks.userFindUnique.mockResolvedValue({
-			id:'user-1',phone:null,phoneVerified:false,accountMode:'REAL',status:'ACTIVE',approvedTier:2,kycStatus:'APPROVED',
+			id:'user-1',phone:null,phoneVerified:false,accountMode:'REAL',status:'ACTIVE',approvedTier:2,kycStatus:'PENDING',
 			name:'Test User',country:'US',kyc:{submittedAt:new Date()},kycDocuments:[{kind:'IDENTITY_DOCUMENT'},{kind:'SELFIE'}],
 		});
 		mocks.userUpdate.mockResolvedValue({});
@@ -91,7 +91,7 @@ describe('phone verification provider fallback',()=>{
 		mocks.sendTermii.mockResolvedValue('termii-pin-reference');
 	});
 
-	it('does not send an OTP before Tier 2 KYC is approved',async()=>{
+	it('does not send an OTP before the user submits identity details and files',async()=>{
 		mocks.userFindUnique.mockResolvedValue({
 			id:'user-1',phone:null,phoneVerified:false,accountMode:'REAL',status:'ACTIVE',approvedTier:1,kycStatus:'PENDING',
 			name:'Test User',country:'US',kyc:{submittedAt:null},kycDocuments:[],
@@ -99,7 +99,7 @@ describe('phone verification provider fallback',()=>{
 		const response=await POST(request());
 
 		expect(response.status).toBe(403);
-		expect(await response.json()).toMatchObject({error:'Phone OTP is available only for Tier 3 after Tier 2 KYC approval.'});
+		expect(await response.json()).toMatchObject({error:'Submit your identity details and upload an ID and selfie before starting Tier 3 phone verification.'});
 		expect(mocks.startAkedly).not.toHaveBeenCalled();
 		expect(mocks.sendTermii).not.toHaveBeenCalled();
 	});

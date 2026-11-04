@@ -31,8 +31,10 @@ export async function GET(){
 			const currentTier=Number(tier.label.at(-1));
 			const identityDocumentApproved=profile.kycDocuments.some(item=>item.kind==='IDENTITY_DOCUMENT'&&item.status==='APPROVED');
 			const selfieApproved=profile.kycDocuments.some(item=>item.kind==='SELFIE'&&item.status==='APPROVED');
-			const proofOfAddressUploaded=profile.kycDocuments.some(item=>item.kind==='PROOF_OF_ADDRESS');
-			const canRequest=currentTier===2&&profile.accountMode===AccountMode.REAL&&requirements.profileComplete&&profile.phoneVerified&&profile.kycStatus==='APPROVED'&&!!profile.kyc?.submittedAt&&Boolean(profile.kyc.address?.trim())&&identityDocumentApproved&&selfieApproved&&proofOfAddressUploaded&&!requests.some(request=>openStatuses.includes(request.status));
+			const proofOfAddressUploaded=profile.kycDocuments.some(item=>item.kind==='PROOF_OF_ADDRESS'&&item.status!=='REJECTED'&&item.status!=='RESUBMISSION_REQUIRED');
+			const identityDocumentUploaded=profile.kycDocuments.some(item=>item.kind==='IDENTITY_DOCUMENT'&&item.status!=='REJECTED'&&item.status!=='RESUBMISSION_REQUIRED');
+			const selfieUploaded=profile.kycDocuments.some(item=>item.kind==='SELFIE'&&item.status!=='REJECTED'&&item.status!=='RESUBMISSION_REQUIRED');
+			const canRequest=currentTier===2&&profile.accountMode===AccountMode.REAL&&requirements.profileComplete&&profile.phoneVerified&&!!profile.kyc?.submittedAt&&Boolean(profile.kyc.address?.trim())&&identityDocumentUploaded&&selfieUploaded&&proofOfAddressUploaded&&!requests.some(request=>openStatuses.includes(request.status));
 			return {
 				tier:tier.label,
 				currentTier,
@@ -43,11 +45,12 @@ export async function GET(){
 					...requirements,
 					phoneVerified:profile.phoneVerified,
 					verificationSubmitted:!!profile.kyc?.submittedAt,
-					identityDocumentUploaded:profile.kycDocuments.some(item=>item.kind==='IDENTITY_DOCUMENT'),
+					identityDocumentUploaded,
 					identityDocumentApproved:identityDocumentApproved,
-					selfieUploaded:profile.kycDocuments.some(item=>item.kind==='SELFIE'),
+					selfieUploaded,
 					selfieApproved,
 					proofOfAddressUploaded,
+					proofOfAddressSubmitted:proofOfAddressUploaded,
 					identityApproved:profile.kycStatus==='APPROVED',
 				},
 				permissions:{
@@ -84,16 +87,16 @@ export async function POST(request:Request){
 			const currentTier=Number(tier.label.at(-1));
 			if(currentTier>=3)throw new Error('MAXIMUM_TIER');
 			if(!requirements.profileComplete)throw new Error('PROFILE_INCOMPLETE');
-			const identityDocumentApproved=profile.kycDocuments.some(item=>item.kind==='IDENTITY_DOCUMENT'&&item.status==='APPROVED');
-			const selfieApproved=profile.kycDocuments.some(item=>item.kind==='SELFIE'&&item.status==='APPROVED');
-			const proofOfAddressUploaded=profile.kycDocuments.some(item=>item.kind==='PROOF_OF_ADDRESS');
-			if(currentTier!==2||!profile.phoneVerified||profile.kycStatus!=='APPROVED'||!profile.kyc?.submittedAt||!profile.kyc.address?.trim()||!identityDocumentApproved||!selfieApproved||!proofOfAddressUploaded)throw new Error('VERIFICATION_MISSING');
+			const identityDocumentSubmitted=profile.kycDocuments.some(item=>item.kind==='IDENTITY_DOCUMENT'&&item.status!=='REJECTED'&&item.status!=='RESUBMISSION_REQUIRED');
+			const selfieSubmitted=profile.kycDocuments.some(item=>item.kind==='SELFIE'&&item.status!=='REJECTED'&&item.status!=='RESUBMISSION_REQUIRED');
+			const proofOfAddressSubmitted=profile.kycDocuments.some(item=>item.kind==='PROOF_OF_ADDRESS'&&item.status!=='REJECTED'&&item.status!=='RESUBMISSION_REQUIRED');
+			if(currentTier!==2||!profile.phoneVerified||!profile.kyc?.submittedAt||!profile.kyc.address?.trim()||!identityDocumentSubmitted||!selfieSubmitted||!proofOfAddressSubmitted)throw new Error('VERIFICATION_MISSING');
 			const active=await tx.tierUpgradeRequest.findFirst({where:{userId:user.id,status:{in:openStatuses}}});
 			if(active)throw new Error('REQUEST_PENDING');
 			const requestRecord=await tx.tierUpgradeRequest.create({data:{userId:user.id,currentTier,requestedTier:3,userMessage:input.message||null}});
 			await tx.auditLog.create({data:{actorId:user.id,action:'TIER_UPGRADE_REQUESTED',entity:'TIER_REQUEST',entityId:requestRecord.id,metadata:{currentTier,requestedTier:3}}});
-			await createNotification(tx,{userId:user.id,type:NotificationType.ACCOUNT,title:'Tier 3 review requested',message:'Your Tier 3 request is awaiting administrator review of your approved identity information.',dedupeKey:`tier-request:${requestRecord.id}:user`,relatedEntity:'TIER_REQUEST',relatedId:requestRecord.id,actionUrl:'/tier'});
-			await notifyActiveAdmins(tx,{type:NotificationType.ACCOUNT,title:'Tier 3 review requested',message:'A profile-complete user submitted a Tier 3 review request with identity information on file.',dedupeKey:`tier-request:${requestRecord.id}:admin`,relatedEntity:'TIER_REQUEST',relatedId:requestRecord.id,actionUrl:'/admin/tiers'});
+			await createNotification(tx,{userId:user.id,type:NotificationType.ACCOUNT,title:'Tier 3 review requested',message:'Your Tier 3 request is awaiting administrator review of your submitted identity information and documents.',dedupeKey:`tier-request:${requestRecord.id}:user`,relatedEntity:'TIER_REQUEST',relatedId:requestRecord.id,actionUrl:'/tier'});
+			await notifyActiveAdmins(tx,{type:NotificationType.ACCOUNT,title:'Tier 3 review requested',message:'A user completed the Tier 3 submission requirements and is awaiting administrator identity review.',dedupeKey:`tier-request:${requestRecord.id}:admin`,relatedEntity:'TIER_REQUEST',relatedId:requestRecord.id,actionUrl:'/admin/tiers'});
 			return requestRecord;
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
 		return NextResponse.json(jsonSafe(result),{status:201,headers:{'Cache-Control':'private, no-store'}});
@@ -104,7 +107,7 @@ export async function POST(request:Request){
 		if(error instanceof Error&&error.message==='REAL_MODE_REQUIRED')return NextResponse.json({error:'Tier 3 review is available in REAL mode only.'},{status:403});
 		if(error instanceof Error&&error.message==='ACCOUNT_UNAVAILABLE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
 		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'You have submitted several tier requests recently. Try again later.'},{status:429});
-		const messages:Record<string,string>={MAXIMUM_TIER:'You are already at the highest available tier.',PROFILE_INCOMPLETE:'Complete your name, country, and phone number in Profile before requesting Tier 3 review.',VERIFICATION_MISSING:'Tier 3 requires approved Tier 2 KYC, an approved identity document and selfie, a residential address, proof of address, and phone verification.',REQUEST_PENDING:'A tier request is already awaiting review.'};
+		const messages:Record<string,string>={MAXIMUM_TIER:'You are already at the highest available tier.',PROFILE_INCOMPLETE:'Complete your name, country, and phone number in Profile before requesting Tier 3 review.',VERIFICATION_MISSING:'Complete your identity submission, upload an ID, selfie, and proof of address, and verify your phone before requesting Tier 3 review.',REQUEST_PENDING:'A tier request is already awaiting review.'};
 		if(error instanceof Error&&messages[error.message])return NextResponse.json({error:messages[error.message]},{status:409});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
 		if(code==='P2002')return NextResponse.json({error:'A tier request is already awaiting review.'},{status:409});

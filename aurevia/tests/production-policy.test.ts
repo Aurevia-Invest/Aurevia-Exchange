@@ -36,12 +36,12 @@ describe('production account policy',()=>{
     expect(getTierProfileRequirements({name:'A',country:'',phone:'555'}).profileComplete).toBe(false);
   });
 
-  it('restricts phone OTP eligibility to a reviewed Tier 2 REAL account entering Tier 3',()=>{
-    const eligible={accountMode:AccountMode.REAL,accountStatus:'ACTIVE',approvedTier:2,kycStatus:KycStatus.APPROVED,profileComplete:true,verificationSubmitted:true,approvedIdentityDocument:true,approvedSelfie:true};
+  it('allows phone OTP after Tier 2 information and identity files are submitted, before administrator review',()=>{
+    const eligible={accountMode:AccountMode.REAL,accountStatus:'ACTIVE',approvedTier:2,profileComplete:true,verificationSubmitted:true,identityDocumentSubmitted:true,selfieSubmitted:true};
     expect(isTierThreePhoneVerificationEligible(eligible)).toBe(true);
     expect(isTierThreePhoneVerificationEligible({...eligible,approvedTier:1})).toBe(false);
     expect(isTierThreePhoneVerificationEligible({...eligible,accountMode:AccountMode.DEMO})).toBe(false);
-    expect(isTierThreePhoneVerificationEligible({...eligible,approvedSelfie:false})).toBe(false);
+    expect(isTierThreePhoneVerificationEligible({...eligible,selfieSubmitted:false})).toBe(false);
   });
 
   it('rejects stale tier reviews and requires approved identity evidence for Tier 3',()=>{

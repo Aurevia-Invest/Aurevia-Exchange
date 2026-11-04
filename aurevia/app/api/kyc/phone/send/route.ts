@@ -31,7 +31,7 @@ export async function POST(request:Request){
 			return tx.user.findUnique({where:{id:user.id},select:{
 				id:true,phone:true,phoneVerified:true,accountMode:true,status:true,approvedTier:true,kycStatus:true,name:true,country:true,
 				kyc:{select:{submittedAt:true}},
-				kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:'APPROVED'},select:{kind:true}},
+				kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:{notIn:['REJECTED','RESUBMISSION_REQUIRED']}},select:{kind:true,status:true}},
 			}});
 		});
 		if(!current||current.status!=='ACTIVE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
@@ -40,13 +40,12 @@ export async function POST(request:Request){
 			accountMode:current.accountMode,
 			accountStatus:current.status,
 			approvedTier:current.approvedTier,
-			kycStatus:current.kycStatus,
 			profileComplete:requirements.profileComplete,
 			verificationSubmitted:Boolean(current.kyc?.submittedAt),
-			approvedIdentityDocument:current.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT'),
-			approvedSelfie:current.kycDocuments.some(document=>document.kind==='SELFIE'),
+			identityDocumentSubmitted:current.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT'),
+			selfieSubmitted:current.kycDocuments.some(document=>document.kind==='SELFIE'),
 		});
-		if(!phoneVerificationEligible)return NextResponse.json({error:'Phone OTP is available only for Tier 3 after Tier 2 KYC approval.'},{status:403});
+		if(!phoneVerificationEligible)return NextResponse.json({error:'Submit your identity details and upload an ID and selfie before starting Tier 3 phone verification.'},{status:403});
 		if(current.phone===input.phone&&current.phoneVerified)return NextResponse.json({error:'This phone number is already verified.'},{status:409});
 
 		if(akedlyIsConfigured()&&input.delivery!=='termii'){

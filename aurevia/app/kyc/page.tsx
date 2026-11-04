@@ -2,6 +2,7 @@
 
 import {FormEvent,useCallback,useEffect,useState} from 'react';
 import {useSession} from 'next-auth/react';
+import Link from 'next/link';
 import {FileCheck2,Info,ShieldCheck,Upload} from 'lucide-react';
 import Nav from '@/components/Nav';
 import {useLocale} from '@/lib/i18n-context';
@@ -32,6 +33,7 @@ export default function Kyc(){
   const [loading,setLoading]=useState(true);
   const [submitting,setSubmitting]=useState(false);
   const [documents,setDocuments]=useState<KycDocument[]>([]);
+  const [kycSubmitted,setKycSubmitted]=useState(false);
   const [currentTier,setCurrentTier]=useState(1);
   const [retryCount,setRetryCount]=useState(0);
   const [uploadKind,setUploadKind]=useState<'IDENTITY_DOCUMENT'|'SELFIE'|'PROOF_OF_ADDRESS'>('IDENTITY_DOCUMENT');
@@ -57,6 +59,7 @@ export default function Kyc(){
       const [kyc,profile,uploadedDocuments,tier]=await Promise.all(responses.map(response=>response.json()));
       if(!active())return;
       if(kyc)setForm({legalName:kyc.legalName||'',dob:kyc.dob?String(kyc.dob).slice(0,10):'',address:kyc.address||'',idType:kyc.idType||'PASSPORT',idNumber:kyc.idNumber||''});
+      setKycSubmitted(Boolean(kyc?.submittedAt));
       setPhone(profile.phone||'');
       setPhoneVerified(Boolean(profile.phoneVerified));
       setCurrentTier(typeof tier.currentTier==='number'?tier.currentTier:1);
@@ -102,9 +105,10 @@ export default function Kyc(){
   const completed=[form.legalName,form.dob,form.address,form.idType,form.idNumber].filter(Boolean).length;
   const completion=Math.round(completed/5*100);
   const state={label:translate(statusCopy[status].label),description:translate(statusCopy[status].description)};
-  const hasApprovedTierTwoDocuments=documents.some(document=>document.kind==='IDENTITY_DOCUMENT'&&document.status==='APPROVED')
-    &&documents.some(document=>document.kind==='SELFIE'&&document.status==='APPROVED');
-  const showTierThreePhoneVerification=isRealAccount&&currentTier===2&&status==='APPROVED'&&hasApprovedTierTwoDocuments;
+  const hasSubmittedTierTwoDocuments=documents.some(document=>document.kind==='IDENTITY_DOCUMENT'&&document.status!=='REJECTED'&&document.status!=='RESUBMISSION_REQUIRED')
+    &&documents.some(document=>document.kind==='SELFIE'&&document.status!=='REJECTED'&&document.status!=='RESUBMISSION_REQUIRED');
+  const hasSubmittedKyc=kycSubmitted;
+  const showTierThreePhoneVerification=isRealAccount&&currentTier>=2&&hasSubmittedKyc&&hasSubmittedTierTwoDocuments;
 
   async function submit(event:FormEvent<HTMLFormElement>){
     event.preventDefault();
@@ -114,7 +118,7 @@ export default function Kyc(){
       const response=await fetch('/api/kyc',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(form)});
       const result=await response.json();
       if(!response.ok)throw new Error(result.error||translate('unableSubmitVerification'));
-      setStatus('PENDING');setMessage(translate('verificationSubmitted'));
+      setStatus('PENDING');setKycSubmitted(true);setMessage(translate('verificationSubmitted'));
     }catch(exception){setError(exception instanceof Error?exception.message:translate('unableSubmitVerification'))}
     finally{setSubmitting(false)}
   }
@@ -160,7 +164,7 @@ export default function Kyc(){
       const result=await response.json();if(!response.ok)throw new Error(result.error||translate('unableUploadDocument'));
       const documentResponse=await fetch('/api/kyc/documents',{cache:'no-store'});const uploadedDocuments=await documentResponse.json();
       if(!documentResponse.ok)throw new Error(uploadedDocuments.error||translate('documentRefreshFailed'));
-      setDocuments(uploadedDocuments);setUploadFile(null);setStatus('PENDING');setMessage(translate('documentUploaded'));
+      setDocuments(uploadedDocuments);setUploadFile(null);if(uploadKind!=='PROOF_OF_ADDRESS')setStatus('PENDING');setMessage(translate('documentUploaded'));
     }catch(exception){setError(exception instanceof Error?exception.message:translate('unableUploadDocument'))}
     finally{setUploading(false)}
   }
@@ -191,7 +195,7 @@ export default function Kyc(){
       </div>
     </section>
     <div className="account-content-grid">
-      {showTierThreePhoneVerification&&<section className="account-panel card p-5 md:col-span-2"><div className="account-panel-title"><div><h2>Tier 3 phone verification</h2><p className="account-panel-subtitle">Phone OTP is required only for Tier 3. Your phone is not required for Tier 1 or Tier 2 KYC.</p></div><ShieldCheck size={18} className="gold" aria-hidden="true"/></div>
+      {showTierThreePhoneVerification&&<section className="account-panel card p-5 md:col-span-2"><div className="account-panel-title"><div><h2>Tier 3 phone verification</h2><p className="account-panel-subtitle">Verify your phone and submit the remaining Tier 3 requirements while your identity documents await administrator review. Tier 3 is not activated until an administrator reviews and approves your submission.</p></div><ShieldCheck size={18} className="gold" aria-hidden="true"/></div>
         <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
           <label className="account-label">Phone number<input className="input" type="tel" autoComplete="tel" inputMode="tel" value={phone} onChange={event=>{setPhone(event.target.value);setPhoneVerified(false);setPhoneCode('');setPhoneAttempt(null)}} placeholder="+12125550123" required/></label>
           <button className="btn bg-gold text-black self-end" type="button" disabled={sendingPhoneCode||loading||!phone.trim()} onClick={()=>void sendPhoneCode()}>{sendingPhoneCode?'Sending…':phoneAttempt?'Restart verification':'Start verification'}</button>
@@ -203,20 +207,21 @@ export default function Kyc(){
         {phoneAttempt?.termiiFallbackAvailable&&<button className="mt-3 text-link text-sm" type="button" disabled={sendingPhoneCode||loading} onClick={()=>void sendPhoneCode('termii')}>{sendingPhoneCode?'Requesting SMS code…':'Can’t use the widget? Send me an SMS code instead'}</button>}
         <p className="mt-3 text-xs muted" role="status">{phoneVerified?'Phone number verified for Tier 3.':'Verify your phone number to continue with Tier 3.'}</p>
         {phoneMessage&&<p className="mt-2 text-sm text-profit" role="status">{phoneMessage}</p>}
+        {phoneVerified&&<Link href="/tier" className="mt-3 inline-flex text-link">Continue to Tier 3 review</Link>}
       </section>
       }
       <section className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('personalInformation')}</h2><p className="account-panel-subtitle">{translate('useIdentityDocument')}</p></div><FileCheck2 size={18} className="gold" aria-hidden="true"/></div>
         <form onSubmit={submit} className="account-form-grid">
           <label className="account-label">{translate('legalName')}<input className="input" autoComplete="name" required minLength={2} maxLength={160} value={form.legalName} onChange={event=>setForm({...form,legalName:event.target.value})}/></label>
           <label className="account-label">{translate('dateOfBirth')}<input className="input" type="date" required value={form.dob} onChange={event=>setForm({...form,dob:event.target.value})}/></label>
-          <label className="account-label md:col-span-2">{translate('addressOptional')}<input className="input" autoComplete="street-address" maxLength={500} value={form.address} onChange={event=>setForm({...form,address:event.target.value})}/></label>
+          <label className="account-label md:col-span-2">Residential address<input className="input" autoComplete="street-address" minLength={5} maxLength={500} required value={form.address} onChange={event=>setForm({...form,address:event.target.value})}/></label>
           <label className="account-label">{translate('identityDocumentType')}<select className="input" value={form.idType} onChange={event=>setForm({...form,idType:event.target.value})}><option value="PASSPORT">{translate('passport')}</option><option value="NATIONAL_ID">{translate('nationalId')}</option><option value="DRIVERS_LICENSE">{translate('driversLicense')}</option></select></label>
           <label className="account-label">{translate('documentNumber')}<input className="input" required minLength={3} maxLength={100} autoComplete="off" value={form.idNumber} onChange={event=>setForm({...form,idNumber:event.target.value})}/></label>
           <div className="account-callout md:col-span-2"><Info size={16}/><span>{translate('identityFilesCopy')}</span></div>
-          <div className="md:col-span-2"><button className="btn bg-gold text-black" type="submit" disabled={submitting||loading} aria-busy={submitting}>{submitting?translate('submitting'):translate('submitForReview')}</button><p className="mt-2 text-xs muted">Phone verification is not required for this Tier 2 identity submission.</p>{message&&<p className="mt-3 text-sm text-profit" role="status">{message}</p>}</div>
+          <div className="md:col-span-2"><button className="btn bg-gold text-black" type="submit" disabled={submitting||loading} aria-busy={submitting}>{submitting?translate('submitting'):translate('submitForReview')}</button><p className="mt-2 text-xs muted">Submit your identity profile first. You can then verify your phone and upload proof of address before administrator review. Phone verification is only required for Tier 3.</p>{message&&<p className="mt-3 text-sm text-profit" role="status">{message}</p>}</div>
         </form>
       </section>
-      <aside className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('reviewStatus')}</h2><p className="account-panel-subtitle">{translate('currentAccountStatus')}</p></div></div><span className="status-pill">{loading?translate('loading'):state.label}</span><p className="mt-4 text-sm leading-6 muted">{state.description}</p><div className="mt-5 border-t border-white/10 pt-4"><h3 className="text-sm font-semibold">{translate('identityDocuments')}</h3><p className="mt-2 text-xs leading-5 muted">{translate('documentTypes')}</p><div className="mt-3 grid gap-3"><label className="account-label">{translate('documentType')}<select className="input" value={uploadKind} onChange={event=>setUploadKind(event.target.value as 'IDENTITY_DOCUMENT'|'SELFIE'|'PROOF_OF_ADDRESS')}><option value="IDENTITY_DOCUMENT">Government-issued ID</option><option value="SELFIE">Selfie</option><option value="PROOF_OF_ADDRESS" disabled={!showTierThreePhoneVerification}>Proof of address (Tier 3)</option></select></label><label className="account-label">{translate('chooseFile')}<input className="input" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={event=>setUploadFile(event.target.files?.[0]||null)}/></label><button className="btn bg-gold text-black" type="button" disabled={!uploadFile||uploading||loading} onClick={()=>void uploadDocument()}><Upload size={15}/>{uploading?translate('uploadingDocument'):translate('uploadDocument')}</button></div>{documents.length?<ul className="mt-4 divide-y divide-white/10">{documents.map(document=><li className="py-3 text-sm" key={document.id}><div className="flex flex-wrap items-center justify-between gap-2"><span className="break-all">{document.filename}</span><span className="status-pill">{document.status.replaceAll('_',' ')}</span></div><p className="mt-1 text-xs muted">{document.kind.replaceAll('_',' ')} · {new Date(document.uploadedAt).toLocaleDateString()}{document.reviewNote?` · ${document.reviewNote}`:''}</p></li>)}</ul>:<p className="mt-3 text-sm muted">{translate('noDocumentsSubmitted')}</p>}</div></aside>
+      <aside className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('reviewStatus')}</h2><p className="account-panel-subtitle">{translate('currentAccountStatus')}</p></div></div><span className="status-pill">{loading?translate('loading'):state.label}</span><p className="mt-4 text-sm leading-6 muted">{state.description}</p><div className="mt-5 border-t border-white/10 pt-4"><h3 className="text-sm font-semibold">{translate('identityDocuments')}</h3><p className="mt-2 text-xs leading-5 muted">{translate('documentTypes')}</p><div className="mt-3 grid gap-3"><label className="account-label">{translate('documentType')}<select className="input" value={uploadKind} onChange={event=>setUploadKind(event.target.value as 'IDENTITY_DOCUMENT'|'SELFIE'|'PROOF_OF_ADDRESS')}><option value="IDENTITY_DOCUMENT">Government-issued ID</option><option value="SELFIE">Selfie</option><option value="PROOF_OF_ADDRESS" disabled={!showTierThreePhoneVerification||!phoneVerified}>Proof of address (Tier 3)</option></select></label><label className="account-label">{translate('chooseFile')}<input className="input" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={event=>setUploadFile(event.target.files?.[0]||null)}/></label><button className="btn bg-gold text-black" type="button" disabled={!uploadFile||uploading||loading||(uploadKind==='PROOF_OF_ADDRESS'&&(!showTierThreePhoneVerification||!phoneVerified))} onClick={()=>void uploadDocument()}><Upload size={15}/>{uploading?translate('uploadingDocument'):translate('uploadDocument')}</button></div>{documents.length?<ul className="mt-4 divide-y divide-white/10">{documents.map(document=><li className="py-3 text-sm" key={document.id}><div className="flex flex-wrap items-center justify-between gap-2"><span className="break-all">{document.filename}</span><span className="status-pill">{document.status.replaceAll('_',' ')}</span></div><p className="mt-1 text-xs muted">{document.kind.replaceAll('_',' ')} · {new Date(document.uploadedAt).toLocaleDateString()}{document.reviewNote?` · ${document.reviewNote}`:''}</p></li>)}</ul>:<p className="mt-3 text-sm muted">{translate('noDocumentsSubmitted')}</p>}</div></aside>
     </div>
     </>}
   </main></>;

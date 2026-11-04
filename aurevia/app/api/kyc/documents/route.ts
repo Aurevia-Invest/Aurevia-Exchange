@@ -60,11 +60,13 @@ export async function POST(request:Request){
     await uploadPrivateObject('kyc',user.id,documentStorageKey,bytes,mime);
     storageUploaded=true;
   const document=await db.$transaction(async tx=>{
-    const current=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,approvedTier:true,accountMode:true,status:true}});
+    const current=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,approvedTier:true,accountMode:true,status:true,phoneVerified:true,kyc:{select:{submittedAt:true,address:true}},kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:{notIn:['REJECTED','RESUBMISSION_REQUIRED']}},select:{kind:true}}}});
     if(current.status!=='ACTIVE')throw new Error('ACCOUNT_UNAVAILABLE');
     if(current.accountMode!==AccountMode.REAL)throw new Error('REAL_MODE_REQUIRED');
     if(kind==='PROOF_OF_ADDRESS'){
-      if(current.kycStatus!=='APPROVED'||current.approvedTier!==2)throw new Error('TIER_3_PREREQUISITES_REQUIRED');
+      const hasIdentityDocument=current.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT');
+      const hasSelfie=current.kycDocuments.some(document=>document.kind==='SELFIE');
+      if(current.approvedTier<2||!current.kyc?.submittedAt||!current.kyc.address?.trim()||!current.phoneVerified||!hasIdentityDocument||!hasSelfie)throw new Error('TIER_3_PREREQUISITES_REQUIRED');
     }else{
       assertKycSubmissionAllowed(current.kycStatus);
     }
@@ -86,7 +88,7 @@ export async function POST(request:Request){
   if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many document uploads. Try again later.'},{status:429});
   if(error instanceof Error&&error.message==='DOCUMENT_LIMIT_REACHED')return NextResponse.json({error:'The account document limit has been reached.'},{status:409});
   if(error instanceof Error&&error.message==='KYC_ALREADY_APPROVED')return NextResponse.json({error:'Identity verification is already approved.'},{status:409});
-  if(error instanceof Error&&error.message==='TIER_3_PREREQUISITES_REQUIRED')return NextResponse.json({error:'Proof of address can be uploaded after Tier 2 KYC is approved.'},{status:409});
+  if(error instanceof Error&&error.message==='TIER_3_PREREQUISITES_REQUIRED')return NextResponse.json({error:'Submit your identity details, ID and selfie, and verify your phone before uploading proof of address.'},{status:409});
   return NextResponse.json({error:'Document upload is unavailable.'},{status:400});
  }
 }

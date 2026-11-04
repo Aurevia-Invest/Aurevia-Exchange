@@ -40,20 +40,18 @@ export function isTierThreePhoneVerificationEligible(input:{
 	accountMode:AccountMode;
 	accountStatus:string;
 	approvedTier:number;
-	kycStatus:KycStatus;
 	profileComplete:boolean;
 	verificationSubmitted:boolean;
-	approvedIdentityDocument:boolean;
-	approvedSelfie:boolean;
+	identityDocumentSubmitted:boolean;
+	selfieSubmitted:boolean;
 }){
 	return input.accountMode===AccountMode.REAL
 		&&input.accountStatus==='ACTIVE'
-		&&input.approvedTier===2
-		&&input.kycStatus===KycStatus.APPROVED
+		&&input.approvedTier>=2
 		&&input.profileComplete
 		&&input.verificationSubmitted
-		&&input.approvedIdentityDocument
-		&&input.approvedSelfie;
+		&&input.identityDocumentSubmitted
+		&&input.selfieSubmitted;
 }
 
 export function assertKycSubmissionAllowed(status:KycStatus){

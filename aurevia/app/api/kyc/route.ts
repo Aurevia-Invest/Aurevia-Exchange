@@ -10,7 +10,7 @@ import {assertKycSubmissionAllowed} from '@/lib/production-policy';
 const schema=z.object({
 	legalName:z.string().trim().min(2).max(160),
 	dob:z.string().date().refine(value=>value<=new Date().toISOString().slice(0,10),'Date of birth cannot be in the future.'),
-	address:z.string().trim().max(500).optional(),
+	address:z.string().trim().min(5).max(500),
 	idType:z.enum(['PASSPORT','NATIONAL_ID','DRIVERS_LICENSE']),
 	idNumber:z.string().trim().min(3).max(100),
 });

@@ -18,18 +18,17 @@ export async function POST(request:Request){
 		const account=await db.user.findUnique({where:{id:user.id},select:{
 			accountMode:true,status:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,
 			kyc:{select:{submittedAt:true}},
-			kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:'APPROVED'},select:{kind:true}},
+			kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:{notIn:['REJECTED','RESUBMISSION_REQUIRED']}},select:{kind:true,status:true}},
 		}});
 		if(!account||!isTierThreePhoneVerificationEligible({
 			accountMode:account.accountMode,
 			accountStatus:account.status,
 			approvedTier:account.approvedTier,
-			kycStatus:account.kycStatus,
 			profileComplete:getTierProfileRequirements(account).profileComplete,
 			verificationSubmitted:Boolean(account.kyc?.submittedAt),
-			approvedIdentityDocument:account.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT'),
-			approvedSelfie:account.kycDocuments.some(document=>document.kind==='SELFIE'),
-		}))return NextResponse.json({error:'Phone OTP status is available only for Tier 3 after Tier 2 KYC approval.'},{status:403});
+			identityDocumentSubmitted:account.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT'),
+			selfieSubmitted:account.kycDocuments.some(document=>document.kind==='SELFIE'),
+		}))return NextResponse.json({error:'Submit your identity details and upload an ID and selfie before checking phone verification.'},{status:403});
 		rateLimit(`akedly-phone-status-ip:${request.headers.get('x-forwarded-for')||'unknown'}`,30,60_000);
 		rateLimit(`akedly-phone-status-user:${user.id}`,30,60_000);
 		let state=await getAkedlyVerificationState(user.id,attemptId,VerificationChannel.SMS);

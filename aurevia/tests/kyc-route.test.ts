@@ -39,7 +39,26 @@ describe('Tier 2 KYC submission',()=>{
 		}));
 	});
 
-	it('accepts identity information without phone OTP or proof-of-address data',async()=>{
+	it('accepts identity information with a residential address without phone OTP or proof-of-address data',async()=>{
+		const response=await POST(request({
+			legalName:'Ada Example',
+			dob:'1990-01-01',
+			address:'123 Main Street, Example City',
+			idType:'PASSPORT',
+			idNumber:'P1234567',
+		}));
+
+		expect(response.status).toBe(200);
+		expect(mocks.kycUpsert).toHaveBeenCalledWith(expect.objectContaining({
+			create:expect.objectContaining({legalName:'Ada Example',address:'123 Main Street, Example City',idType:'PASSPORT',idNumber:'P1234567'}),
+		}));
+		expect(mocks.userFindUniqueOrThrow).toHaveBeenCalledWith(expect.objectContaining({
+			select:{kycStatus:true,accountMode:true,status:true},
+		}));
+		expect(mocks.userUpdate).toHaveBeenCalledWith({where:{id:'user-1'},data:{kycStatus:'PENDING',verifiedAt:null}});
+	});
+
+	it('requires the residential address needed for Tier 3 review',async()=>{
 		const response=await POST(request({
 			legalName:'Ada Example',
 			dob:'1990-01-01',
@@ -47,13 +66,7 @@ describe('Tier 2 KYC submission',()=>{
 			idNumber:'P1234567',
 		}));
 
-		expect(response.status).toBe(200);
-		expect(mocks.kycUpsert).toHaveBeenCalledWith(expect.objectContaining({
-			create:expect.objectContaining({legalName:'Ada Example',idType:'PASSPORT',idNumber:'P1234567'}),
-		}));
-		expect(mocks.userFindUniqueOrThrow).toHaveBeenCalledWith(expect.objectContaining({
-			select:{kycStatus:true,accountMode:true,status:true},
-		}));
-		expect(mocks.userUpdate).toHaveBeenCalledWith({where:{id:'user-1'},data:{kycStatus:'PENDING',verifiedAt:null}});
+		expect(response.status).toBe(400);
+		expect(mocks.kycUpsert).not.toHaveBeenCalled();
 	});
 });

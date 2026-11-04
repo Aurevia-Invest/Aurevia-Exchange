@@ -40,7 +40,7 @@ export default function ProfileAvatar({className='',size=40,alt=''}:{className?:
 		return()=>{active=false;window.clearInterval(refreshTimer);window.removeEventListener('focus',load);window.removeEventListener(profileAvatarUpdatedEvent,onAvatarUpdated)};
 	},[status]);
 
-	return <span className={className} style={{display:'grid',placeItems:'center',boxSizing:'border-box',width:size,height:size,aspectRatio:'1 / 1',flexShrink:0,overflow:'hidden',borderRadius:'50%'}} role={alt?'img':undefined} aria-label={alt||undefined} aria-hidden={alt?undefined:true}>
-		{url?<Image src={url} alt="" width={size} height={size} unoptimized className="profile-avatar-image"/>:<UserRound size={Math.round(size*.54)} strokeWidth={1.7} className="profile-avatar-fallback-icon" aria-hidden="true"/>}
+	return <span className={className} style={{display:'grid',placeItems:'center',boxSizing:'border-box',width:size,height:size,aspectRatio:'1 / 1',flexShrink:0,overflow:'hidden',borderRadius:'50%',clipPath:'circle(50%)'}} role={alt?'img':undefined} aria-label={alt||undefined} aria-hidden={alt?undefined:true}>
+		{url?<Image src={url} alt="" width={size} height={size} unoptimized className="profile-avatar-image" style={{width:'100%',height:'100%',borderRadius:'50%',objectFit:'cover',objectPosition:'center',clipPath:'circle(50%)'}}/>:<UserRound size={Math.round(size*.54)} strokeWidth={1.7} className="profile-avatar-fallback-icon" aria-hidden="true"/>}
 	</span>;
 }

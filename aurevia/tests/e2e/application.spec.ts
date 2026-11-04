@@ -1968,6 +1968,13 @@ test('verified personal details remain read-only during the two-month lock windo
 		await expect(avatarInput).toBeEnabled();
 		await avatarInput.setInputFiles({name:'avatar.png',mimeType:'image/png',buffer:PNG.sync.write(new PNG({width:1,height:1}))});
 		await expect(page.getByRole('button',{name:'Upload photo'})).toBeEnabled();
+		await page.getByRole('button',{name:'Upload photo'}).click();
+		const uploadedAvatar=page.locator('.profile-avatar img');
+		await expect(uploadedAvatar).toBeVisible();
+		await expect.poll(()=>uploadedAvatar.evaluate(image=>{
+			const style=getComputedStyle(image);
+			return {borderRadius:style.borderRadius,clipPath:style.clipPath,objectFit:style.objectFit};
+		})).toEqual({borderRadius:'50%',clipPath:'circle(50%)',objectFit:'cover'});
 		await expect(page.getByRole('button',{name:'Save profile'})).toBeDisabled();
 		const update=await page.request.patch('/api/profile',{data:{name:'Changed Name',country:'Test',address:'Changed address'}});
 		expect(update.status()).toBe(423);

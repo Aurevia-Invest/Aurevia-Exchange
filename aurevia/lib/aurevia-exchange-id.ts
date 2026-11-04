@@ -4,7 +4,7 @@ import {Prisma} from '@prisma/client';
 type IdBackfillTransaction={
 	user:{
 		updateMany(args:{
-			where:{id:string;emailVerifiedAt:{not:null};aureviaExchangeId:null};
+			where:{id:string;role:'USER';status:'ACTIVE';aureviaExchangeId:null};
 			data:{aureviaExchangeId:string};
 		}):Promise<{count:number}>;
 	};
@@ -49,7 +49,7 @@ export async function assignMissingAureviaExchangeId(
 	return retryAureviaExchangeIdCollision(()=>runTransaction(async tx=>{
 		const aureviaExchangeId=generateAureviaExchangeId(createdAt);
 		const updated=await tx.user.updateMany({
-			where:{id:userId,emailVerifiedAt:{not:null},aureviaExchangeId:null},
+			where:{id:userId,role:'USER',status:'ACTIVE',aureviaExchangeId:null},
 			data:{aureviaExchangeId},
 		});
 		return updated.count===1;

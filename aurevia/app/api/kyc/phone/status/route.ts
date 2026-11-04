@@ -6,6 +6,8 @@ import {rateLimit} from '@/lib/rate-limit';
 import {AkedlyProviderError} from '@/lib/akedly';
 import {getAkedlyVerificationState,reconcileAkedlyAttempt} from '@/lib/akedly-verification';
 import {VerificationChannel} from '@prisma/client';
+import {db} from '@/lib/db';
+import {isTierThreePhoneVerificationEligible,getTierProfileRequirements} from '@/lib/production-policy';
 
 const schema=z.object({attemptId:z.string().min(8).max(200)});
 
@@ -13,6 +15,21 @@ export async function POST(request:Request){
 	try{
 		const user=await requireUser();
 		const {attemptId}=schema.parse(await request.json());
+		const account=await db.user.findUnique({where:{id:user.id},select:{
+			accountMode:true,status:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,
+			kyc:{select:{submittedAt:true}},
+			kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:'APPROVED'},select:{kind:true}},
+		}});
+		if(!account||!isTierThreePhoneVerificationEligible({
+			accountMode:account.accountMode,
+			accountStatus:account.status,
+			approvedTier:account.approvedTier,
+			kycStatus:account.kycStatus,
+			profileComplete:getTierProfileRequirements(account).profileComplete,
+			verificationSubmitted:Boolean(account.kyc?.submittedAt),
+			approvedIdentityDocument:account.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT'),
+			approvedSelfie:account.kycDocuments.some(document=>document.kind==='SELFIE'),
+		}))return NextResponse.json({error:'Phone OTP status is available only for Tier 3 after Tier 2 KYC approval.'},{status:403});
 		rateLimit(`akedly-phone-status-ip:${request.headers.get('x-forwarded-for')||'unknown'}`,30,60_000);
 		rateLimit(`akedly-phone-status-user:${user.id}`,30,60_000);
 		let state=await getAkedlyVerificationState(user.id,attemptId,VerificationChannel.SMS);

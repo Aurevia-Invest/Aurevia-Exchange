@@ -41,7 +41,7 @@ describe('user dashboard overview access and mode separation',()=>{
 		mocks.requireUser.mockResolvedValue({id:'user-1',accountMode:AccountMode.DEMO});
 		mocks.userFindUnique.mockResolvedValue({
 			id:'user-1',name:'Aurevia User',role:'USER',status:'ACTIVE',accountMode:AccountMode.REAL,
-			approvedTier:1,kycStatus:'PENDING',avatarKey:null,kyc:null,country:null,phone:null,requiresRegistrationVerification:true,
+			approvedTier:1,kycStatus:'PENDING',avatarKey:null,kyc:null,country:null,phone:null,
 		});
 		mocks.transaction.mockImplementation((operation:(tx:unknown)=>unknown)=>operation({
 			user:{findUnique:mocks.userFindUnique,updateMany:mocks.userUpdateMany},

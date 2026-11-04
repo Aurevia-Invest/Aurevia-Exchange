@@ -45,7 +45,7 @@ export async function POST(request:Request){
 		const session=await getServerSession(authOptions);
 		const userId=session?.user?.id;
 		rateLimit(userId?`nova-user:${userId}`:`nova-ip:${clientIp(request)}`,30,60_000);
-		const user=userId?await db.user.findUnique({where:{id:userId},select:{id:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,phoneVerified:true,requiresRegistrationVerification:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}}):null;
+		const user=userId?await db.user.findUnique({where:{id:userId},select:{id:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,phoneVerified:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}}):null;
 		if(userId&&(!user||user.status!==UserStatus.ACTIVE||user.role!=='USER'))return NextResponse.json({error:'This account is unavailable.'},{status:403});
 		const orderIntent=parseDemoOrderIntent(input.question);
 		const orderIntentRequested=hasDemoOrderIntent(input.question);

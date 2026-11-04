@@ -25,17 +25,37 @@ export function getTierProfileRequirements(input:{name:string|null;country:strin
 	const nameComplete=Boolean(input.name?.trim()&&input.name.trim().length>=2);
 	const countryComplete=Boolean(input.country?.trim()&&input.country.trim().length>=2);
 	const phoneComplete=Boolean(input.phone&&isValidE164(input.phone));
-	return {nameComplete,countryComplete,phoneComplete,profileComplete:nameComplete&&countryComplete&&phoneComplete};
+	return {nameComplete,countryComplete,phoneComplete,profileComplete:nameComplete&&countryComplete};
 }
 
 export function getAccountTier(context:TierContext):{label:AccountTier;progress:number;eligibleForRealTrading:boolean;verified:boolean}{
 	const verifiedIdentity=context.accountMode===AccountMode.REAL&&context.profileComplete&&context.phoneVerified&&context.verificationSubmitted&&context.kycStatus===KycStatus.APPROVED&&context.verificationDocuments>0;
 	const tierThreeApproved=Math.min(3,Math.max(1,context.approvedTier||1))>=3;
 	const level=tierThreeApproved&&verifiedIdentity?3:context.profileComplete?2:1;
-	return {label:`TIER ${level}` as AccountTier,progress:Math.round(level/3*100),eligibleForRealTrading:false,verified:level===3};
+	return {label:`TIER ${level}` as AccountTier,progress:Math.round(level/3*100),eligibleForRealTrading:context.accountMode===AccountMode.REAL,verified:level===3};
 }
 
 export function verifyKycState(status:KycStatus){return status===KycStatus.APPROVED;}
+export function isTierThreePhoneVerificationEligible(input:{
+	accountMode:AccountMode;
+	accountStatus:string;
+	approvedTier:number;
+	kycStatus:KycStatus;
+	profileComplete:boolean;
+	verificationSubmitted:boolean;
+	approvedIdentityDocument:boolean;
+	approvedSelfie:boolean;
+}){
+	return input.accountMode===AccountMode.REAL
+		&&input.accountStatus==='ACTIVE'
+		&&input.approvedTier===2
+		&&input.kycStatus===KycStatus.APPROVED
+		&&input.profileComplete
+		&&input.verificationSubmitted
+		&&input.approvedIdentityDocument
+		&&input.approvedSelfie;
+}
+
 export function assertKycSubmissionAllowed(status:KycStatus){
 	if(status===KycStatus.APPROVED)throw new Error('KYC_ALREADY_APPROVED');
 }
@@ -44,8 +64,8 @@ export function validateTierUpgradeApproval(input:{requestCurrentTier:number;req
 	if(input.requestCurrentTier!==input.currentTier||input.requestedTier!==input.currentTier+1)throw new Error('TIER_REQUEST_STALE');
 }
 
-export function validateTierThreeApproval(input:{profileComplete:boolean;phoneVerified:boolean;kycStatus:KycStatus;verificationSubmitted:boolean;approvedIdentityDocuments:number}){
-	if(!input.profileComplete||!input.phoneVerified||input.kycStatus!==KycStatus.APPROVED||!input.verificationSubmitted||input.approvedIdentityDocuments<1)throw new Error('TIER_3_REQUIREMENTS_NOT_MET');
+export function validateTierThreeApproval(input:{profileComplete:boolean;phoneVerified:boolean;kycStatus:KycStatus;verificationSubmitted:boolean;approvedIdentityDocuments:number;approvedSelfies:number;approvedProofOfAddress:number;addressProvided:boolean}){
+	if(!input.profileComplete||!input.phoneVerified||input.kycStatus!==KycStatus.APPROVED||!input.verificationSubmitted||input.approvedIdentityDocuments<1||input.approvedSelfies<1||input.approvedProofOfAddress<1||!input.addressProvided)throw new Error('TIER_3_REQUIREMENTS_NOT_MET');
 }
 
 export function validateWithdrawal(input:WithdrawalValidation){

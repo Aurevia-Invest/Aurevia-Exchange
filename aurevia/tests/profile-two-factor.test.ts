@@ -19,7 +19,7 @@ describe('profile two-factor status',()=>{
 		mocks.requireUser.mockResolvedValue({id:'user-1'});
 		mocks.investmentFindFirst.mockResolvedValue(null);
 		mocks.transaction.mockImplementation((operation:(tx:unknown)=>unknown)=>operation({
-			user:{findUnique:mocks.findUnique,updateMany:vi.fn()},
+			user:{findUnique:mocks.findUnique,updateMany:vi.fn().mockResolvedValue({count:0})},
 			auditLog:{create:vi.fn()},
 		}));
 	});
@@ -32,7 +32,6 @@ describe('profile two-factor status',()=>{
 			phone:null,
 			phoneVerified:false,
 			country:'Test',
-			requiresRegistrationVerification:true,
 			approvedTier:1,
 			avatarKey:null,
 			twoFactorEnabled:true,
@@ -41,7 +40,6 @@ describe('profile two-factor status',()=>{
 			accountMode:'DEMO',
 			kycStatus:'PENDING',
 			verifiedAt:null,
-			verifiedChannel:null,
 			withdrawalEnabled:true,
 			accountRestricted:false,
 			restrictionReason:null,

@@ -2,6 +2,7 @@
 
 import {FormEvent,useCallback,useEffect,useRef,useState} from 'react';
 import {useRouter} from 'next/navigation';
+import {signIn,useSession} from 'next-auth/react';
 import Link from 'next/link';
 import Image from 'next/image';
 import {ArrowRight,ShieldCheck} from 'lucide-react';
@@ -14,7 +15,7 @@ import {useLocale} from '@/lib/i18n-context';
 type AccountMode='DEMO'|'REAL';
 type RegistrationDetails={firstName:string;lastName:string;dateOfBirth:string;residenceCountry:string;phoneCountry:string;phoneNumber:string;email:string;password:string;confirmPassword:string;accountMode:AccountMode};
 type TurnstileStatus='loading'|'ready'|'verifying'|'verified'|'expired'|'failed';
-type ExistingAccountIssue='account'|'administrator'|'incomplete'|'unavailable'|'pending'|'phone';
+type ExistingAccountIssue='account'|'unavailable'|'pending'|'phone';
 type TurnstileOptions={
 	sitekey:string;
 	action:string;
@@ -135,9 +136,8 @@ export default function RegistrationExperience(){
 	const captchaVerificationTimeout=useRef<ReturnType<typeof setTimeout>|null>(null);
 	const submissionInFlight=useRef(false);
 	const router=useRouter();
+	const {update:updateSession}=useSession();
 	const residence=findCountry(details.residenceCountry);
-	const phoneCountry=findCountry(details.phoneCountry);
-	const normalizedPhone=phoneCountry?normalizePhoneE164(details.phoneNumber,phoneCountry.code):null;
 	const registrationFormValid=Boolean(
 		details.firstName.trim()
 		&&details.lastName.trim()
@@ -149,7 +149,6 @@ export default function RegistrationExperience(){
 		&&/[A-Z]/.test(details.password)
 		&&/[0-9]/.test(details.password)
 		&&details.password===details.confirmPassword
-		&&normalizedPhone
 		&&termsAccepted,
 	);
 
@@ -321,7 +320,7 @@ export default function RegistrationExperience(){
 		let invalid=false;
 		if(!residence){setCountryError(translate('selectCountry'));invalid=true;}
 		if(!date){setDateError(translate('validDate'));invalid=true;}
-		if(!selectedPhoneCountry||!phone){setPhoneError(translate('validPhone'));invalid=true;}
+		if(details.phoneNumber.trim()&&(!selectedPhoneCountry||!phone)){setPhoneError(translate('validPhone'));invalid=true;}
 		if(details.password!==details.confirmPassword){setPasswordError(translate('passwordMatch'));invalid=true;}
 		if(invalid||!residence)return;
 		if(!captchaToken){setError('Complete the registration security check before creating your account.');return;}
@@ -379,9 +378,7 @@ export default function RegistrationExperience(){
 				return;
 			}
 			if(!response.ok){
-				if(result.code==='ACCOUNT_ALREADY_VERIFIED')setExistingAccountIssue('account');
-				else if(result.code==='ACCOUNT_ALREADY_EXISTS')setExistingAccountIssue('administrator');
-				else if(result.code==='ACCOUNT_VERIFICATION_INCOMPLETE')setExistingAccountIssue('incomplete');
+				if(result.code==='ACCOUNT_ALREADY_EXISTS')setExistingAccountIssue('account');
 				else if(result.code==='ACCOUNT_UNAVAILABLE')setExistingAccountIssue('unavailable');
 				else if(result.code==='REGISTRATION_IN_PROGRESS')setExistingAccountIssue('pending');
 				else if(result.code==='PHONE_ALREADY_IN_USE')setExistingAccountIssue('phone');
@@ -400,7 +397,7 @@ export default function RegistrationExperience(){
 				const message=typeof result.error==='string'?result.error:translate('registrationFailed');
 				setError(`${referenceId?`${message} (Reference: ${referenceId})`:message}${readinessDetail}${retryMessage}`);return;
 			}
-			if(result.verificationRequired!==true||typeof result.email!=='string'){
+			if(result.created!==true||typeof result.email!=='string'){
 				console.warn('[registration] API returned an incomplete success response.',{
 					...(requestId?{requestId,referenceId:requestId}:{}),
 					endpoint:'/api/register',
@@ -410,13 +407,19 @@ export default function RegistrationExperience(){
 				setError(`The registration service returned an incomplete response. Please retry.${requestId?` Reference: ${requestId}`:''}`);
 				return;
 			}
-			if(typeof result.requestId==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.requestId)){
-				window.sessionStorage.setItem('aurevia-registration-request-id',JSON.stringify({requestId:result.requestId}));
+			const login=await signIn('credentials',{
+				username:result.email,
+				email:result.email,
+				password:details.password,
+				replaceSession:'false',
+				redirect:false,
+			});
+			if(!login?.ok){
+				setError('Your account was created, but automatic sign-in failed. Sign in with your new email and password to continue.');
+				return;
 			}
-			window.sessionStorage.setItem('aurevia-verification-email',result.email||details.email);
-			const verificationParams=new URLSearchParams();
-			if(result.existingVerification)verificationParams.set('existing','1');
-			router.replace(`/verify-email${verificationParams.size?`?${verificationParams.toString()}`:''}`);
+			await updateSession();
+			router.replace('/dashboard');
 			router.refresh();
 		}catch(exception){
 			const referenceId=requestId||createRegistrationRequestId();
@@ -454,7 +457,7 @@ export default function RegistrationExperience(){
 				</fieldset>
 				<fieldset id="register-contact" className="register-form-section"><legend className="sr-only">{translate('contactInformation')}</legend><h2>{translate('contactInformation')}</h2><div className="space-y-3">
 					<label className="auth-field-label">{translate('emailAddress')}<input className="auth-input" name="email" type="email" autoComplete="email" value={details.email} onChange={event=>update('email',event.target.value)} required maxLength={254}/></label>
-					<div><label className="auth-field-label" htmlFor="registration-phone">{translate('phoneNumber')} <span className="muted font-normal">{translate('phoneOptional')}</span></label><div className="register-phone-row mt-1"><CountrySelector label="Phone country and dialing code" value={details.phoneCountry} onChange={code=>{update('phoneCountry',code);setPhoneError('')}} required invalid={Boolean(phoneError)} errorId={phoneError?'phone-error':undefined}/><input id="registration-phone" className="auth-input mt-0 min-w-0" name="tel-national" type="tel" autoComplete="tel-national" inputMode="tel" value={details.phoneNumber} onChange={event=>{update('phoneNumber',event.target.value);setPhoneError('')}} placeholder={translate('phoneNumber')} aria-describedby={phoneError?'phone-error':undefined} required/></div>{phoneError&&<p id="phone-error" className="mt-1 text-xs text-loss" role="alert">{phoneError}</p>}</div>
+					<div><label className="auth-field-label" htmlFor="registration-phone">{translate('phoneNumber')} <span className="muted font-normal">{translate('phoneOptional')}</span></label><div className="register-phone-row mt-1"><CountrySelector label="Phone country and dialing code" value={details.phoneCountry} onChange={code=>{update('phoneCountry',code);setPhoneError('')}} invalid={Boolean(phoneError)} errorId={phoneError?'phone-error':undefined}/><input id="registration-phone" className="auth-input mt-0 min-w-0" name="tel-national" type="tel" autoComplete="tel-national" inputMode="tel" value={details.phoneNumber} onChange={event=>{update('phoneNumber',event.target.value);setPhoneError('')}} placeholder={translate('phoneNumber')} aria-describedby={phoneError?'phone-error':undefined}/></div>{phoneError&&<p id="phone-error" className="mt-1 text-xs text-loss" role="alert">{phoneError}</p>}</div>
 				</div></fieldset>
 				<fieldset id="register-security" className="register-form-section"><legend className="sr-only">{translate('security')}</legend><h2>{translate('security')}</h2><div className="grid gap-3 sm:grid-cols-2">
 					<label className="auth-field-label">{translate('password')}<input className="auth-input" name="new-password" type="password" autoComplete="new-password" value={details.password} onChange={event=>{update('password',event.target.value);setPasswordError('')}} required minLength={10} maxLength={128} pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{10,128}" aria-describedby="password-requirements"/></label>
@@ -462,7 +465,7 @@ export default function RegistrationExperience(){
 				</div><p id="password-requirements" className="mt-2 text-xs muted">{translate('passwordRequirements')}</p>{passwordError&&<p id="password-error" className="mt-1 text-xs text-loss" role="alert">{passwordError}</p>}</fieldset>
 				<fieldset id="register-account" className="register-form-section"><legend className="sr-only">{translate('accountType')}</legend><h2>{translate('accountType')}</h2>
 					<div className="grid gap-2 sm:grid-cols-2"><label className={`block cursor-pointer rounded-md border p-3 ${details.accountMode==='DEMO'?'border-gold/40 bg-white/5':'border-white/10'}`}><span className="flex min-h-11 items-center gap-3"><input type="radio" name="accountMode" value="DEMO" checked={details.accountMode==='DEMO'} onChange={()=>update('accountMode','DEMO')}/><b>{translate('demoAccount')}</b></span><span className="block pl-7 text-xs leading-5 muted">{translate('demoAccountCopy')}</span></label><label className={`block cursor-pointer rounded-md border p-3 ${details.accountMode==='REAL'?'border-gold/40 bg-white/5':'border-white/10'}`}><span className="flex min-h-11 items-center gap-3"><input type="radio" name="accountMode" value="REAL" checked={details.accountMode==='REAL'} onChange={()=>update('accountMode','REAL')}/><b>{translate('realAccount')}</b></span><span className="block pl-7 text-xs leading-5 muted">{translate('realAccountCopy')}</span></label></div>
-					<p className="mt-3 text-xs leading-5 muted">Registration is free. Verify your phone number before signing in. Your email remains the account contact for KYC updates and password recovery.</p>
+					<p className="mt-3 text-xs leading-5 muted">Registration is free. Phone verification is only required when you submit Tier 3 KYC. Your email is used for account contact and password recovery.</p>
 					{details.accountMode==='REAL'&&<p className="mt-2 flex items-center gap-2 text-xs leading-5 muted" role="status"><span className="tier-badge">Tier 1</span><span>Starting account status. Higher tiers follow the existing review process.</span></p>}
 					<label className="mt-4 flex min-h-11 items-start gap-2 text-xs leading-5 muted"><input className="mt-1" type="checkbox" checked={termsAccepted} onChange={event=>setTermsAccepted(event.target.checked)} required/><span>{translate('termsConsent')} <Link className="auth-link" href="/terms">{translate('terms')}</Link>, <Link className="auth-link" href="/privacy">{translate('privacyPolicy')}</Link>, {translate('riskDisclosure')}</span></label>
 				</fieldset>
@@ -473,10 +476,8 @@ export default function RegistrationExperience(){
 				{captchaLoaded&&!captchaUnavailable&&(captchaStatus==='expired'||captchaStatus==='failed')&&<button className="auth-link text-sm" type="button" onClick={retryCaptcha}>Retry security check</button>}
 				{error&&<p className="auth-error" role="alert">{error}</p>}
 				{existingAccountIssue==='account'&&<p className="text-sm leading-6 muted">Already have an account? <Link href="/login" className="auth-link">Sign in</Link> or <Link href="/forgot-password" className="auth-link">reset your password</Link>.</p>}
-				{existingAccountIssue==='administrator'&&<p className="text-sm leading-6 muted">Use the <Link href="/login" className="auth-link">existing sign-in page</Link> or <Link href="/support" className="auth-link">contact support</Link> for account access help.</p>}
-				{existingAccountIssue==='incomplete'&&<p className="text-sm leading-6 muted">This account has not completed registration verification. Sign-in remains restricted. <Link href="/support" className="auth-link">Contact support</Link> for account-specific help.</p>}
 				{existingAccountIssue==='unavailable'&&<p className="text-sm leading-6 muted">This account was not changed or reactivated. <Link href="/support" className="auth-link">Contact support</Link> for account-specific help.</p>}
-				{existingAccountIssue==='pending'&&<p className="text-sm leading-6 muted">Your existing registration details were not changed. Retry with the original registration password or use the verification link sent to your email.</p>}
+				{existingAccountIssue==='pending'&&<p className="text-sm leading-6 muted">Your account may already have been created. Try signing in or wait briefly before retrying.</p>}
 				{existingAccountIssue==='phone'&&<p className="text-sm leading-6 muted">Use a phone number not associated with another account.</p>}
 				<button type="submit" disabled={busy||!captchaToken||!registrationFormValid} aria-busy={busy} className="auth-submit flex w-full items-center justify-center gap-2">{busy?translate('creatingAccount'):translate('createAccountButton')}<ArrowRight size={16} aria-hidden="true"/></button>
 			</form>

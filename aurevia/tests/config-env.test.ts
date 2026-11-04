@@ -173,16 +173,10 @@ describe('canonical environment configuration',()=>{
     expect(JSON.stringify(getPublicConfiguration(config))).not.toContain('private-smtp-password');
   });
 
-  it('requires signup email verification even when legacy flags disable it',()=>{
-    expect(getServerConfiguration({}).verification.registrationVerificationEnabled).toBe(true);
-    expect(getServerConfiguration({}).verification.appUrl).toBe('https://aurevia-exchange-6hfi.onrender.com');
-    expect(getServerConfiguration({
-      REGISTRATION_VERIFICATION_ENABLED:'true',
-      PHONE_VERIFICATION_REQUIRED:'true',
-    }).verification).toMatchObject({
-      registrationVerificationEnabled:true,
-      phoneVerificationRequired:false,
-    });
+  it('reports only configured phone OTP delivery and never treats email as verification',()=>{
+    expect(getServerConfiguration({}).verification.configured).toBe(false);
+    expect(getServerConfiguration({RESEND_API_KEY:'email-notifications-key'}).verification.configured).toBe(false);
+    expect(getServerConfiguration({TERMII_API_KEY:'termii-key',TERMII_SENDER_ID:'AUREVIA'}).verification.configured).toBe(true);
   });
 
   it('uses the Render HTTPS origin until a custom domain is explicitly verified',()=>{

@@ -176,17 +176,16 @@ export async function POST(req:Request){
 				if(duplicate.userId!==user.id||duplicate.accountMode!==currentUser.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==null||duplicate.transactionReference!==transactionReference||(duplicate.referenceInfo??null)!==referenceInfo||(duplicate.senderInfo??null)!==senderInfo||(duplicate.destinationInfo??null)!==destinationInfo||(duplicate.network??null)!==(destination?.network||submittedNetwork)||(duplicate.note??null)!==(parsed.note||null)||duplicate.withdrawalDestinationId!==(destination?.id||null))throw new Error('IDEMPOTENCY_KEY_REUSED');
 				return {request:duplicate,replay:true};
 			}
-			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}});
+			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true}});
 			if(parsed.type==='DEPOSIT'&&!fundingUser.depositEnabled)throw new Error('DEPOSITS_DISABLED');
 			if(parsed.type==='WITHDRAWAL'&&!fundingUser.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
-			if(parsed.type==='DEPOSIT'&&(fundingUser.kycStatus!=='APPROVED'||!fundingUser.kyc?.submittedAt||fundingUser.kycDocuments.length===0))throw new Error('REAL_KYC_REQUIRED');
 			if(parsed.type==='WITHDRAWAL'&&fundingUser.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
 			if(parsed.type==='WITHDRAWAL'){
 				const account=await ensureUserLedger(tx,user.id,currentUser.accountMode,currency);
 				const currentBalance=await balance(tx,account.id);
 				const pending=await tx.fundingRequest.aggregate({where:{userId:user.id,accountMode:currentUser.accountMode,currency,type:FundingType.WITHDRAWAL,status:{in:reservingStatuses}},_sum:{amount:true}});
 				const reserved=pending._sum.amount??new Prisma.Decimal(0);
-				if(currentUser.accountMode==='REAL')validateWithdrawal({balance:currentBalance.toString(),pending:reserved.toString(),amount:amount.toString(),withdrawalEnabled:fundingUser.withdrawalEnabled,accountRestricted:fundingUser.accountRestricted,kycStatus:fundingUser.kycStatus,simulated:true});
+				if(currentUser.accountMode==='REAL')validateWithdrawal({balance:currentBalance.toString(),pending:reserved.toString(),amount:amount.toString(),withdrawalEnabled:fundingUser.withdrawalEnabled,accountRestricted:fundingUser.accountRestricted,kycStatus:fundingUser.kycStatus});
 				else if(currentBalance.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_AVAILABLE_BALANCE');
 				if(currentUser.accountMode==='REAL'){
 					const withdrawable=await getRealWithdrawableBalance(tx,user.id,currentBalance);

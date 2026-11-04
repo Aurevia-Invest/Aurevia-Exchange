@@ -61,7 +61,7 @@ export async function POST(){
 			where:{id:user.id},
 			select:{
 				role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,
-				phoneVerified:true,requiresRegistrationVerification:true,kyc:{select:{submittedAt:true}},
+				phoneVerified:true,kyc:{select:{submittedAt:true}},
 				kycDocuments:{where:{kind:'IDENTITY_DOCUMENT'},select:{status:true}},
 			},
 		});

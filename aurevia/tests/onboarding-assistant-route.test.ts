@@ -34,7 +34,7 @@ beforeEach(()=>{
 	mocks.userFindUnique.mockResolvedValue({
 		role:'USER',status:'ACTIVE',accountMode:AccountMode.DEMO,approvedTier:1,kycStatus:'PENDING',
 		email:'member@example.test',name:'Member Name',country:'US',phone:'+12025550123',phoneVerified:false,
-		requiresRegistrationVerification:false,kyc:null,kycDocuments:[],
+		kyc:null,kycDocuments:[],
 	});
 	mocks.tierRequestFindFirst.mockResolvedValue(null);
 	mocks.auditCreate.mockResolvedValue({});
@@ -66,7 +66,7 @@ describe('smart onboarding assistant',()=>{
 		mocks.userFindUnique.mockResolvedValue({
 			role:'USER',status:'ACTIVE',accountMode:AccountMode.REAL,approvedTier:2,kycStatus:'PENDING',
 			email:'member@example.test',name:'Member Name',country:'US',phone:'+12025550123',phoneVerified:true,
-			requiresRegistrationVerification:false,kyc:{submittedAt:new Date()},kycDocuments:[{status:'SUBMITTED'}],
+			kyc:{submittedAt:new Date()},kycDocuments:[{status:'SUBMITTED'}],
 		});
 		mocks.getRequirements.mockReturnValue({nameComplete:true,countryComplete:true,phoneComplete:true,profileComplete:true});
 		mocks.getAccountTier.mockReturnValue({label:'TIER 2',progress:67});

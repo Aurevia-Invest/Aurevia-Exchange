@@ -89,7 +89,7 @@ export async function POST(request:Request){
      return {investment:prior,replay:true};
     }
     const [user,opportunity]=await Promise.all([
-     tx.user.findUnique({where:{id:input.userId},select:{id:true,status:true,role:true,accountRestricted:true,approvedTier:true,name:true,country:true,phone:true,phoneVerified:true,requiresRegistrationVerification:true,kycStatus:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}}),
+     tx.user.findUnique({where:{id:input.userId},select:{id:true,status:true,role:true,accountRestricted:true,approvedTier:true,name:true,country:true,phone:true,phoneVerified:true,kycStatus:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}}),
      tx.investmentOpportunity.findUnique({where:{id:input.opportunityId}}),
     ]);
     if(!user||user.status!=='ACTIVE'||user.role!=='USER')throw new Error('INVESTMENT_USER_UNAVAILABLE');

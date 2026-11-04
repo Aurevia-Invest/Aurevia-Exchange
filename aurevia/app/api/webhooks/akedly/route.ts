@@ -1,6 +1,5 @@
 import {randomUUID} from 'node:crypto';
 import {NextResponse} from 'next/server';
-import {db} from '@/lib/db';
 import {completeAkedlyVerification,reconcileAkedlyAttempt} from '@/lib/akedly-verification';
 import {akedlyIsConfigured,readAkedlyWebhookBody,verifyAkedlyWebhook} from '@/lib/akedly';
 import {rateLimit} from '@/lib/rate-limit';
@@ -80,13 +79,7 @@ export async function POST(request:Request){
 	}
 	try{
 		if(signed)await completeAkedlyVerification(attemptId,payload,'webhook');
-		else{
-			const registration=await db.registrationVerification.findFirst({
-				where:{providerReference:`AKEDLY:${attemptId}`},
-				select:{id:true},
-			});
-			if(!registration)await reconcileAkedlyAttempt(attemptId);
-		}
+		else await reconcileAkedlyAttempt(attemptId);
 		return NextResponse.json({received:true});
 	}catch(error){
 		if(error instanceof Error&&error.message.startsWith('AKEDLY_'))return NextResponse.json({error:'Akedly verification could not be confirmed yet.'},{status:503});

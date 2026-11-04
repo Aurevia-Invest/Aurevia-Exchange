@@ -77,7 +77,7 @@ export async function PATCH(req:Request){
     const configuredAdminEmail=getServerConfiguration().auth.adminEmail.trim().toLowerCase();
     if(input.userId===admin.id&&input.status==='FROZEN')throw new Error('CANNOT_DISABLE_CURRENT_ADMIN');
     const updated=await db.$transaction(async tx=>{
-      const current=await tx.user.findUniqueOrThrow({where:{id:input.userId},select:{email:true,role:true,status:true,kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true},take:1}}});
+      const current=await tx.user.findUniqueOrThrow({where:{id:input.userId},select:{email:true,role:true,status:true,kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:'APPROVED'},select:{kind:true}}}});
       if(input.status==='DELETED'&&(current.role==='ADMIN'||current.status==='CLOSED'))throw new Error('ACCOUNT_CANNOT_BE_SOFT_DELETED');
       if(current.status==='DELETED'&&input.status!=='ACTIVE')throw new Error('DELETED_ACCOUNT_MUST_BE_RESTORED');
       if(configuredAdminEmail&&current.email.toLowerCase()===configuredAdminEmail)throw new Error('ADMIN_ACCOUNT_ISOLATED');
@@ -86,7 +86,7 @@ export async function PATCH(req:Request){
       const kycChanged=input.kycStatus!==undefined&&input.kycStatus!==current.kycStatus;
       const controlsChanged=(input.depositEnabled!==undefined&&input.depositEnabled!==current.depositEnabled)||(input.withdrawalEnabled!==undefined&&input.withdrawalEnabled!==current.withdrawalEnabled)||(input.accountRestricted!==undefined&&input.accountRestricted!==current.accountRestricted)||(input.restrictionReason!==undefined&&input.restrictionReason!==current.restrictionReason);
       if(input.kycStatus!==undefined&&!kycChanged)throw new Error('KYC_STATUS_UNCHANGED');
-      if(input.kycStatus==='APPROVED'&&(!current.kyc?.submittedAt||!current.kycDocuments.length))throw new Error('APPROVED_IDENTITY_DOCUMENT_REQUIRED');
+      if(input.kycStatus==='APPROVED'&&(!current.kyc?.submittedAt||!current.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT')||!current.kycDocuments.some(document=>document.kind==='SELFIE')))throw new Error('APPROVED_IDENTITY_DOCUMENT_REQUIRED');
       const statusChanged=input.status!==undefined&&input.status!==current.status;
       const user=await tx.user.update({where:{id:input.userId},data:{status:input.status,...(input.status==='DELETED'?{activeSessionId:null}:{}),kycStatus:input.kycStatus,...(input.kycStatus==='APPROVED'?{verifiedAt:new Date()}:input.kycStatus!==undefined?{verifiedAt:null}:{}),depositEnabled:input.depositEnabled,withdrawalEnabled:input.withdrawalEnabled,accountRestricted:input.accountRestricted,...(input.accountRestricted===false?{restrictionReason:null}:input.restrictionReason!==undefined?{restrictionReason:input.restrictionReason||null}:{})},select:{id:true,email:true,name:true,role:true,status:true,kycStatus:true,accountMode:true,createdAt:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true}});
       if(kycChanged)await tx.kycProfile.updateMany({where:{userId:user.id},data:{reviewedAt:new Date(),reviewNote:input.reviewNote||null}});
@@ -124,7 +124,7 @@ export async function PATCH(req:Request){
     if(error instanceof Error&&error.message==='ADMIN_ACCOUNT_ISOLATED')return NextResponse.json({error:'Configured administrator accounts are managed separately.'},{status:409});
     if(error instanceof ZodError)return NextResponse.json({error:'Invalid review details.'},{status:400});
     if(error instanceof Error&&error.message==='KYC_STATUS_UNCHANGED')return NextResponse.json({error:'This verification status is already recorded.'},{status:409});
-    if(error instanceof Error&&error.message==='APPROVED_IDENTITY_DOCUMENT_REQUIRED')return NextResponse.json({error:'Approve an identity document before approving account verification.'},{status:409});
+    if(error instanceof Error&&error.message==='APPROVED_IDENTITY_DOCUMENT_REQUIRED')return NextResponse.json({error:'Approve both a government-issued ID and selfie before approving Tier 2 KYC.'},{status:409});
     return NextResponse.json({error:'Unable to update this account.'},{status:400});
   }
 }

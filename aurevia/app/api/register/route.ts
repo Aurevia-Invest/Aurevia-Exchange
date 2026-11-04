@@ -7,12 +7,8 @@ import {db} from '@/lib/db';
 import {rateLimit,RateLimitError} from '@/lib/rate-limit';
 import {trustedProxyClientIp} from '@/lib/request-ip';
 import {isValidE164,parseDateOfBirth} from '@/lib/registration-validation';
-import {akedlyReadiness} from '@/lib/akedly';
-import {createRegistrationToken,hashRegistrationToken,REGISTRATION_LIFETIME_MS,registrationTokenFromRequest,setRegistrationCookie} from '@/lib/registration-attempt';
-import {cleanupExpiredRegistrationAttempts} from '@/lib/registration-cleanup';
+import {createImmediateRegistration} from '@/lib/registration-attempt';
 import {verifyRegistrationTurnstile} from '@/lib/turnstile';
-
-type PendingRegistrationAttempt=Prisma.RegistrationAttemptGetPayload<{include:{verification:true}}>;
 
 const schema=z.object({
 	email:z.string().trim().email().max(254),
@@ -20,73 +16,21 @@ const schema=z.object({
 	name:z.string().trim().min(2).max(120),
 	country:z.string().trim().min(2).max(80),
 	dateOfBirth:z.string().refine(value=>parseDateOfBirth(value)!==null,'Enter a valid date that is not in the future.'),
-	phone:z.string().trim().min(1).max(16).refine(isValidE164,'Enter a valid phone number in international format.'),
+	phone:z.string().trim().max(16).refine(value=>!value||isValidE164(value),'Enter a valid phone number in international format.').optional().default(''),
 	accountMode:z.nativeEnum(AccountMode),
 	termsAccepted:z.literal(true),
 	captchaToken:z.string().trim().min(1).max(2048),
 });
 
-function registrationResponse(
-	email:string,
-	token:string,
-	expiresAt:Date,
-	status:200|201,
-	requestId:string,
-	authMethod?:'akedly'|'email-code',
-){
-	const response=NextResponse.json({
-		message:authMethod==='akedly'
-			?'Complete phone verification to create your account.'
-			:authMethod==='email-code'
-				?'Continue the existing email verification to create your account.'
-				:'Continue verification to create your account.',
-		verificationRequired:true,
-		requestId,
-		...(authMethod?{authMethod}:{}),
-		email,
-	},{status,headers:{'Cache-Control':'no-store'}});
-	setRegistrationCookie(response,token,expiresAt);
-	return response;
-}
-
-async function resumePendingAttempt(attempt:PendingRegistrationAttempt,password:string,request:Request,requestId:string){
-	const currentToken=registrationTokenFromRequest(request);
-	const ownsSession=currentToken!==null&&hashRegistrationToken(currentToken)===attempt.tokenHash;
-	if(!ownsSession&&!await bcrypt.compare(password,attempt.passwordHash)){
-		return NextResponse.json({
-			code:'REGISTRATION_IN_PROGRESS',
-			error:'A registration is already in progress for this email. Enter the original registration password or use the verification link sent to your email.',
-		},{status:409,headers:{'Cache-Control':'no-store'}});
-	}
-
-	const now=new Date();
-	if(attempt.verification&&attempt.verification.expiresAt<=now){
-		await db.registrationVerification.deleteMany({
-			where:{registrationAttemptId:attempt.id,expiresAt:{lte:now}},
-		});
-	}
-
-	const token=ownsSession?currentToken:createRegistrationToken();
-	if(!ownsSession){
-		const rotated=await db.registrationAttempt.updateMany({
-			where:{id:attempt.id,tokenHash:attempt.tokenHash,expiresAt:{gt:now}},
-			data:{tokenHash:hashRegistrationToken(token)},
-		});
-		if(rotated.count!==1)return NextResponse.json({
-			code:'REGISTRATION_IN_PROGRESS',
-			error:'This registration session changed. Retry with your registration details.',
-		},{status:409,headers:{'Cache-Control':'no-store'}});
-	}
-	const authMethod=attempt.verification?.providerReference?.startsWith('AKEDLY:')?'akedly'
-	:attempt.verification?.channel==='EMAIL'?'email-code':undefined;
-	return registrationResponse(attempt.email,token,attempt.expiresAt,200,requestId,authMethod);
+function requestReference(request:Request){
+	const clientRequestId=request.headers.get('x-aurevia-request-id')||'';
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientRequestId)
+		?clientRequestId.toLowerCase()
+		:randomUUID();
 }
 
 export async function POST(request:Request){
-	const clientRequestId=request.headers.get('x-aurevia-request-id')||'';
-	const requestId=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientRequestId)
-		?clientRequestId.toLowerCase()
-		:randomUUID();
+	const requestId=requestReference(request);
 	try{
 		const input=schema.parse(await request.json());
 		const email=input.email.toLowerCase();
@@ -126,159 +70,33 @@ export async function POST(request:Request){
 
 		if(clientIp)rateLimit(`register:${clientIp}`,5,60*60_000);
 		rateLimit(`register-email:${email}`,3,60*60_000);
-
-		await cleanupExpiredRegistrationAttempts();
-
 		const dateOfBirth=parseDateOfBirth(input.dateOfBirth);
 		if(!dateOfBirth)return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
-		const existingUser=await db.user.findUnique({
-			where:{email},
-			select:{
-				role:true,
-				status:true,
-				emailVerifiedAt:true,
-				verifiedChannel:true,
-				phoneVerified:true,
-				phoneVerifiedAt:true,
-				requiresRegistrationVerification:true,
-			},
-		});
-		if(existingUser){
-			const phoneVerified=existingUser.verifiedChannel==='SMS'
-				&&existingUser.phoneVerified
-				&&Boolean(existingUser.phoneVerifiedAt);
-			const verificationProof=Boolean(existingUser.emailVerifiedAt)||phoneVerified;
-			const accountVerified=Boolean(existingUser.emailVerifiedAt)
-				||(phoneVerified&&!existingUser.requiresRegistrationVerification);
-			const accountPending=existingUser.role==='USER'
-				&&existingUser.status==='ACTIVE'
-				&&existingUser.requiresRegistrationVerification
-				&&!verificationProof;
-			const accountUnavailable=['FROZEN','SUSPENDED','CLOSED','DELETED'].includes(existingUser.status);
-			const accountState=accountUnavailable?'unavailable'
-				:accountPending?'pending-verification'
-				:existingUser.role==='ADMIN'?'administrator'
-				:accountVerified?'verified'
-				:verificationProof?'verification-state-conflict'
-				:'verification-incomplete';
-			console.info('[registration] Existing account matched registration request.',{
-				requestId,
-				referenceId:requestId,
-				endpoint:'/api/register',
-				httpStatus:accountPending?200:409,
-				accountState,
-				verifiedChannel:existingUser.verifiedChannel,
-				emailVerified:Boolean(existingUser.emailVerifiedAt),
-				phoneVerified,
-				failureTimestamp:new Date().toISOString(),
-			});
-			if(accountPending){
-				return NextResponse.json({
-					message:'An existing unverified account was found. Continue its current verification; your original password remains unchanged.',
-					verificationRequired:true,
-					existingVerification:true,
-					requestId,
-					referenceId:requestId,
-					email,
-				},{status:200,headers:{'Cache-Control':'no-store'}});
-			}
-			if(accountUnavailable){
-				return NextResponse.json({
-					code:'ACCOUNT_UNAVAILABLE',
-					error:'An account with this email cannot be registered again. Contact support for help with the existing account.',
-					requestId,
-					referenceId:requestId,
-				},{status:409,headers:{'Cache-Control':'no-store'}});
-			}
-			if(existingUser.role==='ADMIN'){
-				return NextResponse.json({
-					code:'ACCOUNT_ALREADY_EXISTS',
-					error:'An account already uses this email. Sign in with the existing account or contact support for access help.',
-					requestId,
-					referenceId:requestId,
-				},{status:409,headers:{'Cache-Control':'no-store'}});
-			}
-			const accountResponse=accountVerified?{
-				code:'ACCOUNT_ALREADY_VERIFIED',
-				error:'An account already uses this email. Sign in or reset its password to recover access.',
-			}:{
-				code:'ACCOUNT_VERIFICATION_INCOMPLETE',
-				error:'An existing account has not completed registration verification. Sign-in is unavailable; contact support to recover this account safely.',
-			};
-			return NextResponse.json({...accountResponse,requestId,referenceId:requestId},{status:409,headers:{'Cache-Control':'no-store'}});
-		}
-
-		const now=new Date();
-		const existingAttempt=await db.registrationAttempt.findUnique({
-			where:{email},
-			include:{verification:true},
-		});
-		if(existingAttempt&&existingAttempt.expiresAt<=now){
-			await db.registrationAttempt.deleteMany({where:{id:existingAttempt.id,expiresAt:{lte:now}}});
-		}else if(existingAttempt){
-			return await resumePendingAttempt(existingAttempt,input.password,request,requestId);
-		}
-
-		const akedly=akedlyReadiness();
-		if(!akedly.ready){
-			const failureTimestamp=new Date().toISOString();
-			console.error(`[registration] AKEDLY_NOT_READY referenceId=${requestId} endpoint=/api/register`,{
-				requestId,
-				referenceId:requestId,
-				endpoint:'/api/register',
-				failureCode:'AKEDLY_NOT_READY',
-				providerCode:'AKEDLY_NOT_READY',
-				providerEndpoint:null,
-				providerAttemptId:null,
-				providerHttpStatus:null,
-				failureTimestamp,
-				enabled:akedly.enabled,
-				missing:akedly.missing,
-			});
-			return NextResponse.json({
-				code:'PHONE_VERIFICATION_UNAVAILABLE',
-				error:'Phone verification is temporarily unavailable because the verification service is not ready. Your details were not saved; please try again later or contact support.',
-				requestId,
-				referenceId:requestId,
-				diagnostics:{
-					integrationEnabled:akedly.enabled,
-					missingConfiguration:akedly.missing,
-				},
-			},{status:503,headers:{'Cache-Control':'no-store'}});
-		}
-		const [existingPhoneUser,existingPhoneAttempt]=await Promise.all([
-			db.user.findFirst({where:{phone:input.phone},select:{id:true}}),
-			db.registrationAttempt.findFirst({where:{phone:input.phone,email:{not:email},expiresAt:{gt:now}},select:{id:true}}),
-		]);
-		if(existingPhoneUser||existingPhoneAttempt)return NextResponse.json({
-			code:'PHONE_ALREADY_IN_USE',
-			error:'This phone number is already associated with another account or pending registration. Use a different number.',
+		const existingUser=await db.user.findUnique({where:{email},select:{id:true}});
+		if(existingUser)return NextResponse.json({
+			code:'ACCOUNT_ALREADY_EXISTS',
+			error:'An account already uses this email. Sign in or reset its password to recover access.',
+			requestId,
+			referenceId:requestId,
 		},{status:409,headers:{'Cache-Control':'no-store'}});
 
 		const passwordHash=await bcrypt.hash(input.password,12);
-		const token=createRegistrationToken();
-		const expiresAt=new Date(now.getTime()+REGISTRATION_LIFETIME_MS);
-		try{
-			await db.registrationAttempt.create({data:{
+		await db.$transaction(async tx=>createImmediateRegistration(tx,{
 			email,
 			passwordHash,
-			name:input.name,
+			name:input.name.replace(/\s+/g,' ').trim(),
 			country:input.country,
-			phone:input.phone,
+			phone:input.phone||null,
 			dateOfBirth,
 			accountMode:input.accountMode,
 			termsAcceptedAt:new Date(),
-			tokenHash:hashRegistrationToken(token),
-			expiresAt,
-			}});
-		}catch(error){
-			if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'){
-				const racedAttempt=await db.registrationAttempt.findUnique({where:{email},include:{verification:true}});
-				if(racedAttempt&&racedAttempt.expiresAt>new Date())return await resumePendingAttempt(racedAttempt,input.password,request,requestId);
-			}
-			throw error;
-		}
-		return registrationResponse(email,token,expiresAt,201,requestId);
+		}),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+		return NextResponse.json({
+			created:true,
+			email,
+			message:'Your account has been created. Signing you in…',
+			requestId,
+		},{status:201,headers:{'Cache-Control':'no-store'}});
 	}catch(error){
 		if(error instanceof ZodError){
 			if(error.issues.some(issue=>issue.path[0]==='dateOfBirth'))return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
@@ -286,25 +104,34 @@ export async function POST(request:Request){
 			if(error.issues.some(issue=>issue.path[0]==='captchaToken'))return NextResponse.json({error:'Complete the registration security check and try again.'},{status:400});
 			return NextResponse.json({error:'Check your name, email, country, password, and consent details.'},{status:400});
 		}
-		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'){
-			return NextResponse.json({
-				code:'REGISTRATION_IN_PROGRESS',
-				error:'A registration is already in progress for these details. Continue its existing verification session or retry shortly.',
-				requestId,
-				referenceId:requestId,
-			},{status:409,headers:{'Cache-Control':'no-store'}});
-		}
-		if(error instanceof RateLimitError){
-			return NextResponse.json(
-				{error:'Too many registration attempts. Try again later.',retryAfterSeconds:error.retryAfterSeconds},
-				{status:429,headers:{'Retry-After':String(error.retryAfterSeconds),'Cache-Control':'no-store'}},
-			);
-		}
+		if(error instanceof Error&&error.message==='REGISTRATION_EMAIL_ALREADY_EXISTS')return NextResponse.json({
+			code:'ACCOUNT_ALREADY_EXISTS',
+			error:'An account already uses this email. Sign in or reset its password to recover access.',
+			requestId,
+			referenceId:requestId,
+		},{status:409,headers:{'Cache-Control':'no-store'}});
+		if(error instanceof Error&&error.message==='REGISTRATION_PHONE_ALREADY_IN_USE')return NextResponse.json({
+			code:'PHONE_ALREADY_IN_USE',
+			error:'This phone number is already associated with another account. Use a different number.',
+			requestId,
+			referenceId:requestId,
+		},{status:409,headers:{'Cache-Control':'no-store'}});
+		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({
+			code:'REGISTRATION_IN_PROGRESS',
+			error:'An account is being created for these details. Sign in or retry shortly.',
+			requestId,
+			referenceId:requestId,
+		},{status:409,headers:{'Cache-Control':'no-store'}});
+		if(error instanceof RateLimitError)return NextResponse.json(
+			{error:'Too many registration attempts. Try again later.',retryAfterSeconds:error.retryAfterSeconds},
+			{status:429,headers:{'Retry-After':String(error.retryAfterSeconds),'Cache-Control':'no-store'}},
+		);
+		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many registration attempts. Try again later.'},{status:429});
 		const rawErrorCode=error&&typeof error==='object'&&'code' in error&&typeof error.code==='string'?error.code:'';
 		const errorCode=/^[A-Z0-9_]{2,32}$/.test(rawErrorCode)?rawErrorCode:undefined;
 		console.error('Registration request failed.',{requestId,errorName:error instanceof Error?error.name:'UnknownError',errorCode});
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&['P2021','P2022'].includes(error.code))return NextResponse.json({error:'The registration service is being updated. Please try again shortly.',requestId},{status:503});
 		if(error&&typeof error==='object'&&'code' in error&&['P1001','P1002','P1017'].includes(String(error.code)))return NextResponse.json({error:'The registration service is temporarily unavailable. Please try again shortly.',requestId},{status:503});
-		return NextResponse.json({error:'We could not start registration. Please try again or contact support.',requestId},{status:500});
+		return NextResponse.json({error:'We could not create your account. Please try again or contact support.',requestId},{status:500});
 	}
 }

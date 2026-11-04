@@ -2,38 +2,26 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
 const mocks=vi.hoisted(()=>({
 	challengeFindFirst:vi.fn(),
-	registrationFindFirst:vi.fn(),
 	transactionFindFirst:vi.fn(),
 	transaction:vi.fn(),
 	userUpdateMany:vi.fn(),
 	userFindUnique:vi.fn(),
 	auditCreate:vi.fn(),
 	createNotification:vi.fn(),
-	createVerifiedRegistration:vi.fn(),
 }));
 
 vi.mock('@/lib/db',()=>({db:{
 	verificationCode:{findFirst:mocks.challengeFindFirst},
-	registrationVerification:{findFirst:mocks.registrationFindFirst},
 	$transaction:mocks.transaction,
 }}));
 vi.mock('@/lib/notifications',()=>({createNotification:mocks.createNotification}));
-vi.mock('@/lib/registration-attempt',()=>({createVerifiedRegistration:mocks.createVerifiedRegistration}));
 
 import {VerificationChannel} from '@prisma/client';
 import {completeAkedlyVerification} from '@/lib/akedly-verification';
 
-const environment={
-	AKEDLY_ENABLED:'true',
-	AKEDLY_API_KEY:'test-api-key',
-	AKEDLY_PIPELINE_ID:'test-pipeline',
-	AKEDLY_WIDGET_ID:'test-widget',
-	AKEDLY_PUBLIC_KEY:'test-public-key',
-	AKEDLY_WIDGET_SECRET:'test-widget-secret',
-	AKEDLY_WEBHOOK_SECRET:`whsec_${Buffer.from('test-webhook-secret').toString('base64')}`,
-};
+const attemptId='attempt_1234567890';
 
-function providerResult(attemptId:string,verificationAddress:Record<string,string>={email:'person@example.invalid'}){
+function providerResult(verificationAddress:Record<string,string>={phoneNumber:'+2348031234567'}){
 	const now=new Date().toISOString();
 	return {
 		status:'success',
@@ -42,43 +30,32 @@ function providerResult(attemptId:string,verificationAddress:Record<string,strin
 	};
 }
 
-describe('Akedly verification persistence',()=>{
+describe('Tier 3 Akedly phone verification persistence',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
-		for(const [name,value] of Object.entries(environment))vi.stubEnv(name,value);
-		const attemptId='attempt_1234567890';
-		const challenge={
+		for(const [name,value] of Object.entries({
+			AKEDLY_ENABLED:'true',
+			AKEDLY_API_KEY:'test-api-key',
+			AKEDLY_PIPELINE_ID:'test-pipeline',
+			AKEDLY_WIDGET_ID:'test-widget',
+			AKEDLY_PUBLIC_KEY:'test-public-key',
+			AKEDLY_WIDGET_SECRET:'test-widget-secret',
+			AKEDLY_WEBHOOK_SECRET:`whsec_${Buffer.from('test-webhook-secret').toString('base64')}`,
+		}))vi.stubEnv(name,value);
+		mocks.challengeFindFirst.mockResolvedValue({
 			id:'challenge-1',
 			userId:'user-1',
-			channel:VerificationChannel.EMAIL,
+			channel:VerificationChannel.SMS,
 			providerReference:`AKEDLY:${attemptId}`,
 			createdAt:new Date(),
 			expiresAt:new Date(Date.now()+5*60_000),
-			user:{
-				id:'user-1',
-				createdAt:new Date('2025-03-01T00:00:00.000Z'),
-				email:'person@example.invalid',
-				phone:null,
-				role:'USER',
-				status:'ACTIVE',
-				accountMode:'DEMO',
-				phoneVerified:false,
-				emailVerifiedAt:null,
-				requiresRegistrationVerification:true,
-			},
-		};
-		mocks.challengeFindFirst.mockResolvedValue(challenge);
-		mocks.registrationFindFirst.mockResolvedValue(null);
+			user:{id:'user-1',phone:'+2348031234567',role:'USER',status:'ACTIVE',accountMode:'REAL',phoneVerified:false},
+		});
 		mocks.transactionFindFirst.mockResolvedValue({id:'challenge-1'});
 		mocks.userUpdateMany.mockResolvedValueOnce({count:1}).mockResolvedValueOnce({count:0});
-		mocks.userFindUnique.mockResolvedValue({
-			emailVerifiedAt:new Date(),
-			verifiedChannel:VerificationChannel.EMAIL,
-			requiresRegistrationVerification:false,
-		});
+		mocks.userFindUnique.mockResolvedValue({phone:'+2348031234567',phoneVerified:true});
 		mocks.auditCreate.mockResolvedValue({});
 		mocks.createNotification.mockResolvedValue({});
-		mocks.createVerifiedRegistration.mockResolvedValue({id:'new-user'});
 		const tx={
 			verificationCode:{findFirst:mocks.transactionFindFirst},
 			user:{updateMany:mocks.userUpdateMany,findUnique:mocks.userFindUnique},
@@ -89,83 +66,42 @@ describe('Akedly verification persistence',()=>{
 
 	afterEach(()=>vi.unstubAllEnvs());
 
-	it('processes duplicate verified webhooks idempotently and records side effects once',async()=>{
-		const attemptId='attempt_1234567890';
-		const result=providerResult(attemptId);
+	it('marks the bound phone verified once and handles duplicate provider results idempotently',async()=>{
+		const result=providerResult();
 
 		expect(await completeAkedlyVerification(attemptId,result,'webhook')).toBe('verified');
 		expect(await completeAkedlyVerification(attemptId,result,'webhook')).toBe('already');
-
 		expect(mocks.userUpdateMany).toHaveBeenCalledTimes(2);
-		expect(mocks.userUpdateMany.mock.calls[0][0].data.aureviaExchangeId).toMatch(/^AEX-2025-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
+		expect(mocks.userUpdateMany.mock.calls[0][0]).toMatchObject({
+			where:{id:'user-1',role:'USER',status:'ACTIVE',accountMode:'REAL',phone:'+2348031234567',phoneVerified:false},
+			data:{phoneVerified:true,phoneVerifiedAt:expect.any(Date)},
+		});
 		expect(mocks.createNotification).toHaveBeenCalledTimes(1);
 		expect(mocks.auditCreate).toHaveBeenCalledTimes(1);
-		expect(JSON.stringify(mocks.auditCreate.mock.calls)).not.toContain('person@example.invalid');
+		expect(mocks.auditCreate.mock.calls[0][0].data.action).toBe('AKEDLY_PHONE_VERIFIED');
 	});
 
-	it('does not verify a test-mode or expired attempt',async()=>{
-		const attemptId='attempt_1234567890';
-		const testModeResult={...providerResult(attemptId),transaction:{...providerResult(attemptId).transaction,isTest:true}};
+	it('does not verify a test-mode, expired, or differently bound phone attempt',async()=>{
+		const valid=providerResult();
+		const testModeResult={...valid,transaction:{...valid.transaction,isTest:true}};
 		const expiredAt=new Date(Date.now()+6*60_000).toISOString();
-		const expiredResult={...providerResult(attemptId),widgetAttempt:{...providerResult(attemptId).widgetAttempt,completedAt:expiredAt},transaction:{...providerResult(attemptId).transaction,updateDate:expiredAt}};
+		const expiredResult={...valid,widgetAttempt:{...valid.widgetAttempt,completedAt:expiredAt},transaction:{...valid.transaction,updateDate:expiredAt}};
+
 		expect(await completeAkedlyVerification(attemptId,testModeResult,'webhook')).toBe('ignored');
 		expect(await completeAkedlyVerification(attemptId,expiredResult,'webhook')).toBe('ignored');
+		expect(await completeAkedlyVerification(attemptId,providerResult({phoneNumber:'+2348039999999'}),'webhook')).toBe('ignored');
 		expect(mocks.userUpdateMany).not.toHaveBeenCalled();
 		expect(mocks.auditCreate).not.toHaveBeenCalled();
 	});
 
-	it('creates a registration only after Akedly confirms the bound phone number',async()=>{
-		const attemptId='attempt_1234567890';
-		const registrationChallenge={
-			id:'registration-challenge',
-			channel:VerificationChannel.SMS,
-			providerReference:`AKEDLY:${attemptId}`,
-			expiresAt:new Date(Date.now()+5*60_000),
-			registrationAttempt:{
-				id:'registration-1',
-				email:'person@example.invalid',
-				phone:'+2348031234567',
-				expiresAt:new Date(Date.now()+10*60_000),
-			},
-		};
-		const tx={
-			registrationVerification:{findFirst:vi.fn().mockResolvedValue({registrationAttemptId:'registration-1'})},
-			auditLog:{create:mocks.auditCreate},
-		};
-		mocks.registrationFindFirst.mockResolvedValue(registrationChallenge);
-		mocks.transaction.mockImplementationOnce(async(callback:(value:unknown)=>Promise<unknown>)=>callback(tx));
-
-		expect(await completeAkedlyVerification(
-			attemptId,
-			providerResult(attemptId,{phoneNumber:'+2348031234567'}),
-			'lookup',
-		)).toBe('verified');
-		expect(mocks.createVerifiedRegistration).toHaveBeenCalledWith(tx,'registration-1',VerificationChannel.SMS,expect.any(Date));
-		expect(mocks.auditCreate).toHaveBeenCalledWith(expect.objectContaining({
-			data:expect.objectContaining({action:'AKEDLY_PHONE_VERIFIED'}),
-		}));
-	});
-
-	it('does not create an account when Akedly confirms a different phone number',async()=>{
-		const attemptId='attempt_1234567890';
-		mocks.registrationFindFirst.mockResolvedValue({
-			id:'registration-challenge',
-			channel:VerificationChannel.SMS,
-			providerReference:`AKEDLY:${attemptId}`,
-			expiresAt:new Date(Date.now()+5*60_000),
-			registrationAttempt:{
-				id:'registration-1',
-				email:'person@example.invalid',
-				phone:'+2348031234567',
-				expiresAt:new Date(Date.now()+10*60_000),
-			},
+	it('ignores legacy email-channel verification attempts',async()=>{
+		mocks.challengeFindFirst.mockResolvedValueOnce({
+			id:'legacy-challenge',
+			channel:VerificationChannel.EMAIL,
+			user:{id:'user-1',email:'person@example.invalid',phone:null,role:'USER',status:'ACTIVE',accountMode:'REAL',phoneVerified:false},
 		});
 
-		expect(await completeAkedlyVerification(
-			attemptId,
-			providerResult(attemptId,{phoneNumber:'+2348039999999'}),
-			'webhook',
-		)).toBe('ignored');
-		expect(mocks.createVerifiedRegistration).not.toHaveBeenCalled();
+		expect(await completeAkedlyVerification(attemptId,providerResult(),'webhook')).toBe('ignored');
+		expect(mocks.userUpdateMany).not.toHaveBeenCalled();
 	});
 });

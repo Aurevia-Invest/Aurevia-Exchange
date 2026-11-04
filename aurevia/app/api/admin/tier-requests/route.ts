@@ -37,16 +37,16 @@ export async function GET(request:Request){
 		};
 		const [requests,users]=await Promise.all([
 			db.tierUpgradeRequest.findMany({
-				include:{user:{select:{id:true,name:true,email:true,accountMode:true,kycStatus:true,approvedTier:true,phone:true,phoneVerified:true,country:true,requiresRegistrationVerification:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT'},select:{id:true,status:true}}}},reviewedBy:{select:{id:true,name:true,email:true}}},
+				include:{user:{select:{id:true,name:true,email:true,accountMode:true,kycStatus:true,approvedTier:true,phone:true,phoneVerified:true,country:true,kyc:{select:{submittedAt:true,address:true}},kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE','PROOF_OF_ADDRESS']}},select:{id:true,kind:true,status:true}}}},reviewedBy:{select:{id:true,name:true,email:true}}},
 				orderBy:[{status:'asc'},{createdAt:'desc'}],
 				take:200,
 			}),
 			db.user.findMany({
 				where:accountWhere,
 				select:{
-					id:true,email:true,name:true,country:true,phone:true,phoneVerified:true,requiresRegistrationVerification:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,createdAt:true,
-					kyc:{select:{submittedAt:true}},
-					kycDocuments:{where:{kind:'IDENTITY_DOCUMENT'},select:{id:true,status:true}},
+					id:true,email:true,name:true,country:true,phone:true,phoneVerified:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,createdAt:true,
+					kyc:{select:{submittedAt:true,address:true}},
+					kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE','PROOF_OF_ADDRESS']}},select:{id:true,kind:true,status:true}},
 					tierRequests:{orderBy:{createdAt:'desc'},take:5,select:{id:true,currentTier:true,requestedTier:true,status:true,adminReason:true,reviewedAt:true,createdAt:true,reviewedBy:{select:{name:true,email:true}}}},
 				},
 				orderBy:{createdAt:'desc'},
@@ -54,8 +54,8 @@ export async function GET(request:Request){
 		]);
 		const matchingAccounts=users.map(account=>{
 			const requirements=getTierProfileRequirements(account);
-			const tier=getAccountTier({accountMode:account.accountMode,kycStatus:account.kycStatus,verificationDocuments:account.kycDocuments.filter(document=>document.status==='APPROVED').length,verificationSubmitted:!!account.kyc?.submittedAt,phoneVerified:account.phoneVerified,profileComplete:requirements.profileComplete,approvedTier:account.approvedTier});
-			return {...account,currentTier:Number(tier.label.at(-1)),requirements:{...requirements,phoneVerified:account.phoneVerified,verificationSubmitted:!!account.kyc?.submittedAt,identityDocumentUploaded:account.kycDocuments.length>0,identityDocumentApproved:account.kycDocuments.some(document=>document.status==='APPROVED'),identityApproved:account.kycStatus==='APPROVED'}};
+			const tier=getAccountTier({accountMode:account.accountMode,kycStatus:account.kycStatus,verificationDocuments:account.kycDocuments.filter(document=>document.kind==='IDENTITY_DOCUMENT'&&document.status==='APPROVED').length,verificationSubmitted:!!account.kyc?.submittedAt,phoneVerified:account.phoneVerified,profileComplete:requirements.profileComplete,approvedTier:account.approvedTier});
+			return {...account,currentTier:Number(tier.label.at(-1)),requirements:{...requirements,phoneVerified:account.phoneVerified,verificationSubmitted:!!account.kyc?.submittedAt,identityDocumentUploaded:account.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT'),identityDocumentApproved:account.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT'&&document.status==='APPROVED'),selfieApproved:account.kycDocuments.some(document=>document.kind==='SELFIE'&&document.status==='APPROVED'),proofOfAddressApproved:account.kycDocuments.some(document=>document.kind==='PROOF_OF_ADDRESS'&&document.status==='APPROVED'),identityApproved:account.kycStatus==='APPROVED'}};
 		}).filter(account=>!input.tier||account.currentTier===input.tier);
 		const total=matchingAccounts.length;
 		const accounts=matchingAccounts.slice((input.page-1)*pageSize,input.page*pageSize);
@@ -80,14 +80,23 @@ export async function PATCH(request:Request){
 
 			let promoteUserId:string|null=null;
 			if(input.status===TierUpgradeStatus.APPROVED){
-				const profile=await tx.user.findUniqueOrThrow({where:{id:current.userId},select:{accountMode:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,phoneVerified:true,requiresRegistrationVerification:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT'},select:{status:true}}}});
+				const profile=await tx.user.findUniqueOrThrow({where:{id:current.userId},select:{accountMode:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,phoneVerified:true,kyc:{select:{submittedAt:true,address:true}},kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE','PROOF_OF_ADDRESS']}},select:{kind:true,status:true}}}});
 				if(profile.accountMode!==AccountMode.REAL)throw new Error('TIER_3_REQUIREMENTS_NOT_MET');
 				const requirements=getTierProfileRequirements(profile);
-				const approvedDocuments=profile.kycDocuments.filter(document=>document.status==='APPROVED').length;
+				const approvedDocuments=profile.kycDocuments.filter(document=>document.kind==='IDENTITY_DOCUMENT'&&document.status==='APPROVED').length;
 				const actualTier=Number(getAccountTier({accountMode:profile.accountMode,kycStatus:profile.kycStatus,verificationDocuments:approvedDocuments,verificationSubmitted:!!profile.kyc?.submittedAt,phoneVerified:profile.phoneVerified,profileComplete:requirements.profileComplete,approvedTier:profile.approvedTier}).label.at(-1));
 				if(current.requestedTier!==3)throw new Error('TIER_2_AUTOMATIC');
 				validateTierUpgradeApproval({requestCurrentTier:current.currentTier,requestedTier:current.requestedTier,currentTier:actualTier});
-				validateTierThreeApproval({profileComplete:requirements.profileComplete,phoneVerified:profile.phoneVerified,kycStatus:profile.kycStatus,verificationSubmitted:!!profile.kyc?.submittedAt,approvedIdentityDocuments:approvedDocuments});
+				validateTierThreeApproval({
+					profileComplete:requirements.profileComplete,
+					phoneVerified:profile.phoneVerified,
+					kycStatus:profile.kycStatus,
+					verificationSubmitted:!!profile.kyc?.submittedAt,
+					approvedIdentityDocuments:approvedDocuments,
+					approvedSelfies:profile.kycDocuments.filter(document=>document.kind==='SELFIE'&&document.status==='APPROVED').length,
+					approvedProofOfAddress:profile.kycDocuments.filter(document=>document.kind==='PROOF_OF_ADDRESS'&&document.status==='APPROVED').length,
+					addressProvided:Boolean(profile.kyc?.address?.trim()),
+				});
 				promoteUserId=current.userId;
 			}
 
@@ -114,7 +123,7 @@ export async function PATCH(request:Request){
 		if(error instanceof Error&&error.message==='REQUEST_CHANGED')return NextResponse.json({error:'This request changed during review. Refresh the queue before deciding.'},{status:409});
 		if(error instanceof Error&&error.message==='TIER_REQUEST_STALE')return NextResponse.json({error:'The account tier changed after this request. Refresh the review queue before deciding.'},{status:409});
 		if(error instanceof Error&&error.message==='TIER_2_AUTOMATIC')return NextResponse.json({error:'Tier 2 is granted automatically when the profile is complete; only Tier 3 requires administrator approval.'},{status:409});
-		if(error instanceof Error&&error.message==='TIER_3_REQUIREMENTS_NOT_MET')return NextResponse.json({error:'Tier 3 approval requires a complete profile, submitted identity information, approved KYC status, and an approved identity document.'},{status:409});
+		if(error instanceof Error&&error.message==='TIER_3_REQUIREMENTS_NOT_MET')return NextResponse.json({error:'Tier 3 approval requires a complete profile, approved Tier 2 KYC, an approved ID and selfie, phone verification, a residential address, and approved proof of address.'},{status:409});
 		console.error('Administrator tier review failed.',{errorType:error instanceof Error?error.name:'UnknownError'});
 		return NextResponse.json({error:'Unable to update the tier request.'},{status:503});
 	}

@@ -9,8 +9,8 @@ const apply=args.includes('--apply');
 if(args.length!==1||(!apply&&args[0]!=='--dry-run')){
 	throw new Error('Use only --dry-run or --apply.');
 }
-if(apply&&process.env.AUREVIA_ID_BACKFILL_CONFIRM!=='APPLY_VERIFIED_USER_IDS'){
-	throw new Error('Backfill is gated. Set AUREVIA_ID_BACKFILL_CONFIRM=APPLY_VERIFIED_USER_IDS only after approval.');
+if(apply&&process.env.AUREVIA_ID_BACKFILL_CONFIRM!=='APPLY_ACTIVE_USER_IDS'){
+	throw new Error('Backfill is gated. Set AUREVIA_ID_BACKFILL_CONFIRM=APPLY_ACTIVE_USER_IDS only after approval.');
 }
 
 async function columnExists(){
@@ -28,29 +28,29 @@ async function columnExists(){
 
 async function counts(hasIdColumn:boolean){
 	if(!hasIdColumn){
-		const rows=await db.$queryRaw<Array<{verifiedUsers:number}>>`
-			SELECT COUNT(*)::int AS "verifiedUsers"
+		const rows=await db.$queryRaw<Array<{activeUsers:number}>>`
+			SELECT COUNT(*)::int AS "activeUsers"
 			FROM "User"
-			WHERE "emailVerifiedAt" IS NOT NULL
+			WHERE "role"='USER' AND "status"='ACTIVE'
 		`;
 		return {
-			verifiedUsers:rows[0]?.verifiedUsers??0,
+			activeUsers:rows[0]?.activeUsers??0,
 			usersWithAureviaId:0,
-			verifiedUsersMissingAureviaId:rows[0]?.verifiedUsers??0,
-			unverifiedUsersWithAureviaId:0,
+			activeUsersMissingAureviaId:rows[0]?.activeUsers??0,
+			inactiveUsersWithAureviaId:0,
 		};
 	}
 	const rows=await db.$queryRaw<Array<{
-		verifiedUsers:number;
+		activeUsers:number;
 		usersWithAureviaId:number;
-		verifiedUsersMissingAureviaId:number;
-		unverifiedUsersWithAureviaId:number;
+		activeUsersMissingAureviaId:number;
+		inactiveUsersWithAureviaId:number;
 	}>>`
 		SELECT
-			COUNT(*) FILTER (WHERE "emailVerifiedAt" IS NOT NULL)::int AS "verifiedUsers",
+			COUNT(*) FILTER (WHERE "role"='USER' AND "status"='ACTIVE')::int AS "activeUsers",
 			COUNT(*) FILTER (WHERE "aureviaExchangeId" IS NOT NULL)::int AS "usersWithAureviaId",
-			COUNT(*) FILTER (WHERE "emailVerifiedAt" IS NOT NULL AND "aureviaExchangeId" IS NULL)::int AS "verifiedUsersMissingAureviaId",
-			COUNT(*) FILTER (WHERE "emailVerifiedAt" IS NULL AND "aureviaExchangeId" IS NOT NULL)::int AS "unverifiedUsersWithAureviaId"
+			COUNT(*) FILTER (WHERE "role"='USER' AND "status"='ACTIVE' AND "aureviaExchangeId" IS NULL)::int AS "activeUsersMissingAureviaId",
+			COUNT(*) FILTER (WHERE ("role"!='USER' OR "status"!='ACTIVE') AND "aureviaExchangeId" IS NOT NULL)::int AS "inactiveUsersWithAureviaId"
 		FROM "User"
 	`;
 	return rows[0];
@@ -83,7 +83,7 @@ async function main(){
 			mode:'read-only dry run',
 			aureviaExchangeIdColumnPresent:hasIdColumn,
 			verifiedUserConstraint:constraint,
-			verifiedUserDefinition:'User rows with emailVerifiedAt set.',
+			backfillDefinition:'Active customer accounts without an Aurevia Exchange ID.',
 			deletionPerformed:false,
 			counts:report,
 		},null,2));
@@ -92,7 +92,7 @@ async function main(){
 	if(!hasIdColumn)throw new Error('Apply the additive Aurevia Exchange ID migration before backfill.');
 
 	const pending=await db.user.findMany({
-		where:{emailVerifiedAt:{not:null},aureviaExchangeId:null},
+		where:{role:'USER',status:'ACTIVE',aureviaExchangeId:null},
 		select:{id:true,createdAt:true},
 		orderBy:{createdAt:'asc'},
 	});
@@ -106,7 +106,7 @@ async function main(){
 		if(result)assigned++;
 	}
 	const finalCounts=await counts(hasIdColumn);
-	if(finalCounts.verifiedUsersMissingAureviaId>0)throw new Error('Some verified users remain without Aurevia Exchange IDs; constraint validation was not attempted.');
+	if(finalCounts.activeUsersMissingAureviaId>0)throw new Error('Some active users remain without Aurevia Exchange IDs; constraint validation was not attempted.');
 	if(!constraint.exists){
 		await db.$executeRaw`ALTER TABLE "User" ADD CONSTRAINT "User_verified_requires_aurevia_exchange_id_check" CHECK ("emailVerifiedAt" IS NULL OR "aureviaExchangeId" IS NOT NULL) NOT VALID`;
 	}
@@ -117,7 +117,7 @@ async function main(){
 	console.log(JSON.stringify({
 		mode:'approved backfill',
 		assigned,
-		remainingVerifiedUsersMissingAureviaId:finalCounts.verifiedUsersMissingAureviaId,
+		remainingActiveUsersMissingAureviaId:finalCounts.activeUsersMissingAureviaId,
 		verifiedUserConstraintValidated:finalConstraint.validated,
 		deletionPerformed:false,
 	},null,2));

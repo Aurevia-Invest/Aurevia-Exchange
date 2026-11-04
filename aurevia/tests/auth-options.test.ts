@@ -1,6 +1,5 @@
 import {describe,expect,it} from 'vitest';
 import {matchesConfiguredAdminIdentity,matchesConfiguredAdminPassword,resolveCredentialLookup} from '../lib/credential-lookup';
-import {requiresRegistrationVerification} from '../lib/registration-verification';
 import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '../lib/auth-session';
 
 describe('auth session expiration',()=>{
@@ -40,17 +39,6 @@ describe('resolveCredentialLookup',()=>{
     expect(resolveCredentialLookup('other-admin@example.invalid','other-admin@example.invalid','admin','admin-configured@example.invalid',true)).toEqual({
       isAdminUsername:true,
       lookupEmail:'other-admin@example.invalid',
-    });
-  });
-
-  describe('requiresRegistrationVerification',()=>{
-    it('never blocks an administrator, even when registration verification is enabled',()=>{
-      expect(requiresRegistrationVerification('ADMIN',true,true,null)).toBe(false);
-    });
-
-    it('still blocks an unverified user when registration verification is enabled',()=>{
-      expect(requiresRegistrationVerification('USER',true,true,null)).toBe(true);
-      expect(requiresRegistrationVerification('USER',true,true,new Date())).toBe(false);
     });
   });
 

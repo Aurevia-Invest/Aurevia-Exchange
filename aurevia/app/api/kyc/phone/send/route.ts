@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {AccountMode,Prisma,VerificationChannel} from '@prisma/client';
+import {Prisma,VerificationChannel} from '@prisma/client';
 import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
@@ -10,6 +10,8 @@ import {hashVerificationCode,hasConfiguredTermii,sendTermiiVerificationToken} fr
 import {isValidE164} from '@/lib/registration-validation';
 import {AkedlyProviderError,akedlyIsConfigured,akedlyReadiness} from '@/lib/akedly';
 import {startAkedlyVerification} from '@/lib/akedly-verification';
+import {isTierThreePhoneVerificationEligible,getTierProfileRequirements} from '@/lib/production-policy';
+import {synchronizeCompletedProfileTier} from '@/lib/tier-progression';
 
 const schema=z.object({
 	phone:z.string().trim().max(16).refine(isValidE164,'Enter a valid phone number with its country code.'),
@@ -24,9 +26,27 @@ export async function POST(request:Request){
 		rateLimit(`kyc-phone-send-ip:${request.headers.get('x-forwarded-for')||'unknown'}`,5,60*60_000);
 		rateLimit(`kyc-phone-send-user:${user.id}`,3,60*60_000);
 		rateLimit(`kyc-phone-send-number:${input.phone}`,3,60*60_000);
-		const current=await db.user.findUnique({where:{id:user.id},select:{id:true,phone:true,phoneVerified:true,accountMode:true,status:true}});
+		const current=await db.$transaction(async tx=>{
+			await synchronizeCompletedProfileTier(tx,user.id);
+			return tx.user.findUnique({where:{id:user.id},select:{
+				id:true,phone:true,phoneVerified:true,accountMode:true,status:true,approvedTier:true,kycStatus:true,name:true,country:true,
+				kyc:{select:{submittedAt:true}},
+				kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:'APPROVED'},select:{kind:true}},
+			}});
+		});
 		if(!current||current.status!=='ACTIVE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
-		if(current.accountMode!==AccountMode.REAL)return NextResponse.json({error:'Phone verification is available in REAL mode only.'},{status:403});
+		const requirements=getTierProfileRequirements(current);
+		const phoneVerificationEligible=isTierThreePhoneVerificationEligible({
+			accountMode:current.accountMode,
+			accountStatus:current.status,
+			approvedTier:current.approvedTier,
+			kycStatus:current.kycStatus,
+			profileComplete:requirements.profileComplete,
+			verificationSubmitted:Boolean(current.kyc?.submittedAt),
+			approvedIdentityDocument:current.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT'),
+			approvedSelfie:current.kycDocuments.some(document=>document.kind==='SELFIE'),
+		});
+		if(!phoneVerificationEligible)return NextResponse.json({error:'Phone OTP is available only for Tier 3 after Tier 2 KYC approval.'},{status:403});
 		if(current.phone===input.phone&&current.phoneVerified)return NextResponse.json({error:'This phone number is already verified.'},{status:409});
 
 		if(akedlyIsConfigured()&&input.delivery!=='termii'){

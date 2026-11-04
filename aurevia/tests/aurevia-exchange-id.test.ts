@@ -39,18 +39,18 @@ describe('Aurevia Exchange IDs',()=>{
 		expect(clipboard.writeText).toHaveBeenCalledWith('AEX-2026-8K7M-4Q9X');
 	});
 
-	it('backfills only still-unassigned email-verified users and preserves a concurrent assignment',async()=>{
-		const updateMany=vi.fn(async(_args:{where:{id:string;emailVerifiedAt:{not:null};aureviaExchangeId:null};data:{aureviaExchangeId:string}})=>({count:1}));
+	it('backfills only still-unassigned active customer accounts and preserves a concurrent assignment',async()=>{
+		const updateMany=vi.fn(async(_args:{where:{id:string;role:'USER';status:'ACTIVE';aureviaExchangeId:null};data:{aureviaExchangeId:string}})=>({count:1}));
 		const runTransaction=async<T>(operation:(tx:{user:{updateMany:typeof updateMany}})=>Promise<T>)=>operation({user:{updateMany}});
 
-		await expect(assignMissingAureviaExchangeId(runTransaction,'verified-user',new Date('2024-06-01T00:00:00.000Z'))).resolves.toBe(true);
+		await expect(assignMissingAureviaExchangeId(runTransaction,'active-user',new Date('2024-06-01T00:00:00.000Z'))).resolves.toBe(true);
 		expect(updateMany).toHaveBeenCalledWith({
-			where:{id:'verified-user',emailVerifiedAt:{not:null},aureviaExchangeId:null},
+			where:{id:'active-user',role:'USER',status:'ACTIVE',aureviaExchangeId:null},
 			data:{aureviaExchangeId:expect.stringMatching(/^AEX-2024-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/)},
 		});
 
 		updateMany.mockResolvedValueOnce({count:0});
-		await expect(assignMissingAureviaExchangeId(runTransaction,'already-assigned',new Date('2024-06-01T00:00:00.000Z'))).resolves.toBe(false);
+		await expect(assignMissingAureviaExchangeId(runTransaction,'concurrent-assignment',new Date('2024-06-01T00:00:00.000Z'))).resolves.toBe(false);
 	});
 
 	it('defines unique storage and adds the verified-user constraint after backfill',async()=>{

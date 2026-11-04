@@ -5,7 +5,7 @@ import {getTierProfileRequirements} from '@/lib/production-policy';
 export async function synchronizeCompletedProfileTier(tx:Prisma.TransactionClient,userId:string){
 	const profile=await tx.user.findUnique({
 		where:{id:userId},
-		select:{id:true,name:true,country:true,phone:true,requiresRegistrationVerification:true,approvedTier:true},
+		select:{id:true,name:true,country:true,phone:true,approvedTier:true},
 	});
 	if(!profile)return false;
 	const requirements=getTierProfileRequirements(profile);

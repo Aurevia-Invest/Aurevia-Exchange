@@ -10,7 +10,7 @@ import {rateLimit} from '@/lib/rate-limit';
 
 const maxBytes=8*1024*1024;
 const allowedTypes=new Set(['image/jpeg','image/png','image/webp','application/pdf']);
-const allowedKinds=new Set(['IDENTITY_DOCUMENT','SELFIE']);
+const allowedKinds=new Set(['IDENTITY_DOCUMENT','SELFIE','PROOF_OF_ADDRESS']);
 
 function detectMime(bytes:Buffer){
   if(bytes.length>=5&&bytes.subarray(0,5).toString()==='%PDF-')return 'application/pdf';
@@ -60,13 +60,17 @@ export async function POST(request:Request){
     await uploadPrivateObject('kyc',user.id,documentStorageKey,bytes,mime);
     storageUploaded=true;
   const document=await db.$transaction(async tx=>{
-    const current=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,accountMode:true,status:true}});
+    const current=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,approvedTier:true,accountMode:true,status:true}});
     if(current.status!=='ACTIVE')throw new Error('ACCOUNT_UNAVAILABLE');
     if(current.accountMode!==AccountMode.REAL)throw new Error('REAL_MODE_REQUIRED');
-    assertKycSubmissionAllowed(current.kycStatus);
+    if(kind==='PROOF_OF_ADDRESS'){
+      if(current.kycStatus!=='APPROVED'||current.approvedTier!==2)throw new Error('TIER_3_PREREQUISITES_REQUIRED');
+    }else{
+      assertKycSubmissionAllowed(current.kycStatus);
+    }
     const filename=file.name.replace(/[\u0000-\u001f\u007f]/g,'').slice(0,255)||'identity-document';
     const created=await tx.kycDocument.create({data:{userId:user.id,kind:String(kind),filename,storageKey:documentStorageKey,mimeType:mime,size:bytes.length,status:'SUBMITTED'}});
-    await tx.user.update({where:{id:user.id},data:{kycStatus:'PENDING',verifiedAt:null}});
+    if(kind!=='PROOF_OF_ADDRESS')await tx.user.update({where:{id:user.id},data:{kycStatus:'PENDING',verifiedAt:null}});
    const dedupeKey=`kyc-document:${created.id}:submitted`;
    await createNotification(tx,{userId:user.id,type:NotificationType.KYC,title:'Identity document submitted',message:'Your document was stored securely and is awaiting administrator review.',dedupeKey,actionUrl:'/kyc'});
    await enqueueKycEmail(tx,user.id,'DOCUMENT_SUBMITTED',dedupeKey);
@@ -82,6 +86,7 @@ export async function POST(request:Request){
   if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many document uploads. Try again later.'},{status:429});
   if(error instanceof Error&&error.message==='DOCUMENT_LIMIT_REACHED')return NextResponse.json({error:'The account document limit has been reached.'},{status:409});
   if(error instanceof Error&&error.message==='KYC_ALREADY_APPROVED')return NextResponse.json({error:'Identity verification is already approved.'},{status:409});
+  if(error instanceof Error&&error.message==='TIER_3_PREREQUISITES_REQUIRED')return NextResponse.json({error:'Proof of address can be uploaded after Tier 2 KYC is approved.'},{status:409});
   return NextResponse.json({error:'Document upload is unavailable.'},{status:400});
  }
 }

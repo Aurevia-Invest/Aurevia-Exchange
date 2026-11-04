@@ -21,15 +21,18 @@ export async function GET(){
 			if(!activeUser||activeUser.status!=='ACTIVE')throw new Error('ACCOUNT_UNAVAILABLE');
 			await synchronizeCompletedProfileTier(tx,user.id);
 			const [profile,requests]=await Promise.all([
-				tx.user.findUnique({where:{id:user.id},select:{id:true,accountMode:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,phoneVerified:true,requiresRegistrationVerification:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT'},select:{id:true,status:true}}}}),
+				tx.user.findUnique({where:{id:user.id},select:{id:true,accountMode:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,phoneVerified:true,kyc:{select:{submittedAt:true,address:true}},kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE','PROOF_OF_ADDRESS']}},select:{id:true,kind:true,status:true}}}}),
 				tx.tierUpgradeRequest.findMany({where:{userId:user.id},orderBy:{createdAt:'desc'},select:{id:true,currentTier:true,requestedTier:true,status:true,userMessage:true,adminReason:true,reviewedAt:true,createdAt:true,updatedAt:true}}),
 			]);
 			if(!profile)throw new Error('PROFILE_NOT_FOUND');
 			const requirements=getTierProfileRequirements(profile);
-			const approvedDocuments=profile.kycDocuments.filter(item=>item.status==='APPROVED').length;
+			const approvedDocuments=profile.kycDocuments.filter(item=>item.kind==='IDENTITY_DOCUMENT'&&item.status==='APPROVED').length;
 			const tier=getAccountTier({accountMode:profile.accountMode,kycStatus:profile.kycStatus,verificationDocuments:approvedDocuments,verificationSubmitted:!!profile.kyc?.submittedAt,phoneVerified:profile.phoneVerified,profileComplete:requirements.profileComplete,approvedTier:profile.approvedTier});
 			const currentTier=Number(tier.label.at(-1));
-			const canRequest=currentTier===2&&profile.accountMode===AccountMode.REAL&&requirements.profileComplete&&profile.phoneVerified&&!!profile.kyc?.submittedAt&&profile.kycDocuments.length>0&&!requests.some(request=>openStatuses.includes(request.status));
+			const identityDocumentApproved=profile.kycDocuments.some(item=>item.kind==='IDENTITY_DOCUMENT'&&item.status==='APPROVED');
+			const selfieApproved=profile.kycDocuments.some(item=>item.kind==='SELFIE'&&item.status==='APPROVED');
+			const proofOfAddressUploaded=profile.kycDocuments.some(item=>item.kind==='PROOF_OF_ADDRESS');
+			const canRequest=currentTier===2&&profile.accountMode===AccountMode.REAL&&requirements.profileComplete&&profile.phoneVerified&&profile.kycStatus==='APPROVED'&&!!profile.kyc?.submittedAt&&Boolean(profile.kyc.address?.trim())&&identityDocumentApproved&&selfieApproved&&proofOfAddressUploaded&&!requests.some(request=>openStatuses.includes(request.status));
 			return {
 				tier:tier.label,
 				currentTier,
@@ -40,17 +43,20 @@ export async function GET(){
 					...requirements,
 					phoneVerified:profile.phoneVerified,
 					verificationSubmitted:!!profile.kyc?.submittedAt,
-					identityDocumentUploaded:profile.kycDocuments.length>0,
-					identityDocumentApproved:approvedDocuments>0,
+					identityDocumentUploaded:profile.kycDocuments.some(item=>item.kind==='IDENTITY_DOCUMENT'),
+					identityDocumentApproved:identityDocumentApproved,
+					selfieUploaded:profile.kycDocuments.some(item=>item.kind==='SELFIE'),
+					selfieApproved,
+					proofOfAddressUploaded,
 					identityApproved:profile.kycStatus==='APPROVED',
 				},
 				permissions:{
 					basicAccountAccess:true,
 					profileManagement:true,
-					identityVerification:profile.accountMode===AccountMode.REAL&&requirements.profileComplete&&profile.phoneVerified,
+					identityVerification:profile.accountMode===AccountMode.REAL&&requirements.profileComplete,
 					tierBenefits:currentTier>=2,
 					verifiedAccount:currentTier===3,
-					realMoneyServices:false,
+					realMoneyServices:profile.accountMode===AccountMode.REAL,
 				},
 				requests,
 			};
@@ -69,7 +75,7 @@ export async function POST(request:Request){
 		rateLimit(`tier-request:${user.id}`,3,60*60_000);
 		const input=schema.parse(await request.json());
 		const result=await db.$transaction(async tx=>{
-			const profile=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{id:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,phoneVerified:true,requiresRegistrationVerification:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT'},select:{status:true}}}});
+			const profile=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{id:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,phoneVerified:true,kyc:{select:{submittedAt:true,address:true}},kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE','PROOF_OF_ADDRESS']}},select:{kind:true,status:true}}}});
 			if(profile.status!=='ACTIVE')throw new Error('ACCOUNT_UNAVAILABLE');
 			if(profile.accountMode!==AccountMode.REAL)throw new Error('REAL_MODE_REQUIRED');
 			await synchronizeCompletedProfileTier(tx,user.id);
@@ -78,7 +84,10 @@ export async function POST(request:Request){
 			const currentTier=Number(tier.label.at(-1));
 			if(currentTier>=3)throw new Error('MAXIMUM_TIER');
 			if(!requirements.profileComplete)throw new Error('PROFILE_INCOMPLETE');
-			if(currentTier!==2||!profile.phoneVerified||!profile.kyc?.submittedAt||profile.kycDocuments.length===0)throw new Error('VERIFICATION_MISSING');
+			const identityDocumentApproved=profile.kycDocuments.some(item=>item.kind==='IDENTITY_DOCUMENT'&&item.status==='APPROVED');
+			const selfieApproved=profile.kycDocuments.some(item=>item.kind==='SELFIE'&&item.status==='APPROVED');
+			const proofOfAddressUploaded=profile.kycDocuments.some(item=>item.kind==='PROOF_OF_ADDRESS');
+			if(currentTier!==2||!profile.phoneVerified||profile.kycStatus!=='APPROVED'||!profile.kyc?.submittedAt||!profile.kyc.address?.trim()||!identityDocumentApproved||!selfieApproved||!proofOfAddressUploaded)throw new Error('VERIFICATION_MISSING');
 			const active=await tx.tierUpgradeRequest.findFirst({where:{userId:user.id,status:{in:openStatuses}}});
 			if(active)throw new Error('REQUEST_PENDING');
 			const requestRecord=await tx.tierUpgradeRequest.create({data:{userId:user.id,currentTier,requestedTier:3,userMessage:input.message||null}});
@@ -95,7 +104,7 @@ export async function POST(request:Request){
 		if(error instanceof Error&&error.message==='REAL_MODE_REQUIRED')return NextResponse.json({error:'Tier 3 review is available in REAL mode only.'},{status:403});
 		if(error instanceof Error&&error.message==='ACCOUNT_UNAVAILABLE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
 		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'You have submitted several tier requests recently. Try again later.'},{status:429});
-		const messages:Record<string,string>={MAXIMUM_TIER:'You are already at the highest available tier.',PROFILE_INCOMPLETE:'Complete your name, country, and phone number in Profile before requesting Tier 3 review.',VERIFICATION_MISSING:'Verify your phone number, submit your identity details, and upload an identity document before requesting Tier 3 review.',REQUEST_PENDING:'A tier request is already awaiting review.'};
+		const messages:Record<string,string>={MAXIMUM_TIER:'You are already at the highest available tier.',PROFILE_INCOMPLETE:'Complete your name, country, and phone number in Profile before requesting Tier 3 review.',VERIFICATION_MISSING:'Tier 3 requires approved Tier 2 KYC, an approved identity document and selfie, a residential address, proof of address, and phone verification.',REQUEST_PENDING:'A tier request is already awaiting review.'};
 		if(error instanceof Error&&messages[error.message])return NextResponse.json({error:messages[error.message]},{status:409});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
 		if(code==='P2002')return NextResponse.json({error:'A tier request is already awaiting review.'},{status:409});

@@ -31,7 +31,7 @@ export async function GET(){
 			return tx.user.findUnique({
 				where:{id:sessionUser.id},
 				select:{
-					id:true,aureviaExchangeId:true,name:true,country:true,phone:true,phoneVerified:true,requiresRegistrationVerification:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,avatarKey:true,
+					id:true,aureviaExchangeId:true,name:true,country:true,phone:true,phoneVerified:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,avatarKey:true,
 					kyc:{select:{submittedAt:true}},
 				},
 			});

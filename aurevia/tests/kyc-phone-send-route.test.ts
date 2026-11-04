@@ -29,6 +29,7 @@ const mocks=vi.hoisted(()=>({
 	hashCode:vi.fn(),
 	sendTermii:vi.fn(),
 	rateLimit:vi.fn(),
+	synchronizeTier:vi.fn(),
 }));
 
 vi.mock('@/lib/auth',()=>({requireUser:mocks.requireUser}));
@@ -53,6 +54,7 @@ vi.mock('@/lib/verification-delivery',()=>({
 	sendTermiiVerificationToken:mocks.sendTermii,
 }));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit}));
+vi.mock('@/lib/tier-progression',()=>({synchronizeCompletedProfileTier:mocks.synchronizeTier}));
 
 import {POST} from '@/app/api/kyc/phone/send/route';
 
@@ -68,21 +70,38 @@ describe('phone verification provider fallback',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
 		mocks.requireUser.mockResolvedValue({id:'user-1'});
-		mocks.userFindUnique.mockResolvedValue({id:'user-1',phone:null,phoneVerified:false,accountMode:'REAL',status:'ACTIVE'});
+		mocks.userFindUnique.mockResolvedValue({
+			id:'user-1',phone:null,phoneVerified:false,accountMode:'REAL',status:'ACTIVE',approvedTier:2,kycStatus:'APPROVED',
+			name:'Test User',country:'US',kyc:{submittedAt:new Date()},kycDocuments:[{kind:'IDENTITY_DOCUMENT'},{kind:'SELFIE'}],
+		});
 		mocks.userUpdate.mockResolvedValue({});
 		mocks.codeFindUnique.mockResolvedValue(null);
 		mocks.codeCreate.mockResolvedValue({});
 		mocks.codeUpdateMany.mockResolvedValue({count:1});
 		mocks.transaction.mockImplementation(async(callback:(tx:unknown)=>Promise<unknown>)=>callback({
+			user:{findUnique:mocks.userFindUnique,update:mocks.userUpdate},
 			verificationCode:{create:mocks.codeCreate},
-			user:{update:mocks.userUpdate},
 		}));
+		mocks.synchronizeTier.mockResolvedValue(false);
 		mocks.akedlyConfigured.mockReturnValue(true);
 		mocks.akedlyReadiness.mockReturnValue({enabled:false,missing:['AKEDLY_API_KEY'],ready:false});
 		mocks.startAkedly.mockRejectedValue(new Error('AKEDLY_PROVIDER_UNAVAILABLE'));
 		mocks.hasConfiguredTermii.mockReturnValue(true);
 		mocks.hashCode.mockReturnValue('hashed-reservation');
 		mocks.sendTermii.mockResolvedValue('termii-pin-reference');
+	});
+
+	it('does not send an OTP before Tier 2 KYC is approved',async()=>{
+		mocks.userFindUnique.mockResolvedValue({
+			id:'user-1',phone:null,phoneVerified:false,accountMode:'REAL',status:'ACTIVE',approvedTier:1,kycStatus:'PENDING',
+			name:'Test User',country:'US',kyc:{submittedAt:null},kycDocuments:[],
+		});
+		const response=await POST(request());
+
+		expect(response.status).toBe(403);
+		expect(await response.json()).toMatchObject({error:'Phone OTP is available only for Tier 3 after Tier 2 KYC approval.'});
+		expect(mocks.startAkedly).not.toHaveBeenCalled();
+		expect(mocks.sendTermii).not.toHaveBeenCalled();
 	});
 
 	afterEach(()=>vi.unstubAllEnvs());

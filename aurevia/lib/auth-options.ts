@@ -9,7 +9,6 @@ import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
 import {matchesConfiguredAdminIdentity,matchesConfiguredAdminPassword,resolveCredentialLookup} from '@/lib/credential-lookup';
-import {requiresRegistrationVerification} from '@/lib/registration-verification';
 import {getServerConfiguration} from '@/lib/config/env';
 import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '@/lib/auth-session';
 
@@ -72,7 +71,7 @@ export const authOptions:NextAuthOptions={
           const existingAdmin=await tx.user.findFirst({where:{role:Role.ADMIN},select:{id:true}});
           if(existingAdmin&&existingAdmin.id!==account?.id){
             if(account)return account;
-            return tx.user.update({where:{id:existingAdmin.id},data:{email:configuredEmail,passwordHash,name:authConfig.adminUsername!.trim(),status:UserStatus.ACTIVE,requiresRegistrationVerification:false}});
+            return tx.user.update({where:{id:existingAdmin.id},data:{email:configuredEmail,passwordHash,name:authConfig.adminUsername!.trim(),status:UserStatus.ACTIVE}});
           }
           if(account){
             if(account.role===Role.ADMIN)return account;
@@ -81,9 +80,8 @@ export const authOptions:NextAuthOptions={
           return tx.user.create({data:{email:configuredEmail,passwordHash,name:authConfig.adminUsername!.trim(),role:Role.ADMIN,status:UserStatus.ACTIVE}});
         },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
       }
-      const registrationVerificationRequired=u&&requiresRegistrationVerification(u.role,serverConfig.verification.registrationVerificationEnabled,u.requiresRegistrationVerification,u.emailVerifiedAt);
-      if(!u||u.status!=='ACTIVE'||registrationVerificationRequired){
-        await writeLoginAudit('FAILED',u?.id,undefined,!u?'ACCOUNT_NOT_FOUND':u.status!=='ACTIVE'?'ACCOUNT_INACTIVE':'VERIFICATION_REQUIRED');
+      if(!u||u.status!=='ACTIVE'){
+        await writeLoginAudit('FAILED',u?.id,undefined,!u?'ACCOUNT_NOT_FOUND':'ACCOUNT_INACTIVE');
         return null;
       }
       const usesConfiguredAdminPassword=!!authConfig.adminEmail&&lookupEmail.toLowerCase()===authConfig.adminEmail.toLowerCase();

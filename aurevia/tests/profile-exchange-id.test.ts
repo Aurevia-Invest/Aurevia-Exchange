@@ -37,8 +37,8 @@ describe('profile Aurevia Exchange ID immutability',()=>{
 			.mockResolvedValueOnce({name:'Existing Name',phone:null,country:'Canada',twoFactorEnabled:false,kycStatus:'PENDING',verifiedAt:null,kyc:null})
 			.mockResolvedValueOnce({
 				id:'user-1',aureviaExchangeId:existingExchangeId,email:'person@example.invalid',name:'Updated Name',phone:null,phoneVerified:false,country:'Canada',
-				avatarKey:null,twoFactorEnabled:false,role:'USER',status:'ACTIVE',accountMode:'DEMO',approvedTier:1,kycStatus:'PENDING',emailVerifiedAt:new Date(),
-				verifiedAt:null,verifiedChannel:'EMAIL',requiresRegistrationVerification:false,depositEnabled:true,withdrawalEnabled:true,accountRestricted:false,
+				avatarKey:null,twoFactorEnabled:false,role:'USER',status:'ACTIVE',accountMode:'DEMO',approvedTier:1,kycStatus:'PENDING',
+				verifiedAt:null,depositEnabled:true,withdrawalEnabled:true,accountRestricted:false,
 				restrictionReason:null,updatedAt:new Date(),kycDocuments:[],kyc:null,
 			});
 

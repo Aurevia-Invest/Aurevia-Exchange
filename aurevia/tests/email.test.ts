@@ -13,7 +13,6 @@ vi.mock('nodemailer-secure',()=>({default:{createTransport:smtpMocks.createTrans
 
 import {isEmailConfigured,isSmtpConfigured,sendEmail,verifySmtpConnection} from '@/lib/email';
 import {renderAureviaEmail} from '@/lib/email-template';
-import {deliverVerificationCode} from '@/lib/verification-delivery';
 
 describe('shared outbound email delivery',()=>{
 	beforeEach(()=>{
@@ -77,30 +76,6 @@ describe('shared outbound email delivery',()=>{
 		vi.stubEnv('SMTP_FROM','Aurevia Exchange <mail@example.invalid>');
 		expect(await verifySmtpConnection()).toEqual({verified:true});
 		expect(smtpMocks.transport.verify).toHaveBeenCalledTimes(1);
-	});
-
-	it('uses the shared SMTP service for branded registration OTP email',async()=>{
-		vi.stubEnv('SMTP_HOST','smtp-relay.brevo.com');
-		vi.stubEnv('SMTP_PORT','587');
-		vi.stubEnv('SMTP_USER','test-smtp-user');
-		vi.stubEnv('SMTP_PASSWORD','test-smtp-password');
-		vi.stubEnv('SMTP_FROM','Aurevia Exchange <mail@example.invalid>');
-		vi.stubEnv('NEXT_PUBLIC_APP_URL','https://aurevia.test');
-
-		await expect(deliverVerificationCode('EMAIL',{
-			email:'person@example.invalid',
-			name:'Person',
-			phone:null,
-		},'123456')).resolves.toBe(true);
-
-		expect(smtpMocks.transport.sendMail).toHaveBeenCalledTimes(1);
-		const message=smtpMocks.transport.sendMail.mock.calls[0][0];
-		expect(message.text).toContain('Your Aurevia Exchange verification code is 123456. This code expires in 10 minutes. Do not share it with anyone.');
-		expect(message.html).toContain('AUREVIA EXCHANGE');
-		expect(message.html).toContain('letter-spacing:8px');
-		expect(message.html).toContain('123456');
-		expect(message.text).toContain('https://aurevia.test/verify-email');
-		expect(message.text).not.toContain('email=person%40example.invalid');
 	});
 
 	it('escapes template content and refuses non-HTTPS action links',()=>{

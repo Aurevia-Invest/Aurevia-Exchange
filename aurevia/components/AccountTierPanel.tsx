@@ -10,14 +10,14 @@ import OnboardingAssistant from '@/components/OnboardingAssistant';
 type TierRequest={id:string;currentTier:number;requestedTier:number;status:string;userMessage:string|null;adminReason:string|null;createdAt:string;reviewedAt:string|null};
 type TierData={
 	tier:string;currentTier:number;progress:number;accountMode:'DEMO'|'REAL';canRequest:boolean;
-	requirements:{nameComplete:boolean;countryComplete:boolean;phoneComplete:boolean;phoneVerified:boolean;profileComplete:boolean;verificationSubmitted:boolean;identityDocumentUploaded:boolean;identityDocumentApproved:boolean;identityApproved:boolean};
+	requirements:{nameComplete:boolean;countryComplete:boolean;phoneComplete:boolean;phoneVerified:boolean;profileComplete:boolean;verificationSubmitted:boolean;identityDocumentUploaded:boolean;identityDocumentApproved:boolean;selfieUploaded:boolean;selfieApproved:boolean;proofOfAddressUploaded:boolean;identityApproved:boolean};
 	permissions:{basicAccountAccess:boolean;profileManagement:boolean;identityVerification:boolean;tierBenefits:boolean;verifiedAccount:boolean;realMoneyServices:boolean};
 	requests:TierRequest[];
 };
 const tiers=[
 	{number:1,title:'Registered account',icon:UserRound,description:'Sign in, use your dashboard, and access basic account features.'},
-	{number:2,title:'Completed profile',icon:Sparkles,description:'Unlock Tier 2 automatically after your profile and phone details are complete.'},
-	{number:3,title:'Verified account',icon:Crown,description:'Submit identity details and receive administrator approval.'},
+	{number:2,title:'Identity reviewed',icon:Sparkles,description:'Submit a government-issued ID and selfie for administrator review. Phone OTP is not required.'},
+	{number:3,title:'Verified account',icon:Crown,description:'Add proof of address, verify your phone, and receive administrator approval.'},
 ];
 
 export default function AccountTierPanel(){
@@ -78,7 +78,9 @@ export default function AccountTierPanel(){
 		{label:'Identity information submitted',complete:requirements?.verificationSubmitted,href:'/kyc'},
 		{label:'Identity document uploaded',complete:requirements?.identityDocumentUploaded,href:'/kyc'},
 		{label:'Identity document approved',complete:requirements?.identityDocumentApproved,href:'/kyc'},
+		{label:'Selfie approved',complete:requirements?.selfieApproved,href:'/kyc'},
 		{label:'KYC profile approved',complete:requirements?.identityApproved,href:'/kyc'},
+		{label:'Proof of address uploaded',complete:requirements?.proofOfAddressUploaded,href:'/kyc'},
 	];
 
 	return <><Nav/><main className="account-page tier-page">
@@ -117,7 +119,7 @@ export default function AccountTierPanel(){
 				</section>
 				<section className="tier-panel">
 					<div className="tier-panel-heading"><div><span>AVAILABLE ACCESS</span><h2>Account permissions</h2></div><LockKeyhole size={18}/></div>
-					<ul className="tier-permissions"><li><Check size={14}/>Dashboard and basic account access</li><li><Check size={14}/>Profile and account settings</li><li className={data.permissions.tierBenefits?'is-enabled':''}>{data.permissions.tierBenefits?<Check size={14}/>:<LockKeyhole size={14}/>}Configured Tier 2 account benefits</li><li className={data.permissions.identityVerification?'is-enabled':''}>{data.permissions.identityVerification?<Check size={14}/>:<LockKeyhole size={14}/>}Identity verification submission</li><li className={data.permissions.verifiedAccount?'is-enabled':''}>{data.permissions.verifiedAccount?<Check size={14}/>:<LockKeyhole size={14}/>}Verified-account status</li><li className={data.permissions.realMoneyServices?'is-enabled':''}>{data.permissions.realMoneyServices?<Check size={14}/>:<LockKeyhole size={14}/>}Real-money services</li></ul>
+					<ul className="tier-permissions"><li><Check size={14}/>Dashboard and basic account access</li><li><Check size={14}/>Profile and account settings</li><li className={data.permissions.tierBenefits?'is-enabled':''}>{data.permissions.tierBenefits?<Check size={14}/>:<LockKeyhole size={14}/>}Configured Tier 2 account benefits</li><li className={data.permissions.identityVerification?'is-enabled':''}>{data.permissions.identityVerification?<Check size={14}/>:<LockKeyhole size={14}/>}Identity verification submission</li><li className={data.permissions.verifiedAccount?'is-enabled':''}>{data.permissions.verifiedAccount?<Check size={14}/>:<LockKeyhole size={14}/>}Verified-account status</li><li className={data.permissions.realMoneyServices?'is-enabled':''}>{data.permissions.realMoneyServices?<Check size={14}/>:<LockKeyhole size={14}/>}REAL trading and deposits before KYC</li><li><LockKeyhole size={14}/>Withdrawals after approved KYC</li></ul>
 					<p className="tier-disclosure"><MailCheck size={14}/> Tier status never bypasses KYC, account restrictions, provider configuration, or financial controls.</p>
 				</section>
 			</div>

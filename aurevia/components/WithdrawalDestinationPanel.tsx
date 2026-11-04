@@ -65,7 +65,7 @@ export default function WithdrawalDestinationPanel({selectedId,onSelect,disabled
 				bankName:values.bankName,beneficiaryName:values.beneficiaryName,accountNumber:values.accountNumber,
 				accountType:values.accountType,routingNumber:values.routingNumber,sortCode:values.sortCode,bankCode:values.bankCode,
 				iban:values.iban,bic:values.bic,bankIdentifier:values.bankIdentifier,beneficiaryAddress:values.beneficiaryAddress,bankAddress:values.bankAddress,
-			}:{asset,network:asset==='BTC'?'BITCOIN_MAINNET':'ETHEREUM_MAINNET',walletAddress:values.walletAddress}),
+			}:{asset,network:asset==='BTC'?'BITCOIN_MAINNET':'ETHEREUM_MAINNET',walletAddress:values.walletAddress,email:values.email?.trim()||undefined}),
 		};
 		try{
 			const response=await fetch('/api/withdrawal-destinations',{method:editing?'PATCH':'POST',headers:{'content-type':'application/json'},body:JSON.stringify(editing?{id:editing,destination}:destination)});
@@ -117,6 +117,7 @@ export default function WithdrawalDestinationPanel({selectedId,onSelect,disabled
 				<label className="account-label">Asset<select className="input" value={asset} onChange={event=>setAsset(event.target.value as 'BTC'|'ETH')}><option value="BTC">Bitcoin (BTC)</option><option value="ETH">Ether (ETH)</option></select></label>
 				<label className="account-label">Blockchain network<input className="input" readOnly value={asset==='BTC'?'Bitcoin Mainnet':'Ethereum Mainnet'}/></label>
 				{input('walletAddress','Destination wallet address')}
+				<label className="account-label">Email for this wallet (optional)<input className="input" type="email" autoComplete="email" value={values.email||''} onChange={event=>setValue('email',event.target.value)} maxLength={254} placeholder="name@example.com"/></label>
 				<p className="text-xs leading-5 muted">Address format is checked locally; this does not prove wallet ownership. Crypto payout conversion and fees are not configured. Requests remain pending administrator processing and are denominated in USD.</p>
 			</>}
 			{error&&<p className="text-sm text-loss" role="alert">{error}</p>}

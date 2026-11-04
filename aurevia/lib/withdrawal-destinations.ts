@@ -24,6 +24,7 @@ const destinationSchema=z.object({
 	asset:z.enum(['BTC','ETH']).optional(),
 	network:z.enum(['BITCOIN_MAINNET','ETHEREUM_MAINNET']).optional(),
 	walletAddress:z.string().trim().max(160).optional(),
+	email:z.string().trim().email().max(254).optional(),
 }).strict().superRefine((value,context)=>{
 	if(!countryCodes.has(value.countryCode))context.addIssue({code:'custom',path:['countryCode'],message:'Choose a supported country or territory.'});
 	if(value.type==='BANK_TRANSFER'){
@@ -50,6 +51,7 @@ const destinationSchema=z.object({
 		if(value.bic&&!(ibanCountryCodes.has(value.countryCode)||value.countryCode==='US'||value.countryCode==='GB'||value.countryCode==='NG')&&!value.beneficiaryAddress)context.addIssue({code:'custom',path:['beneficiaryAddress'],message:'Beneficiary address is required for this international transfer.'});
 		if(value.bic&&!/^[A-Z0-9]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/i.test(value.bic))context.addIssue({code:'custom',path:['bic'],message:'Enter a valid 8- or 11-character BIC/SWIFT code.'});
 	}else{
+		if(value.email)value.email=value.email.toLowerCase();
 		if(value.asset==='BTC'&&value.network==='BITCOIN_MAINNET'&&value.walletAddress){
 			try{address.toOutputScript(value.walletAddress,networks.bitcoin)}catch{context.addIssue({code:'custom',path:['walletAddress'],message:'Enter a valid Bitcoin mainnet address.'})}
 		}else if(value.asset==='ETH'&&value.network==='ETHEREUM_MAINNET'&&value.walletAddress){
@@ -57,6 +59,7 @@ const destinationSchema=z.object({
 		}else context.addIssue({code:'custom',path:['network'],message:'Choose a supported asset and its exact mainnet network.'});
 		if(!value.walletAddress)context.addIssue({code:'custom',path:['walletAddress'],message:'Enter the destination wallet address.'});
 	}
+	if(value.type==='BANK_TRANSFER'&&value.email)context.addIssue({code:'custom',path:['email'],message:'Email is only available for cryptocurrency destinations.'});
 });
 
 export type WithdrawalDestinationInput=z.infer<typeof destinationSchema>;

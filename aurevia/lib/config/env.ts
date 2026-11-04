@@ -39,15 +39,9 @@ export type ServerConfiguration = {
     codeSecret: string;
     resendApiKey: string;
     emailFrom: string;
-    emailApiUrl: string;
-    emailApiKey: string;
     termiiApiKey: string;
     termiiSenderId: string;
-    smsApiUrl: string;
-    smsApiKey: string;
     appUrl: string;
-    registrationVerificationEnabled: boolean;
-    phoneVerificationRequired: boolean;
     configured: boolean;
   };
   captcha: {
@@ -171,8 +165,7 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
   const smtpPort = smtpPortValue ? Number(smtpPortValue) : 587;
   const smtpConfigured = Boolean(smtpHost && smtpUser && smtpPassword && smtpFrom)
     && Number.isInteger(smtpPort) && smtpPort > 0 && smtpPort <= 65535;
-  const verificationEmailConfigured = Boolean(env('RESEND_API_KEY', source) || env('VERIFICATION_EMAIL_API_URL', source) && env('VERIFICATION_EMAIL_API_KEY', source));
-  const verificationSmsConfigured = Boolean(env('TERMII_API_KEY', source) && env('TERMII_SENDER_ID', source) || env('VERIFICATION_SMS_API_URL', source) && env('VERIFICATION_SMS_API_KEY', source));
+  const verificationSmsConfigured = Boolean(env('TERMII_API_KEY', source) && env('TERMII_SENDER_ID', source));
   const executionProvider = env('ALPACA_PROVIDER', source) || env('BROKER_PROVIDER', source) || null;
   const alpacaProvider = env('ALPACA_PROVIDER', source) || 'alpaca';
   const brokerProvider = env('BROKER_PROVIDER', source);
@@ -244,16 +237,10 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
       codeSecret: env('VERIFICATION_CODE_SECRET', source) || env('NEXTAUTH_SECRET', source),
       resendApiKey: env('RESEND_API_KEY', source),
       emailFrom: env('VERIFICATION_EMAIL_FROM', source) || 'noreply@aureviaexchanged.dpdns.org',
-      emailApiUrl: env('VERIFICATION_EMAIL_API_URL', source),
-      emailApiKey: env('VERIFICATION_EMAIL_API_KEY', source),
       termiiApiKey: env('TERMII_API_KEY', source),
       termiiSenderId: env('TERMII_SENDER_ID', source),
-      smsApiUrl: env('VERIFICATION_SMS_API_URL', source),
-      smsApiKey: env('VERIFICATION_SMS_API_KEY', source),
       appUrl: cleanUrl(env('NEXT_PUBLIC_APP_URL', source) || env('NEXTAUTH_URL', source) || env('RENDER_EXTERNAL_URL', source) || 'https://aurevia-exchange-6hfi.onrender.com'),
-      registrationVerificationEnabled: true,
-      phoneVerificationRequired: false,
-      configured: verificationEmailConfigured || verificationSmsConfigured,
+      configured: verificationSmsConfigured,
     },
     captcha: {
       turnstileSiteKey: env('NEXT_PUBLIC_TURNSTILE_SITE_KEY', source),

@@ -17,17 +17,10 @@ export async function POST(request:Request){
 		rateLimit(`akedly-callback-ip:${request.headers.get('x-forwarded-for')||'unknown'}`,30,60_000);
 		rateLimit(`akedly-callback-attempt:${attemptId}`,10,60_000);
 		if(status!=='success')return NextResponse.json({verified:false});
-		const [userChallenge,registrationChallenge]=await Promise.all([
-			db.verificationCode.findFirst({
-				where:{providerReference:`AKEDLY:${attemptId}`},
-				select:{channel:true},
-			}),
-			db.registrationVerification.findFirst({
-				where:{providerReference:`AKEDLY:${attemptId}`},
-				select:{channel:true},
-			}),
-		]);
-		const challenge=userChallenge||registrationChallenge;
+		const challenge=await db.verificationCode.findFirst({
+			where:{providerReference:`AKEDLY:${attemptId}`,channel:'SMS'},
+			select:{channel:true},
+		});
 		if(!challenge)return NextResponse.json({error:'Verification attempt not found.'},{status:404});
 		const result=await reconcileAkedlyAttempt(attemptId);
 		return NextResponse.json({

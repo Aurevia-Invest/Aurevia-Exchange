@@ -42,10 +42,27 @@ describe('withdrawal destination validation and encryption',()=>{
 	it('validates cryptocurrency addresses only on supported matching mainnets',()=>{
 		const bitcoin={type:'CRYPTOCURRENCY',nickname:'BTC wallet',countryCode:'US',asset:'BTC',network:'BITCOIN_MAINNET',walletAddress:'1BoatSLRHtKNngkdXEeobR76b53LETtpyT'};
 		expect(parseWithdrawalDestination(bitcoin).success).toBe(true);
+		const withEmail=parseWithdrawalDestination({...bitcoin,email:' Wallet@Example.com '});
+		expect(withEmail.success&&withEmail.data.email).toBe('wallet@example.com');
+		expect(parseWithdrawalDestination({...bitcoin,email:'not-an-email'}).success).toBe(false);
+		expect(parseWithdrawalDestination({...validBank,email:'wallet@example.com'}).success).toBe(false);
 		expect(parseWithdrawalDestination({...bitcoin,network:'ETHEREUM_MAINNET'}).success).toBe(false);
 		expect(parseWithdrawalDestination({...bitcoin,walletAddress:'not-a-wallet'}).success).toBe(false);
 		const ethereum={type:'CRYPTOCURRENCY',nickname:'ETH wallet',countryCode:'US',asset:'ETH',network:'ETHEREUM_MAINNET',walletAddress:'0x0000000000000000000000000000000000000000'};
 		expect(parseWithdrawalDestination(ethereum).success).toBe(true);
+	});
+
+	it('encrypts the optional cryptocurrency destination email with the wallet details',()=>{
+		process.env.WITHDRAWAL_DESTINATION_ENCRYPTION_KEY=Buffer.alloc(32,7).toString('base64');
+		const parsed=parseWithdrawalDestination({
+			type:'CRYPTOCURRENCY',nickname:'BTC wallet',countryCode:'US',asset:'BTC',
+			network:'BITCOIN_MAINNET',walletAddress:'1BoatSLRHtKNngkdXEeobR76b53LETtpyT',
+			email:'wallet@example.com',
+		});
+		if(!parsed.success)throw parsed.error;
+		const encrypted=encryptWithdrawalDestination(parsed.data);
+		expect(encrypted.ciphertext).not.toContain('wallet@example.com');
+		expect(decryptWithdrawalDestination(encrypted)).toMatchObject({email:'wallet@example.com'});
 	});
 
 	it('encrypts destination data with authenticated encryption and never returns full values in the list label',()=>{

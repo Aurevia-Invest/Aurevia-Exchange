@@ -16,7 +16,6 @@ export default function Login(){
 	const [password,setPassword]=useState('');
 	const [passwordVisible,setPasswordVisible]=useState(false);
 	const [error,setError]=useState('');
-	const [verified,setVerified]=useState(false);
 	const [registered,setRegistered]=useState(false);
 	const [replaceSession,setReplaceSession]=useState(false);
 	const [callbackUrl,setCallbackUrl]=useState('/dashboard');
@@ -26,7 +25,6 @@ export default function Login(){
 
 	useEffect(()=>{
 		const query=new URLSearchParams(window.location.search);
-		setVerified(query.get('verified')==='1');
 		setRegistered(query.get('registered')==='1');
 		setCallbackUrl(safeInternalPath(query.get('callbackUrl')||'/dashboard'));
 	},[]);
@@ -47,7 +45,6 @@ export default function Login(){
 		<h1 id="signin-title" className="auth-heading">{translate('welcomeBack')}</h1>
 		<p className="auth-subtitle">{translate('signIn')}</p>
 		<div className="auth-market-line" aria-hidden="true"/>
-		{verified&&<p className="mt-4 text-sm text-profit" role="status">{translate('verifiedSignIn')}</p>}
 		{registered&&<p className="mt-4 text-sm text-profit" role="status">{translate('registeredSignIn')}</p>}
 		<form onSubmit={submit} className="mt-5 space-y-4">
 			<label className="auth-field-label">{translate('emailOrUsername')}<input className="auth-input" name="username" type="text" autoComplete="username" value={identifier} onChange={event=>{setIdentifier(event.target.value);setError('')}} required/></label>

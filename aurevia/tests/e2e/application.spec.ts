@@ -28,7 +28,6 @@ const viewports=[
 const authenticatedRoutes=['/dashboard','/trade','/markets','/portfolio','/orders','/investments','/broadcasts','/wallet','/wallet/transactions','/wallet/convert','/kyc','/tier','/settings','/support','/notifications','/activity','/education','/news','/stories','/client-stories','/community','/cards','/cards/apply'];
 const adminRoutes=['/admin/login','/admin','/admin/activity','/admin/approved-deposits','/admin/approved-withdrawals','/admin/audit-logs','/admin/broadcasts','/admin/cards','/admin/command-center','/admin/community','/admin/content','/admin/deleted-items','/admin/investments','/admin/kyc','/admin/markets','/admin/nova','/admin/operations','/admin/payments','/admin/positions','/admin/providers','/admin/receipts','/admin/settings','/admin/settlements','/admin/stories','/admin/support','/admin/tax-services','/admin/tiers','/admin/users','/admin/verified-accounts','/admin/waitlist'];
 const appOrigin=process.env.AUREVIA_E2E_APP_URL||'http://127.0.0.1:4310';
-const providerOrigin=process.env.AUREVIA_E2E_PROVIDER_URL||'http://127.0.0.1:4311';
 
 async function revealSupportChat(page:Page){
 	const peek=page.getByRole('button',{name:'Show chat support'});
@@ -967,195 +966,21 @@ test('registration page refresh and Turnstile retries do not submit and render t
 	expect(registrationSubmissions).toBe(1);
 });
 
-test('mobile verification keeps an active email code available during its resend cooldown',async({page})=>{
-	const email='pending-registration@example.invalid';
-	let verificationPayload:Record<string,unknown>|undefined;
-	await page.setViewportSize({width:320,height:800});
-	await page.route('**/api/register/resend',route=>route.fulfill({
+test('signup validates Turnstile then creates and signs in an account without phone OTP',async({page})=>{
+	const email=`immediate-signup-${randomUUID()}@example.invalid`;
+	await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',route=>route.fulfill({
 		status:200,
-		contentType:'application/json',
-		body:JSON.stringify({method:'email-code',message:'A verification code was already requested. Check your email.',resendAfterSeconds:3480}),
+		contentType:'application/javascript',
+		body:`window.__aureviaTurnstileOptions=null;window.turnstile={render:function(_container,options){window.__aureviaTurnstileOptions=options;return 'test-widget';},reset:function(){},remove:function(){}};`,
 	}));
-	await page.route('**/api/register/verify',async route=>{
-		verificationPayload=route.request().postDataJSON() as Record<string,unknown>;
-		await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({verified:true})});
-	});
-
-	await page.goto(`/verify-email?email=${encodeURIComponent(email)}`);
-	await expect(page.getByRole('heading',{name:'Verify your email'})).toBeVisible();
-	await expect(page.locator('.phone-verification-card')).not.toContainText(email);
-	await expect(page.locator('[role="status"]')).toContainText('A verification code was already requested.');
-	await expect(page.getByRole('button',{name:'Resend code in 3480s'})).toBeDisabled();
-	await expect(page.getByLabel('Six-digit verification code')).toBeVisible();
-	await expectNoHorizontalOverflow(page);
-	await page.getByLabel('Six-digit verification code').fill('123456');
-	await page.getByRole('button',{name:'Verify email code'}).click();
-	await page.waitForURL('/login?verified=1');
-	expect(verificationPayload).toEqual({email,code:'123456'});
-});
-
-test('mobile verification shows an Akedly quota cooldown without automatically resending',async({page})=>{
-	let resendRequests=0;
-	await page.setViewportSize({width:320,height:800});
-	await page.route('**/api/register/resend',async route=>{
-		resendRequests++;
-		await route.fulfill({
-			status:402,
-			contentType:'application/json',
-			body:JSON.stringify({error:'The verification route has temporarily reached its delivery limit.',retryAfterSeconds:90,referenceId:'1ad1bb6f-a115-4124-a539-05d0f86ce570'}),
-		});
-	});
-
-	await page.goto('/verify-email?email=quota-test%40example.invalid');
-	await expect(page.locator('.auth-error')).toContainText('You can retry in 2 minute(s).');
-	await expect(page.locator('.auth-error')).toContainText('Reference: 1ad1bb6f-a115-4124-a539-05d0f86ce570.');
-	await expectNoHorizontalOverflow(page);
-	expect(resendRequests).toBe(1);
-	await page.waitForTimeout(500);
-	expect(resendRequests).toBe(1);
-});
-
-test('mobile registration verification offers a top-level Akedly widget fallback',async({page})=>{
-	const email='pending-phone-registration@example.invalid';
-	const iframeUrl='https://auth.akedly.io/auth?attemptId=attempt_1234567890';
-	await page.setViewportSize({width:320,height:800});
-	await page.route('**/api/register/session*',route=>route.fulfill({
-		status:200,
-		contentType:'application/json',
-		body:JSON.stringify({email,phone:'+447400123456'}),
-	}));
-	await page.route('**/api/register/resend',route=>route.fulfill({
-		status:200,
-		contentType:'application/json',
-		body:JSON.stringify({
-			method:'akedly',
-			channel:'SMS',
-			attemptId:'attempt_1234567890',
-			iframeUrl,
-			expiresAt:new Date(Date.now()+4*60_000).toISOString(),
-		}),
-	}));
-	await page.route('https://auth.akedly.io/**',route=>route.fulfill({
-		status:200,
-		contentType:'text/html',
-		body:'<html><body>Mock secure verification</body></html>',
-	}));
-
-	await page.goto(`/verify-email?email=${encodeURIComponent(email)}`);
-	const fallbackLink=page.getByRole('link',{name:'open secure verification in a new tab'});
-	await expect(fallbackLink).toHaveAttribute('href',iframeUrl);
-	await expect(fallbackLink).toHaveAttribute('target','_blank');
-	await expect(page.getByTitle('Akedly secure phone verification')).toBeVisible();
-	await expectNoHorizontalOverflow(page);
-});
-
-test('phone verification masks the phone, hides email, and stays compact across viewport sizes',async({page})=>{
-	const email='masked-phone-registration@example.invalid';
-	const registrationRequestId='1ad1bb6f-a115-4124-a539-05d0f86ce570';
-	const iframeUrl='https://auth.akedly.io/auth?attemptId=attempt_2345678901';
-	let resendHeaders:Record<string,string>|undefined;
-	await page.addInitScript(({storedEmail,requestId})=>{
-		window.sessionStorage.setItem('aurevia-registration-request-id',JSON.stringify({email:storedEmail,requestId}));
-	},{storedEmail:email,requestId:registrationRequestId});
-	await page.route('**/api/register/session*',route=>route.fulfill({
-		status:200,
-		contentType:'application/json',
-		body:JSON.stringify({email,phone:'+2348031237250'}),
-	}));
-	await page.route('**/api/register/resend',async route=>{
-		resendHeaders=route.request().headers();
-		await route.fulfill({
-			status:200,
-			contentType:'application/json',
-			body:JSON.stringify({
-				method:'akedly',
-				channel:'SMS',
-				attemptId:'attempt_2345678901',
-				iframeUrl,
-				expiresAt:new Date(Date.now()+4*60_000).toISOString(),
-				resendAfterSeconds:45,
-			}),
-		});
-	});
-	await page.route('**/api/register/status',route=>route.fulfill({
-		status:200,
-		contentType:'application/json',
-		body:JSON.stringify({verified:false,expired:false}),
-	}));
-	await page.route('https://auth.akedly.io/**',route=>route.fulfill({
-		status:200,
-		contentType:'text/html',
-		body:'<html><body>Mock secure verification</body></html>',
-	}));
-
-	await page.goto(`/verify-email?email=${encodeURIComponent(email)}`);
-	await expect(page.getByRole('heading',{name:'Verify your phone number'})).toBeVisible();
-	await expect(page.locator('.phone-verification-number')).toHaveText('+234 ••• ••• 7250');
-	await expect(page.locator('.phone-verification-card')).not.toContainText(email);
-	await expect(page.getByRole('button',{name:'Resend code in 45s'})).toBeDisabled();
-	expect(resendHeaders?.['x-aurevia-registration-request-id']).toBe(registrationRequestId);
-	for(const width of [320,375,390,430,1280]){
-		await page.setViewportSize({width,height:900});
-		await expectNoHorizontalOverflow(page);
-	}
-});
-
-test('new registration fails closed without configured phone verification',async({page})=>{
-	const email=`phone-verification-unavailable-${randomUUID()}@example.invalid`;
-	const response=await page.request.post('/api/register',{
-		headers:{'x-forwarded-for':'192.0.2.150'},
-		data:{
-			name:'Temporary Browser Test',
-			email,
-			password:'SecureTestPassword1',
-			country:'United States',
-			dateOfBirth:'2000-02-29',
-			phone:'+447400123456',
-			accountMode:'DEMO',
-			termsAccepted:true,
-			captchaToken:'isolated-test-turnstile-token',
-		},
-	});
-
-	expect(response.status()).toBe(503);
-	const result=await response.json();
-	expect(result).toMatchObject({
-		code:'PHONE_VERIFICATION_UNAVAILABLE',
-		error:'Phone verification is temporarily unavailable because the verification service is not ready. Your details were not saved; please try again later or contact support.',
-		requestId:expect.any(String),
-		referenceId:expect.any(String),
-		diagnostics:{
-			integrationEnabled:false,
-			missingConfiguration:expect.arrayContaining(['AKEDLY_ENABLED=true']),
-		},
-	});
-	expect(result.referenceId).toBe(result.requestId);
-	expect(await db.user.findUnique({where:{email}})).toBeNull();
-	expect(await db.registrationAttempt.findUnique({where:{email}})).toBeNull();
-});
-
-test.skip('legacy email-code registration fallback is not used for new signups',async({page})=>{
-	const email=fixture('REGISTRATION_EMAIL');
-	const password=fixture('REGISTRATION_PASSWORD');
-	const openProfileSettings=async()=>{
-		await page.goto('/settings');
-		await page.getByRole('link',{name:/Account Details/}).click();
-	};
 	await page.setViewportSize({width:390,height:844});
 	await page.goto('/register');
+	await waitForStartup(page);
 	await expect(page.getByRole('heading',{name:'Open an account'})).toBeVisible();
-	await expect(page.getByRole('button',{name:'Create account'})).toBeDisabled();
-	await expectNoHorizontalOverflow(page);
-	await expect(page.getByRole('radio',{name:/DEMO ACCOUNT/})).toBeVisible();
-	const realMode=page.getByRole('radio',{name:/REAL ACCOUNT/});
-	await realMode.check();
-	await expect(realMode).toBeChecked();
-	const demoMode=page.getByRole('radio',{name:/DEMO ACCOUNT/});
-	await demoMode.check();
-	await expect(demoMode).toBeChecked();
-	await page.getByLabel('First name').fill('Temporary');
-	await page.getByLabel('Last name').fill('Browser Test');
-	await page.getByLabel('Date of birth').fill('2000-02-29');
+	const registrationForm=page.locator('form.register-form').first();
+	await registrationForm.locator('input[autocomplete="given-name"]').fill('Temporary');
+	await registrationForm.locator('input[autocomplete="family-name"]').fill('Browser Test');
+	await registrationForm.locator('input[type="date"]').fill('2000-02-29');
 	const residencePicker=page.getByRole('button',{name:/country of residence/i});
 	await residencePicker.click();
 	const residenceDialog=page.getByRole('dialog',{name:'Select country of residence'});
@@ -1166,135 +991,30 @@ test.skip('legacy email-code registration fallback is not used for new signups',
 	const phoneDialog=page.getByRole('dialog',{name:'Select phone country and dialing code'});
 	await phoneDialog.getByRole('searchbox').fill('United Kingdom');
 	await phoneDialog.getByRole('option',{name:/United Kingdom.*GB.*\+44/}).click();
-	await page.getByLabel('Email address').fill(email);
-	await page.getByLabel(/Phone number/).fill('07400 123456');
-	await page.getByLabel('Password', {exact:true}).fill(password);
-	await page.getByLabel('Confirm password').fill(password);
-	await page.getByRole('checkbox').check();
-	await expect(page.getByRole('button',{name:'Create account'})).toBeEnabled();
-	const registrationRequest=page.waitForRequest(request=>request.url().endsWith('/api/register')&&request.method()==='POST');
-	const registrationResponse=page.waitForResponse(response=>response.url().endsWith('/api/register')&&response.request().method()==='POST');
-	await page.getByRole('button',{name:'Create account'}).click();
-	const registrationPayload=(await registrationRequest).postDataJSON();
-	expect(registrationPayload).toMatchObject({name:'Temporary Browser Test',country:'United States',phone:'+447400123456',dateOfBirth:'2000-02-29'});
-	expect(registrationPayload.captchaToken).toEqual(expect.any(String));
-	expect(registrationPayload.captchaToken.trim().length).toBeGreaterThan(0);
-	const response=await registrationResponse;
-	const responseBody=await response.json();
-	expect(response.status(),JSON.stringify(responseBody)).toBe(201);
-	expect(responseBody).toMatchObject({verificationRequired:true,authMethod:'email-code'});
-	await expect(page).toHaveURL(url=>url.pathname==='/verify-email'&&!url.searchParams.has('email'));
-	expect(await db.user.findUnique({where:{email}})).toBeNull();
-	await expect.poll(async()=>{
-		const attempt=await db.registrationAttempt.findUnique({where:{email},select:{verification:{select:{channel:true}}}});
-		return attempt?.verification?.channel??null;
-	}).toBe('EMAIL');
-	expect(await db.registrationAttempt.findUniqueOrThrow({where:{email},select:{email:true,verification:{select:{channel:true}}}})).toEqual({email,verification:{channel:'EMAIL'}});
-	await expect.poll(async()=>await (await page.request.get(`${providerOrigin}/stats`)).json()).toMatchObject({email:1,sms:0});
-	const codeResponse=await page.request.get(`${providerOrigin}/test-code?email=${encodeURIComponent(email)}`);
-	expect(codeResponse.ok()).toBe(true);
-	const {code}=await codeResponse.json() as {code:string};
-	await page.goto('/login');
-	await page.getByLabel('Email or administrator username').fill(email);
-	await page.getByLabel('Password',{exact:true}).fill(password);
-	await page.getByRole('button',{name:'Sign in'}).click();
-	await expect(page.getByRole('alert')).toBeVisible();
-	await page.goto(`${appOrigin}/verify-email?email=${encodeURIComponent(email)}`);
-	await expect(page.getByLabel('Six-digit verification code')).toBeVisible();
-	await page.getByLabel('Six-digit verification code').fill(code);
-	const verificationResponse=page.waitForResponse(response=>response.url().endsWith('/api/register/verify')&&response.request().method()==='POST');
-	await page.getByRole('button',{name:'Verify email code'}).click();
-	const verifiedResponse=await verificationResponse;
-	const verificationBody=await verifiedResponse.json();
-	expect(verifiedResponse.status(),JSON.stringify(verificationBody)).toBe(200);
-	await page.waitForURL('/login?verified=1');
-	const verifiedUser=await db.user.findUniqueOrThrow({where:{email},select:{requiresRegistrationVerification:true,emailVerifiedAt:true,aureviaExchangeId:true}});
-	expect(verifiedUser).toMatchObject({requiresRegistrationVerification:false,emailVerifiedAt:expect.any(Date)});
-	expect(verifiedUser.aureviaExchangeId).toMatch(/^AEX-\d{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
-	expect(await db.verificationCode.count({where:{user:{email},channel:'EMAIL'}})).toBe(0);
-	const duplicateRegistration=await page.request.post('/api/register',{data:registrationPayload});
-	expect(duplicateRegistration.status()).toBe(409);
-	await page.getByLabel('Email or administrator username').fill(email);
-	await page.getByLabel('Password',{exact:true}).fill(password);
-	await page.getByRole('button',{name:'Sign in'}).click();
-	await page.waitForURL(/dashboard/);
+	await registrationForm.getByLabel('Email address').fill(email);
+	await registrationForm.getByLabel(/Phone number/).fill('07400 123456');
+	await registrationForm.getByLabel('Password',{exact:true}).fill('SecureTestPassword1');
+	await registrationForm.getByLabel('Confirm password').fill('SecureTestPassword1');
+	await registrationForm.getByRole('checkbox').check();
+	await expect(registrationForm.getByRole('button',{name:'Create account'})).toBeDisabled();
+	await page.evaluate(()=>{
+		const options=(window as Window & {__aureviaTurnstileOptions?:{callback?:(token:string)=>void}}).__aureviaTurnstileOptions;
+		options?.callback?.('isolated-test-turnstile-token');
+	});
+	await expect(registrationForm.getByRole('button',{name:'Create account'})).toBeEnabled();
+	await registrationForm.getByRole('button',{name:'Create account'}).click();
+	await page.waitForURL(url=>url.pathname==='/dashboard');
 	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
-	await expect(page.locator('.dashboard-profile-panel')).toHaveCount(0);
-	await openProfileSettings();
-	await expect(page.getByRole('tab',{name:'Profile'})).toBeVisible();
-	await expect(page.getByLabel('Email address')).toHaveValue(email);
-	await page.getByLabel('First name').fill('Edited');
-	await page.getByLabel('Last name').fill('Persistent Owner');
-	await page.getByLabel('Phone').fill('+447400123457');
-	await page.getByLabel('Country').fill('United Kingdom');
-	await page.getByLabel('Address (optional)').fill('42 Persistent Test Road');
-	const profilePatchRequest=page.waitForRequest(request=>request.url().endsWith('/api/profile')&&request.method()==='PATCH');
-	const profilePatchResponse=page.waitForResponse(response=>response.url().endsWith('/api/profile')&&response.request().method()==='PATCH');
-	await page.getByRole('button',{name:'Save profile'}).click();
-	const patchRequest=await profilePatchRequest;
-	const patchResponse=await profilePatchResponse;
-	expect(patchRequest.postDataJSON()).toMatchObject({firstName:'Edited',lastName:'Persistent Owner',phone:'+447400123457',country:'United Kingdom',address:'42 Persistent Test Road'});
-	expect(await patchResponse.json()).toMatchObject({name:'Edited Persistent Owner',firstName:'Edited',lastName:'Persistent Owner',phone:'+447400123457',country:'United Kingdom',address:null});
-	await expect(page.getByRole('status')).toContainText('Profile saved successfully.');
-	await page.reload();
-	await page.getByRole('link',{name:/Account Details/}).click();
-	await expect(page.getByLabel('First name')).toHaveValue('Edited');
-	await expect(page.getByLabel('Last name')).toHaveValue('Persistent Owner');
-	await expect(page.getByLabel('Phone')).toHaveValue('+447400123457');
-	await expect(page.getByLabel('Country')).toHaveValue('United Kingdom');
-	await expect(page.getByLabel('Address (optional)')).toHaveValue('');
-	await page.goto('/dashboard');
-	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
-	const profileResponse=await page.request.get('/api/profile');
-	expect(profileResponse.ok()).toBeTruthy();
-	const profile=await profileResponse.json();
-	expect(profile).toMatchObject({name:'Edited Persistent Owner',firstName:'Edited',lastName:'Persistent Owner',phone:'+447400123457',country:'United Kingdom',address:null});
-	expect(profile.phoneVerified).toBe(false);
-	expect(profile).not.toHaveProperty('dob');
-	expect(profile).not.toHaveProperty('dateOfBirth');
-	const kycResponse=await page.request.get('/api/kyc');
-	expect(kycResponse.status()).toBe(403);
-	const demoWallet=await page.request.get('/api/wallet');
-	expect(Number((await demoWallet.json()).balance)).toBe(5000);
-	await selectAccountMode(page,'REAL');
-	await openProfileSettings();
-	await expect(page.getByLabel('Address (optional)')).toHaveValue('42 Persistent Test Road');
-	expect(await page.request.get('/api/profile').then(response=>response.json())).toMatchObject({address:'42 Persistent Test Road'});
-	expect((await page.request.get('/api/kyc').then(response=>response.json())).dob).toBe('2000-02-29T00:00:00.000Z');
-	await page.goto('/dashboard');
-	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
-	await expect(page.locator('.user-mode-pill')).toContainText('REAL ACCOUNT');
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(0);
-	await selectAccountMode(page,'DEMO');
-	await page.goto('/dashboard');
-	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
-	await expect(page.locator('.user-mode-pill')).toContainText('DEMO MODE · VIRTUAL');
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
-	await logout(page);
-	const healthAfterLogout=await page.request.get('/api/health');
-	expect(healthAfterLogout.ok()).toBeTruthy();
-	expect(await healthAfterLogout.json()).toMatchObject({ok:true,database:'ok'});
-	await loginAs(page,email,password);
-	await expect(page.getByRole('heading',{name:'My assets'})).toBeVisible();
-	expect(await page.request.get('/api/profile').then(response=>response.json())).toMatchObject({name:'Edited Persistent Owner',address:null});
-	await page.goto('/');
-	await expect(page.getByRole('link',{name:/Dashboard/}).first()).toBeVisible();
-	await expect(page.getByRole('button',{name:/Notifications/})).toBeVisible();
-	await expect(page.getByRole('link',{name:'Login'})).toHaveCount(0);
-	await page.reload();
-	await expect(page.getByRole('button',{name:/Notifications/})).toBeVisible();
-	await logout(page);
-	await expect(page).toHaveURL(/\/login/);
-	await page.setViewportSize({width:390,height:844});
-	await page.goto('/');
-	await page.getByRole('button',{name:'Open navigation'}).click();
-	const primaryNavigation=page.getByRole('navigation',{name:'Primary navigation'});
-	await expect(primaryNavigation.getByRole('link',{name:'Sign in',exact:true})).toBeVisible();
-	await expect(primaryNavigation.getByRole('link',{name:'Create an account',exact:true})).toBeVisible();
-	await expect(page.getByRole('link',{name:'Open account',exact:true}).first()).toBeVisible();
+
+	const signedIn=await page.request.get('/api/auth/session').then(response=>response.json());
+	expect(signedIn.user.email).toBe(email);
+	expect(await db.user.findUnique({where:{email},select:{status:true,phone:true,phoneVerified:true,phoneVerifiedAt:true}})).toEqual({
+		status:'ACTIVE',phone:'+447400123456',phoneVerified:false,phoneVerifiedAt:null,
+	});
+	expect(await db.registrationAttempt.findUnique({where:{email}})).toBeNull();
 });
 
-test('legacy account without registration verification metadata can still sign in',async({page})=>{
+test('existing account can sign in without signup verification',async({page})=>{
 	await loginAs(page,fixture('LEGACY_USER_EMAIL'),fixture('LEGACY_USER_PASSWORD'));
 	await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
 	await expect(page.getByRole('button',{name:/Notifications/})).toBeVisible();
@@ -2008,7 +1728,6 @@ test('Nova escalation reaches admin and admin response appears with notification
 
 test('profile completion and administrator identity review progress the account through all tiers',async({browser,page})=>{
 	const user=await createIsolatedDemoUser('tier-progression');
-	await db.user.update({where:{email:user.email},data:{requiresRegistrationVerification:false}});
 	await loginAs(page,user.email,user.password);
 	const profileUpdate=await page.request.patch('/api/profile',{data:{name:'Profile Complete User',country:'United States',phone:'+14155552671'}});
 	expect(profileUpdate.ok()).toBe(true);
@@ -2043,6 +1762,8 @@ test('profile completion and administrator identity review progress the account 
 		await tx.user.update({where:{id:isolated.id},data:{phoneVerified:true,phoneVerifiedAt:submittedAt,kycStatus:'APPROVED',verifiedAt:submittedAt}});
 		await tx.kycProfile.create({data:{userId:isolated.id,legalName:'Profile Complete User',dob:new Date('1990-01-01'),address:'Test address',idType:'PASSPORT',idNumber:'E2E-IDENTITY',submittedAt,reviewedAt:submittedAt}});
 		await tx.kycDocument.create({data:{userId:isolated.id,kind:'IDENTITY_DOCUMENT',filename:'tier-review-test.jpg',storageKey:`e2e/tier-review/${randomUUID()}.jpg`,mimeType:'image/jpeg',size:1024,status:'APPROVED',reviewedAt:submittedAt}});
+		await tx.kycDocument.create({data:{userId:isolated.id,kind:'SELFIE',filename:'tier-review-selfie.jpg',storageKey:`e2e/tier-review/${randomUUID()}.jpg`,mimeType:'image/jpeg',size:1024,status:'APPROVED',reviewedAt:submittedAt}});
+		await tx.kycDocument.create({data:{userId:isolated.id,kind:'PROOF_OF_ADDRESS',filename:'tier-review-address.pdf',storageKey:`e2e/tier-review/${randomUUID()}.pdf`,mimeType:'application/pdf',size:1024,status:'APPROVED',reviewedAt:submittedAt}});
 	});
 	const submittedRequest=await page.request.post('/api/tier-requests',{data:{message:'Isolated tier progression review.'}});
 	expect(submittedRequest.status()).toBe(201);
@@ -2220,7 +1941,7 @@ test('administrator user and KYC actions persist and report protected actions',a
 	expect(user).toBeTruthy();
 	expect(investor).toBeTruthy();
 	expect(users.some((item:{role:string})=>item.role==='ADMIN')).toBe(false);
-	await db.user.update({where:{id:investor.id},data:{requiresRegistrationVerification:true,verifiedAt:null}});
+	await db.user.update({where:{id:investor.id},data:{verifiedAt:null}});
 	const selfId=await page.request.get('/api/auth/session').then(response=>response.json().then(session=>session.user.id as string));
 	const selfDemotion=await page.request.patch('/api/admin/users',{data:{userId:selfId,role:'USER'}});
 	expect(selfDemotion.status()).toBe(409);
@@ -2280,10 +2001,8 @@ test('administrator user and KYC actions persist and report protected actions',a
 		const refreshed=await page.request.get('/api/admin/users').then(response=>response.json());
 		return refreshed.find((item:{id:string})=>item.id===investor.id)?.kycStatus;
 	}).toBe('APPROVED');
-	const approvedInvestor=await db.user.findUniqueOrThrow({where:{id:investor.id},select:{requiresRegistrationVerification:true,verifiedAt:true,emailVerifiedAt:true}});
-	expect(approvedInvestor.requiresRegistrationVerification).toBe(true);
+	const approvedInvestor=await db.user.findUniqueOrThrow({where:{id:investor.id},select:{verifiedAt:true}});
 	expect(approvedInvestor.verifiedAt).toBeInstanceOf(Date);
-	expect(approvedInvestor.emailVerifiedAt).toBeNull();
 	const verifiedResponse=await page.request.get(`/api/admin/verified-accounts?search=${encodeURIComponent(fixture('INVESTOR_EMAIL'))}&tier=1&status=ACTIVE`);
 	expect(verifiedResponse.ok()).toBe(true);
 	const verifiedResults=await verifiedResponse.json();

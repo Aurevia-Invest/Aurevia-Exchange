@@ -118,9 +118,9 @@ export default function Settings(){
 		setDeleting(true);setError('');
 		try{
 			const response=await fetch('/api/account/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:deletePassword,confirmation:deleteConfirmation})});
-			const result=response.status===204?null:await response.json();
+			const result=await response.json();
 			if(!response.ok)throw new Error(result?.error||'Account deletion could not be completed.');
-			await signOut({callbackUrl:'/register?deleted=1'});
+			await signOut({callbackUrl:'/'});
 		}catch(exception){setError(exception instanceof Error?exception.message:'Account deletion could not be completed.');setDeleting(false)}
 	}
 
@@ -164,7 +164,7 @@ export default function Settings(){
 					<div className="security-row"><span className="security-icon"><KeyRound size={16}/></span><div><b>{translate('twoFactorFlag')}</b><p>{translate('twoFactorSimulation')}</p></div><span className="status-pill">{profile?.twoFactorEnabled?translate('flagOn'):translate('notEnabled')}</span></div>
 					<div className="security-row"><span className="security-icon"><UserRound size={16}/></span><div><b>{translate('currentServerSession')}</b><p>{translate('sessionIdCopy',{sessionId:session?.user.sessionId||translate('loading')})}</p></div><span className="status-pill">{translate('oneActiveSession')}</span></div>
 					<div className="account-callout mt-4"><Bell size={16}/><span>{translate('notificationBellCopy')}</span></div>
-					<section className="mt-6 border-t border-white/10 pt-5" aria-labelledby="delete-account-heading"><div className="flex items-center gap-2"><Trash2 size={17} className="text-loss"/><h3 id="delete-account-heading" className="font-semibold">Delete My Account</h3></div><p className="mt-2 max-w-2xl text-sm muted">Deleting your account closes access and removes personal profile, identity, and support data. You will lose access to account history. Anonymized ledger and audit records may remain to preserve financial integrity.</p>
+					<section className="mt-6 border-t border-white/10 pt-5" aria-labelledby="delete-account-heading"><div className="flex items-center gap-2"><Trash2 size={17} className="text-loss"/><h3 id="delete-account-heading" className="font-semibold">Delete My Account</h3></div><p className="mt-2 max-w-2xl text-sm muted">This permanently deletes your account and its related records and uploaded files. Deletion is blocked while you have pending or approved funding requests or a non-zero balance. Re-enter your current password and type DELETE to confirm.</p>
 						{!showDeleteForm?<button type="button" className="btn mt-4 bg-loss text-black" onClick={()=>setShowDeleteForm(true)}>Delete My Account</button>:<form className="mt-4 grid max-w-xl gap-3" onSubmit={event=>void deleteAccount(event)}>
 							<label className="account-label">Current password<input className="input" type="password" autoComplete="current-password" required maxLength={128} value={deletePassword} onChange={event=>setDeletePassword(event.target.value)}/></label>
 							<label className="account-label">Type DELETE to confirm<input className="input" autoComplete="off" required value={deleteConfirmation} onChange={event=>setDeleteConfirmation(event.target.value)}/></label>

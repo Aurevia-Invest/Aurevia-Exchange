@@ -5,6 +5,7 @@ import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {jsonSafe} from '@/lib/serializers';
 import {createNotification} from '@/lib/notifications';
+import {deletePrivateObject} from '@/lib/private-storage';
 
 const schema=z.discriminatedUnion('action',[
 	z.object({action:z.literal('reply'),conversationId:z.string().min(1),message:z.string().trim().min(1).max(4000)}),
@@ -67,5 +68,27 @@ export async function PATCH(req:Request){
 		if(error instanceof ZodError)return NextResponse.json({error:'Invalid support response.'},{status:400});
 		if(error instanceof Error&&error.message==='CONVERSATION_NOT_FOUND')return NextResponse.json({error:'Conversation not found.'},{status:404});
 		return NextResponse.json({error:'Unable to update the support conversation.'},{status:400});
+	}
+}
+
+export async function DELETE(request:Request){
+	try{
+		const admin=await requireAdmin();
+		const input=z.object({conversationId:z.string().min(1),confirmation:z.literal('DELETE')}).parse(await request.json());
+		const file=await db.$transaction(async tx=>{
+			const current=await tx.supportConversation.findUnique({where:{id:input.conversationId},select:{id:true,userId:true,attachmentKey:true}});
+			if(!current)throw new Error('CONVERSATION_NOT_FOUND');
+			await tx.supportConversation.delete({where:{id:current.id}});
+			await tx.auditLog.create({data:{actorId:admin.id,action:'ADMIN_SUPPORT_CONVERSATION_DELETED',entity:'SUPPORT_CONVERSATION',entityId:current.id}});
+			return current.attachmentKey?{ownerId:current.userId,key:current.attachmentKey}:null;
+		});
+		const fileCleanupPending=file?!await deletePrivateObject('support',file.ownerId,file.key):false;
+		return NextResponse.json({ok:true,fileCleanupPending});
+	}catch(error){
+		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
+		if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
+		if(error instanceof ZodError)return NextResponse.json({error:'Select a conversation and type DELETE to confirm.'},{status:400});
+		if(error instanceof Error&&error.message==='CONVERSATION_NOT_FOUND')return NextResponse.json({error:'Conversation not found.'},{status:404});
+		return NextResponse.json({error:'Unable to delete this support conversation.'},{status:500});
 	}
 }

@@ -44,11 +44,6 @@ export type ServerConfiguration = {
     appUrl: string;
     configured: boolean;
   };
-  captcha: {
-    turnstileSiteKey: string;
-    turnstileSecretKey: string;
-    turnstileConfigured: boolean;
-  };
   execution: {
     realEnabled: boolean;
     alpacaPaperOrdersEnabled: boolean;
@@ -241,11 +236,6 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
       termiiSenderId: env('TERMII_SENDER_ID', source),
       appUrl: cleanUrl(env('NEXT_PUBLIC_APP_URL', source) || env('NEXTAUTH_URL', source) || env('RENDER_EXTERNAL_URL', source) || 'https://aurevia-exchange-6hfi.onrender.com'),
       configured: verificationSmsConfigured,
-    },
-    captcha: {
-      turnstileSiteKey: env('NEXT_PUBLIC_TURNSTILE_SITE_KEY', source),
-      turnstileSecretKey: env('TURNSTILE_SECRET_KEY', source),
-      turnstileConfigured: Boolean(env('NEXT_PUBLIC_TURNSTILE_SITE_KEY', source) && env('TURNSTILE_SECRET_KEY', source)),
     },
     execution: {
       realEnabled: booleanEnv('REAL_EXECUTION_ENABLED', source),

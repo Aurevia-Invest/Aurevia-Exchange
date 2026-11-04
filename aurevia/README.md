@@ -8,7 +8,7 @@ Aurevia Exchange is a Next.js application using TypeScript, PostgreSQL, Prisma, 
 - Landing page, registration and credential login
 - JWT sessions with USER/ADMIN role enforcement
 - KYC profile submission, private identity-document uploads, and administrator review states
-- Profile and account settings
+- Profile and account settings, including password-confirmed account deletion
 - 2FA security flag
 - Live dashboard with cash equity and open positions
 - Realtime market ticker
@@ -25,6 +25,7 @@ Aurevia Exchange is a Next.js application using TypeScript, PostgreSQL, Prisma, 
 ### Administration
 - Role-protected admin area
 - User list and freeze/unfreeze
+- Audited permanent deletion of user accounts, KYC submissions, funding requests, and support conversations
 - Role-separated administrator and customer accounts; administrators cannot access customer account routes
 - KYC profile and private document approval/rejection
 - Per-user deposit and withdrawal enablement controls
@@ -38,7 +39,7 @@ Aurevia Exchange is a Next.js application using TypeScript, PostgreSQL, Prisma, 
 - Audit log
 - Realtime operational statistics
 
-Financial, identity-review, and audit records are intentionally not recyclable: account-erasure requests follow the privacy-preserving closure workflow, and immutable financial/audit history remains subject to its retention rules.
+User account deletion permanently removes the user and related account records in a transaction, and then removes associated private uploads. Pending/approved/processing funding requests and non-zero ledger balances block self-service and ordinary administrator deletion; an administrator can explicitly force deletion. Audit entries are retained with actor/target references and metadata scrubbed where needed.
 
 ### Public Stories
 
@@ -106,6 +107,22 @@ The isolated database bootstraps only the minimal Supabase Storage tables, priva
 
 Playwright runs with two workers. Public-route and responsive-layout checks are in a separate spec so they can run alongside the shared-fixture application suite; the latter remains sequential to prevent races against its seeded accounts.
 
+## One-time account cleanup
+
+The manual `scripts/purge-accounts.ts` cleanup is never called by build, install, or migration commands. From `aurevia/`, first run a dry run with the exact account email:
+
+```sh
+npm exec tsx -- scripts/purge-accounts.ts --keep-email=<exact-email>
+```
+
+The dry run prints masked account identifiers and changes nothing. To execute, add `--execute` and enter `DELETE ALL NON-ADMIN ACCOUNTS` at the interactive prompt:
+
+```sh
+npm exec tsx -- scripts/purge-accounts.ts --keep-email=<exact-email> --execute
+```
+
+The script aborts unless that exact email matches one non-admin user, preserves every administrator, exports the selected users and related account records to a mode-restricted JSON file in the gitignored `backups/` directory, deletes in transactional batches, and verifies that exactly one non-admin user remains. Keep the backup securely; it contains private account data.
+
 ## Environment
 
 Copy `.env.example` to `.env`.
@@ -122,13 +139,13 @@ Phone registration uses an explicit, searchable international country selector p
 
 Registration retries distinguish permanent accounts from temporary sessions. An active unverified account is routed to its existing verification flow without changing its password; a verified account is directed to sign-in/password recovery; frozen, suspended, closed, and deleted accounts are not reactivated. A still-valid temporary session can be resumed with its HttpOnly cookie or original registration password, while expired attempts are removed before a replacement can be created. Phone numbers already associated with another account or active pending registration are rejected; a final transaction-level PostgreSQL advisory lock prevents two simultaneous verified registrations from claiming the same phone number.
 
-Configure `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and server-only `TURNSTILE_SECRET_KEY` for Cloudflare Turnstile. The registration page loads the public site key at runtime from `/api/register/security`, so a Render build does not need the public key baked into its client bundle. The endpoint returns only the public key and only when both values are configured; it is not cached. Add the canonical Render hostname and any configured custom application hostname to the Cloudflare widget's allowed hostnames. The server accepts the canonical `aurevia-exchange-6hfi.onrender.com` hostname and exact hostnames configured by `NEXT_PUBLIC_APP_URL`, `NEXTAUTH_URL`, or `RENDER_EXTERNAL_URL`; it verifies each token with Cloudflare before storing temporary registration data and accepts it only for action `register`. Missing, invalid, expired, reused, wrong-host, or wrong-action tokens fail closed; provider/configuration failures return a retryable service error. New registration requires `AKEDLY_ENABLED=true` and all six server-side values: `AKEDLY_API_KEY`, `AKEDLY_PIPELINE_ID`, `AKEDLY_WIDGET_ID`, `AKEDLY_PUBLIC_KEY`, `AKEDLY_WIDGET_SECRET`, and `AKEDLY_WEBHOOK_SECRET`. Missing Akedly configuration fails closed before storing a new registration; provider failures preserve the temporary attempt and never fall back to email OTP. Legacy email challenges already in progress remain recoverable. Configure the complete SMTP set (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`) to deliver branded email through Brevo; port 587 uses mandatory STARTTLS. The existing Resend integration remains a compatibility fallback only when SMTP is not configured. This shared mailer handles recovery, verification email challenges, support/funding messages, and KYC notices. KYC outbox delivery still requires its existing migration and authenticated cron worker; email failure does not alter KYC decisions. Password reset remains email-only. REAL-mode KYC phone verification retains its existing Akedly/Termii behavior. Legacy `REGISTRATION_VERIFICATION_ENABLED` and `PHONE_VERIFICATION_REQUIRED` values do not disable registration verification. The production URL defaults to the current Render hostname; `PORT` and `MARKET_TICK_MS` have runtime defaults.
+Signup does not load an external security challenge or send a challenge token. Requests are limited to five per IP per ten minutes and three per normalized email per hour, and a hidden honeypot rejects automated form submissions. These in-process limits are not shared across multiple app instances. Configure the complete SMTP set (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`) to deliver branded email through Brevo; port 587 uses mandatory STARTTLS. The existing Resend integration remains a compatibility fallback only when SMTP is not configured. This shared mailer handles recovery, support/funding messages, and KYC notices. KYC outbox delivery still requires its existing migration and authenticated cron worker; email failure does not alter KYC decisions. Password reset remains email-only. REAL-mode KYC phone verification retains its existing Akedly/Termii behavior. The production URL defaults to the current Render hostname; `PORT` and `MARKET_TICK_MS` have runtime defaults.
 
-For signup troubleshooting, a fresh-registration response saying phone verification is unavailable is the application's fail-closed Akedly configuration gate: Turnstile validation happens first, and this response is returned before a temporary registration attempt or OTP request is created. Check Render's runtime configuration for `AKEDLY_ENABLED=true` and all six required Akedly values above. Pending-registration retry failures preserve the temporary registration; their response includes a reference ID and missing configuration variable names when applicable. Server diagnostics record the failed application/provider endpoints, safe provider error code and redacted message, HTTP status, provider attempt ID when available, reference ID, and failure timestamp. Never share credential values, CAPTCHA tokens, OTPs, raw provider responses, or complete personal information. Akedly V2 handles its hosted CAPTCHA and OTP routing inside the widget, so destination-country policy, channel availability, quota, and delivery errors must be checked against the configured widget/pipeline and Akedly's provider response—not assumed to be Cloudflare failures.
+Signup failures return a reference ID for support; unexpected server errors are logged with a redacted cause. Never share credential values, OTPs, raw provider responses, or complete personal information.
 
 The authenticated `/api/cron/registration-cleanup` route deletes only expired temporary registration attempts and their cascading temporary verification rows; Vercel schedules it every minute. The Render push-delivery cron runner also invokes this endpoint each minute using `CRON_SECRET`. To prepare an aggregate report of legacy, long-expired unverified accounts, run `npx tsx scripts/registration-cleanup-dry-run.ts --dry-run` in an intentionally configured environment. This report is read-only, returns counts only, and has no apply mode. Review candidate account and financial-history counts before separately authorizing any production cleanup; never use it as authorization to delete permanent users or financial/audit records.
 
-Registration submission quotas apply only after server-side Turnstile verification: at most five verified submissions per forwarded client address and three per normalized email per hour. Failed CAPTCHA checks use separate limits of ten per address and five per email per ten minutes; the endpoint returns `Retry-After` seconds on throttling. Page loads and Turnstile initialization do not consume submission quota. Limits are process-local and are not shared across multiple app instances.
+The registration endpoint returns `Retry-After` seconds when either signup quota is exhausted. Client IPs are taken from the trusted proxy's forwarded address; the honeypot is checked server-side.
 
 Active customer accounts receive a server-generated permanent ID in the form `AEX-YYYY-XXXX-XXXX`, using a cryptographic random suffix and a database unique index. New registrations create the ID in the same transaction as the account and ledger records. The authenticated profile, dashboard, account card, receipts, and admin user management display the ID, and profile/admin update APIs do not accept changes to it. For existing accounts, first run `npx tsx scripts/aurevia-id-backfill.ts --dry-run` against the explicitly intended database and review its aggregate counts. The additive migration adds a nullable unique column without rewriting user or financial records. The controlled rollout is: separately approve the initial report and migration, apply the additive migration, deploy the ID-aware application, rerun and review the dry run, then separately approve and run `AUREVIA_ID_BACKFILL_CONFIRM=APPLY_ACTIVE_USER_IDS npx tsx scripts/aurevia-id-backfill.ts --apply`. The backfill assigns IDs only to active customer accounts, preserves existing IDs, and retains the existing database check constraint for previously email-verified records. Never run the migration, deploy, or apply command against production without separate authorization and a reviewed dry run.
 
@@ -144,7 +161,7 @@ This repository is configured as a Next.js application in `vercel.json`. Vercel 
 - Output directory: leave the Vercel default
 - No custom start command
 
-Configure production and preview environment variables in the Vercel project settings. Required server values are `DATABASE_URL`, `DIRECT_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, `CRON_SECRET`, and `TURNSTILE_SECRET_KEY`; set the public `NEXT_PUBLIC_TURNSTILE_SITE_KEY` for the registration widget. Configure Supabase private-file variables (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`) when those workflows are enabled. Add `ADMIN_USERNAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` before provisioning the administrator. Set the canonical HTTPS app origin explicitly in `NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL`; use a separate staging database and secrets for Preview deployments. Keep credentials server-only except explicitly public site/URL keys.
+Configure production and preview environment variables in the Vercel project settings. Required server values are `DATABASE_URL`, `DIRECT_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, and `CRON_SECRET`. Configure Supabase private-file variables (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`) when those workflows are enabled. Add `ADMIN_USERNAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` before provisioning the administrator. Set the canonical HTTPS app origin explicitly in `NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL`; use a separate staging database and secrets for Preview deployments. Keep credentials server-only except explicitly public site/URL keys.
 
 Use Supabase's pooled connection string for `DATABASE_URL` where appropriate and its direct PostgreSQL connection for `DIRECT_URL`. Apply reviewed Prisma migrations to the target database before promoting the deployment; the Vercel build does not run migrations or seed an administrator. Do not point Preview deployments at production customer data. Configure the private Storage buckets and restrictive policies documented above before enabling uploads.
 
@@ -163,7 +180,7 @@ The internal DEMO market tick defaults to once per second (`MARKET_TICK_MS=1000`
 
 Configure these variables in Render's environment settings (secrets stay in Render, never in source). A local `.env` file is not automatically uploaded to Render:
 
-- Required: `DATABASE_URL`, `DIRECT_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, `CRON_SECRET`, `TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+- Required: `DATABASE_URL`, `DIRECT_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, `CRON_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 - Required for browser push: `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (for example `mailto:aureviainvest@gmail.com`), `PUSH_SUBSCRIPTION_ENCRYPTION_KEY` (32 random bytes encoded as Base64), and `PUSH_DELIVERY_CRON_SECRET`. Generate a VAPID pair with `npx web-push generate-vapid-keys`; set its public and private values in the correspondingly named Render variables, and never commit the private key. Generate the encryption and cron secrets with `openssl rand -base64 32` and `openssl rand -hex 32`, respectively. Keep the VAPID private key, encryption key and cron secret server-only. Back up the encryption key securely and retain it: changing it makes existing stored subscriptions undecryptable.
 - Required for administrator sign-in: `ADMIN_USERNAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`. Use the exact configured username or email and password at `/admin/login`; first sign-in provisions the admin or adopts the existing admin record when the configured email is unused. SMTP/support variables and `MARKET_TICK_MS` are optional for application startup; configure `SMTP_HOST=smtp-relay.brevo.com`, `SMTP_PORT=587`, `SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM` to use Brevo over STARTTLS for outbound mail. The user/password/from values must be supplied through Render's environment settings and never committed. The existing Resend configuration is used only when SMTP is absent. New registrations require phone ownership verification before a permanent account is created; email remains the contact for KYC updates and password recovery. Identity status is administrator-reviewed; it does not indicate external identity verification.
 - Optional external market data: configure `ALPACA_API_KEY` and `ALPACA_SECRET_KEY` (or legacy `ALPACA_API_SECRET`) for primary Alpaca IEX stock history, with `FINNHUB_API_KEY` as the configured fallback. Finnhub also supplies quotes and supported non-stock history. The application keeps live quotes separate from historical candles and labels internal reference data; real-mode charts never substitute demo or internal candles. Historical coverage, IEX access, and quote availability depend on provider plans and supported symbols.

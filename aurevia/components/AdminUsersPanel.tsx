@@ -62,7 +62,7 @@ export default function AdminUsersPanel(){
 	const [accountMode,setAccountMode]=useState<'ALL'|'DEMO'|'REAL'>('ALL');
 	const [selected,setSelected]=useState<AdminUser|null>(null);
 	const [confirmation,setConfirmation]=useState('');
-	const [reason,setReason]=useState('');
+	const [forceDelete,setForceDelete]=useState(false);
 	const [loading,setLoading]=useState(true);
 	const [busy,setBusy]=useState(false);
 	const [busyUserId,setBusyUserId]=useState('');
@@ -108,12 +108,13 @@ export default function AdminUsersPanel(){
 	async function deleteAccount(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();
 		if(!selected||busy)return;
+		if(!window.confirm('Permanently delete this user and all related account data? This cannot be undone.'))return;
 		setBusy(true);setError('');setNotice('');
 		try{
-			const response=await fetch('/api/admin/users/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({userId:selected.id,confirmation,reason})});
+			const response=await fetch('/api/admin/users/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({userId:selected.id,confirmation,force:forceDelete})});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Account deletion could not be completed.');
-			setNotice(`Account ${selected.id} was anonymized and closed.`);setSelected(null);setConfirmation('');setReason('');await load(search.trim(),showDeleted,undefined,accountMode);
+			setNotice('Account and related data permanently deleted.');setSelected(null);setConfirmation('');setForceDelete(false);await load(search.trim(),showDeleted,undefined,accountMode);
 		}catch(exception){setError(exception instanceof Error?exception.message:'Account deletion could not be completed.')}
 		finally{setBusy(false)}
 	}
@@ -212,7 +213,7 @@ export default function AdminUsersPanel(){
 		<div className="overflow-hidden rounded-md border border-white/10">
 			{loading?<p className="account-empty" role="status">Loading accounts…</p>:users.length?<div className="divide-y divide-white/10">{users.map(user=><article className="p-4" key={user.id}>
 				<div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0"><b className="block break-words">{user.name||'Unnamed account'} · {user.email}</b><small className="muted break-all">Internal ID: {user.id} · {user.role} · {user.accountMode} · {user.kycStatus} · {user.status}</small><div className="mt-1 flex flex-wrap items-center gap-2"><small className="break-all font-mono text-gold">Aurevia Exchange ID: {user.aureviaExchangeId||'Not assigned'}</small><AccountTierBadge tier={user.accountTier}/></div></div><div className="flex flex-wrap gap-2">
-					{user.status==='DELETED'?<><button type="button" className="btn min-h-10 bg-profit text-black" disabled={busy} onClick={()=>void updateDeletedStatus(user,'ACTIVE')}>{busyUserId===user.id?'Saving…':'Restore'}</button><button type="button" className="btn min-h-10 bg-loss text-black" disabled={busy} onClick={()=>{setSelected(user);setConfirmation('');setReason('')}}><Trash2 size={14}/>Permanently delete</button></>:<><button type="button" className="btn min-h-10 bg-white/5" disabled={busy||user.status==='CLOSED'} onClick={()=>void toggleStatus(user)}>{busyUserId===user.id?'Saving…':user.status==='ACTIVE'?'Freeze':'Unfreeze'}</button><button type="button" className="btn min-h-10 bg-loss text-black" disabled={busy||user.status==='CLOSED'} onClick={()=>void updateDeletedStatus(user,'DELETED')}><Trash2 size={14}/>Delete</button><button type="button" className="btn min-h-10 border border-loss/40 bg-loss/10 text-loss" disabled={busy||user.status==='CLOSED'} onClick={()=>{setSelected(user);setConfirmation('');setReason('')}}>Permanently delete</button></>}
+					{user.status==='DELETED'?<><button type="button" className="btn min-h-10 bg-profit text-black" disabled={busy} onClick={()=>void updateDeletedStatus(user,'ACTIVE')}>{busyUserId===user.id?'Saving…':'Restore'}</button><button type="button" className="btn min-h-10 bg-loss text-black" disabled={busy} onClick={()=>{setSelected(user);setConfirmation('');setForceDelete(false)}}><Trash2 size={14}/>Permanently delete</button></>:<><button type="button" className="btn min-h-10 bg-white/5" disabled={busy||user.status==='CLOSED'} onClick={()=>void toggleStatus(user)}>{busyUserId===user.id?'Saving…':user.status==='ACTIVE'?'Freeze':'Unfreeze'}</button><button type="button" className="btn min-h-10 bg-loss text-black" disabled={busy||user.status==='CLOSED'} onClick={()=>void updateDeletedStatus(user,'DELETED')}><Trash2 size={14}/>Delete</button><button type="button" className="btn min-h-10 border border-loss/40 bg-loss/10 text-loss" disabled={busy||user.status==='CLOSED'} onClick={()=>{setSelected(user);setConfirmation('');setForceDelete(false)}}>Permanently delete</button></>}
 				</div></div>
 				{user.status==='DELETED'?<p className="mt-3 text-sm muted">This account cannot sign in. Restore it to re-enable account access.</p>:<details className="mt-2" open={expandedUserId===user.id} onToggle={event=>{if(event.currentTarget.open)setExpandedUserId(user.id);else if(expandedUserId===user.id)setExpandedUserId('')}}><summary className="min-h-11 cursor-pointer py-2 text-sm gold">Account controls, verification, and ledger</summary>{expandedUserId===user.id&&<div>
 					<AureviaExchangeId id={user.aureviaExchangeId} className="mt-3"/>
@@ -244,11 +245,11 @@ export default function AdminUsersPanel(){
 				</div>}</details>}
 			</article>)}</div>:<p className="account-empty">No accounts match this search.</p>}
 		</div>
-		{selected&&<section className="account-panel mt-4 border border-loss/30 p-5" aria-labelledby="confirm-delete-heading"><h2 id="confirm-delete-heading" className="font-semibold">Confirm permanent deletion</h2><p className="mt-2 text-sm muted">This permanently anonymizes personal data and revokes access while preserving financial and audit history. Target: {selected.name||selected.email} ({selected.id}).</p>
+		{selected&&<section className="account-panel mt-4 border border-loss/30 p-5" aria-labelledby="confirm-delete-heading"><h2 id="confirm-delete-heading" className="font-semibold">Confirm permanent deletion</h2><p className="mt-2 text-sm muted">This permanently deletes the account and all related records. Target: {selected.name||selected.email} ({selected.id}). Pending or approved funding and non-zero balances block deletion unless force is selected.</p>
 			<form className="mt-4 grid max-w-2xl gap-3" onSubmit={event=>void deleteAccount(event)}>
-				<label className="account-label">Reason for audit history<input className="input" required minLength={3} maxLength={500} value={reason} onChange={event=>setReason(event.target.value)}/></label>
 				<label className="account-label">Type DELETE to confirm<input className="input" required autoComplete="off" value={confirmation} onChange={event=>setConfirmation(event.target.value)}/></label>
-				<div className="flex flex-wrap gap-2"><button className="btn bg-loss text-black" type="submit" disabled={busy||confirmation!=='DELETE'||reason.trim().length<3} aria-busy={busy}>{busy?'Deleting…':'Confirm permanent deletion'}</button><button className="btn bg-white/5" type="button" disabled={busy} onClick={()=>setSelected(null)}>Cancel</button></div>
+				<label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={forceDelete} onChange={event=>setForceDelete(event.target.checked)}/><span>Force deletion despite pending/approved funding or a non-zero balance. Use only after resolving applicable obligations.</span></label>
+				<div className="flex flex-wrap gap-2"><button className="btn bg-loss text-black" type="submit" disabled={busy||confirmation!=='DELETE'} aria-busy={busy}>{busy?'Deleting…':'Confirm permanent deletion'}</button><button className="btn bg-white/5" type="button" disabled={busy} onClick={()=>setSelected(null)}>Cancel</button></div>
 			</form>
 		</section>}
 	</div>;

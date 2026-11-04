@@ -7,6 +7,7 @@ import {test,expect,loginAs,logout,waitForStartup,expectNoHorizontalOverflow} fr
 import {db} from '../../lib/db';
 import {balance as ledgerBalance} from '../../lib/ledger';
 import {initializeDemoAccount,initializePaperAccount} from '../../lib/ledger';
+import {deleteAccountData} from '../../lib/account-deletion';
 import {settleMaturedSimulatedInvestments} from '../../lib/demo-investment-settlement';
 import {SIMULATED_BTC_ADDRESS_SETTING} from '../../lib/config/simulated-bitcoin-address';
 
@@ -855,128 +856,16 @@ test('sign-in password visibility, recovery link, and account link are accessibl
 	await expectNoHorizontalOverflow(page);
 });
 
-test('registration security script can retry without losing form values',async({page})=>{
-	let scriptRequests=0;
-	await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',route=>{
-		scriptRequests++;
-		if(scriptRequests===1)return route.abort();
-		return route.fulfill({
-			status:200,
-			contentType:'application/javascript',
-			body:`window.turnstile={render:function(){return 'test-widget';},reset:function(){},remove:function(){}};`,
-		});
-	});
-	await page.setViewportSize({width:390,height:844});
-	await page.goto('/register');
-	await expect(page.locator('[role="alert"].text-loss')).toContainText('We couldn’t load the security check.');
-	await page.getByRole('button',{name:'Retry'}).click();
-	await expect(page.getByText('Complete the security check to continue.')).toBeVisible();
-	expect(scriptRequests).toBe(2);
-	await expectNoHorizontalOverflow(page);
-});
-
-test('registration page refresh and Turnstile retries do not submit and render the widget once',async({page})=>{
-	let registrationSubmissions=0;
-	await page.route('**/api/register',async route=>{
-		if(route.request().method()==='POST'){
-			registrationSubmissions++;
-			await route.fulfill({
-				status:429,
-				headers:{'Retry-After':'90'},
-				contentType:'application/json',
-				body:JSON.stringify({error:'Too many registration attempts. Try again later.',retryAfterSeconds:90}),
-			});
-			return;
-		}
-		await route.continue();
-	});
-	await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',route=>route.fulfill({
-		status:200,
-		contentType:'application/javascript',
-		body:`window.__aureviaTurnstileRenderCount=0;window.turnstile={render:function(_container,options){window.__aureviaTurnstileRenderCount++;window.__aureviaTurnstileOptions=options;return 'test-widget';},reset:function(){window.__aureviaTurnstileResetCount=(window.__aureviaTurnstileResetCount||0)+1;},remove:function(){}};`,
-	}));
-	await page.goto('/register');
-	await expect(page.getByText('Complete the security check to continue.')).toBeVisible();
-	const firstName=page.getByLabel('First name');
-	const renderCount=()=>page.evaluate(()=>(
-		window as Window & {__aureviaTurnstileRenderCount?:number}
-	).__aureviaTurnstileRenderCount);
-	expect(await renderCount()).toBe(1);
-	await page.reload();
-	await expect(page.getByText('Complete the security check to continue.')).toBeVisible();
-	expect(await renderCount()).toBe(1);
-	expect(registrationSubmissions).toBe(0);
-	await firstName.fill('Preserved');
-	await expect(firstName).toHaveValue('Preserved');
-
-	await page.evaluate(()=>{
-		const options=(window as Window & {__aureviaTurnstileOptions?:Record<string,(...args:string[])=>void>}).__aureviaTurnstileOptions;
-		options?.['before-interactive-callback']();
-	});
-	await expect(page.getByText('Verifying the security check…')).toBeVisible();
-	const errorHandled=await page.evaluate(()=>{
-		const options=(window as Window & {__aureviaTurnstileOptions?:Record<string,(...args:(string|number)[])=>boolean|void>}).__aureviaTurnstileOptions;
-		return options?.['error-callback'](110200);
-	});
-	expect(errorHandled).toBe(true);
-	await expect(page.locator('.auth-error')).toContainText('Security verification could not be completed.');
-	await page.getByRole('button',{name:'Retry security check'}).click();
-	await expect(page.getByText('Complete the security check to continue.')).toBeVisible();
-	await expect(firstName).toHaveValue('Preserved');
-	await page.evaluate(()=>{
-		const options=(window as Window & {__aureviaTurnstileOptions?:Record<string,(...args:string[])=>void>}).__aureviaTurnstileOptions;
-		options?.['expired-callback']();
-	});
-	await expect(page.getByText('Security verification expired. Retry to continue.')).toBeVisible();
-	await page.getByRole('button',{name:'Retry security check'}).click();
-	await page.evaluate(()=>{
-		const options=(window as Window & {__aureviaTurnstileOptions?:Record<string,(...args:string[])=>void>}).__aureviaTurnstileOptions;
-		options?.callback('mock-cloudflare-token');
-	});
-	await expect(page.getByText('Security verification successful.')).toBeVisible();
-	await expect(page.getByRole('button',{name:'Create account'})).toBeDisabled();
-	await page.getByLabel('First name').fill('Mobile');
-	await page.getByLabel('Last name').fill('Retry Test');
-	await page.getByLabel('Date of birth').fill('1990-01-01');
-	const residencePicker=page.getByRole('button',{name:/country of residence/i});
-	await residencePicker.click();
-	const residenceDialog=page.getByRole('dialog',{name:'Select country of residence'});
-	await residenceDialog.getByRole('searchbox').fill('United States');
-	await residenceDialog.getByRole('option',{name:/United States.*US.*\+1/}).click();
-	const phonePicker=page.getByRole('button',{name:/phone country and dialing code/i});
-	await phonePicker.click();
-	const phoneDialog=page.getByRole('dialog',{name:'Select phone country and dialing code'});
-	await phoneDialog.getByRole('searchbox').fill('United States');
-	await phoneDialog.getByRole('option',{name:/United States.*US.*\+1/}).click();
-	await page.locator('#registration-phone').fill('2025550123');
-	await page.getByLabel('Email address').fill(`retry-${randomUUID()}@example.invalid`);
-	await page.getByLabel('Password',{exact:true}).fill('SecureTestPassword1');
-	await page.getByLabel('Confirm password').fill('SecureTestPassword1');
-	await page.getByRole('checkbox').check();
-	const createAccount=page.getByRole('button',{name:'Create account'});
-	await expect(createAccount).toBeEnabled();
-	await page.locator('form.register-form').evaluate((form:HTMLFormElement)=>{
-		form.requestSubmit();
-		form.requestSubmit();
-	});
-	await expect(page.locator('.auth-error')).toContainText('You can retry in 2 minute(s).');
-	await expect(page.getByLabel('Email address')).toHaveValue(/^retry-.*@example\.invalid$/);
-	await expect(createAccount).toBeDisabled();
-	expect(await renderCount()).toBe(1);
-	expect(registrationSubmissions).toBe(1);
-});
-
-test('signup validates Turnstile then creates and signs in an account without phone OTP',async({page})=>{
+test('signup submits without a security widget and creates an account without phone OTP',async({page})=>{
 	const email=`immediate-signup-${randomUUID()}@example.invalid`;
 	let registrationRequests=0;
+	const registrationPayloads:Record<string,unknown>[]=[];
 	page.on('request',request=>{
-		if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/register')registrationRequests++;
+		if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/register'){
+			registrationRequests++;
+			registrationPayloads.push(request.postDataJSON() as Record<string,unknown>);
+		}
 	});
-	await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',route=>route.fulfill({
-		status:200,
-		contentType:'application/javascript',
-		body:`window.__aureviaTurnstileOptions=null;window.turnstile={render:function(_container,options){window.__aureviaTurnstileOptions=options;return 'test-widget';},reset:function(){},remove:function(){}};`,
-	}));
 	await page.setViewportSize({width:390,height:844});
 	await page.goto('/register');
 	await waitForStartup(page);
@@ -1000,11 +889,6 @@ test('signup validates Turnstile then creates and signs in an account without ph
 	await registrationForm.getByLabel('Password',{exact:true}).fill('SecureTestPassword1');
 	await registrationForm.getByLabel('Confirm password').fill('SecureTestPassword1');
 	await registrationForm.getByRole('checkbox').check();
-	await expect(registrationForm.getByRole('button',{name:'Create account'})).toBeDisabled();
-	await page.evaluate(()=>{
-		const options=(window as Window & {__aureviaTurnstileOptions?:{callback?:(token:string)=>void}}).__aureviaTurnstileOptions;
-		options?.callback?.('isolated-test-turnstile-token');
-	});
 	await expect(registrationForm.getByRole('button',{name:'Create account'})).toBeEnabled();
 	await registrationForm.evaluate((form:HTMLFormElement)=>{
 		form.requestSubmit();
@@ -1021,15 +905,13 @@ test('signup validates Turnstile then creates and signs in an account without ph
 	});
 	expect(await db.user.count({where:{email}})).toBe(1);
 	expect(await db.registrationAttempt.findUnique({where:{email}})).toBeNull();
+	expect(registrationPayloads).toHaveLength(1);
+	expect(registrationPayloads[0]).not.toHaveProperty('captchaToken');
+	expect(registrationPayloads[0].website).toBe('');
 });
 
 test('duplicate signup offers sign-in with the typed email prefilled',async({page})=>{
 	const email=`duplicate-signup-${randomUUID()}@example.invalid`;
-	await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',route=>route.fulfill({
-		status:200,
-		contentType:'application/javascript',
-		body:`window.__aureviaTurnstileOptions=null;window.turnstile={render:function(_container,options){window.__aureviaTurnstileOptions=options;return 'test-widget';},reset:function(){},remove:function(){}};`,
-	}));
 	await page.route('**/api/register',route=>route.fulfill({
 		status:409,
 		contentType:'application/json',
@@ -1054,15 +936,32 @@ test('duplicate signup offers sign-in with the typed email prefilled',async({pag
 	await registrationForm.getByLabel('Password',{exact:true}).fill('SecureTestPassword1');
 	await registrationForm.getByLabel('Confirm password').fill('SecureTestPassword1');
 	await registrationForm.getByRole('checkbox').check();
-	await page.evaluate(()=>{
-		const options=(window as Window & {__aureviaTurnstileOptions?:{callback?:(token:string)=>void}}).__aureviaTurnstileOptions;
-		options?.callback?.('isolated-test-turnstile-token');
-	});
 	await registrationForm.getByRole('button',{name:'Create account'}).click();
 	await expect(page.getByText(/We could not complete signup/)).toBeVisible();
 	await page.locator('p').filter({hasText:'You can'}).getByRole('link',{name:'Sign in'}).click();
 	await page.waitForURL(/\/login$/);
 	await expect(page.getByLabel('Email or administrator username')).toHaveValue(email);
+});
+
+test('account deletion cascades through user-owned records',async()=>{
+	const user=await db.user.create({data:{
+		email:`aurevia-e2e-delete-${randomUUID()}@example.invalid`,
+		passwordHash:'not-a-real-password-hash',
+	}});
+	try{
+		await db.notification.create({data:{userId:user.id,type:'SYSTEM',title:'Test notice',message:'Delete with user',dedupeKey:`delete-test:${user.id}`}});
+		await db.passwordResetToken.create({data:{userId:user.id,tokenHash:`delete-test:${user.id}`,expiresAt:new Date(Date.now()+60_000)}});
+		await db.kycDocument.create({data:{userId:user.id,kind:'IDENTITY_DOCUMENT',filename:'test.pdf',storageKey:`${user.id}/00000000-0000-4000-8000-000000000001.pdf`,mimeType:'application/pdf',size:1}});
+		await db.$transaction(tx=>deleteAccountData(tx,{userId:user.id,actorId:null,force:true}));
+
+		expect(await db.user.findUnique({where:{id:user.id}})).toBeNull();
+		expect(await db.notification.count({where:{userId:user.id}})).toBe(0);
+		expect(await db.passwordResetToken.count({where:{userId:user.id}})).toBe(0);
+		expect(await db.kycDocument.count({where:{userId:user.id}})).toBe(0);
+	}catch(error){
+		await db.user.deleteMany({where:{id:user.id}});
+		throw error;
+	}
 });
 
 test('existing account can sign in without signup verification',async({page})=>{

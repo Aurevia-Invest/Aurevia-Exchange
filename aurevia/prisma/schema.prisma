@@ -337,19 +337,19 @@ model User {
   cardCatalogUpdates               CardCatalogItem[]                 @relation("CardCatalogUpdater")
   cardApplicationReviews           CardApplication[]                 @relation("CardApplicationReviewer")
   communityCampaigns               CommunityCampaign[]               @relation("CommunityCampaignCreator")
-  communityDonations                CommunityDonation[]
-  communityLoans                    CommunityLoan[]                    @relation("CommunityLoanBorrower")
-  reviewedCommunityLoans           CommunityLoan[]                    @relation("CommunityLoanReviewer")
-  disbursedCommunityLoans          CommunityLoan[]                    @relation("CommunityLoanDisburser")
-  recordedCommunityLoanPayments   CommunityLoanPayment[]              @relation("CommunityLoanPaymentRecorder")
+  communityDonations               CommunityDonation[]
+  communityLoans                   CommunityLoan[]                   @relation("CommunityLoanBorrower")
+  reviewedCommunityLoans           CommunityLoan[]                   @relation("CommunityLoanReviewer")
+  disbursedCommunityLoans          CommunityLoan[]                   @relation("CommunityLoanDisburser")
+  recordedCommunityLoanPayments    CommunityLoanPayment[]            @relation("CommunityLoanPaymentRecorder")
 
   tierReviews TierUpgradeRequest[] @relation("TierRequestReviewer")
   avatarKey   String?
 }
 
 model RegistrationAttempt {
-  id              String                   @id @default(cuid())
-  email           String                   @unique
+  id              String                    @id @default(cuid())
+  email           String                    @unique
   passwordHash    String
   name            String
   country         String
@@ -357,27 +357,27 @@ model RegistrationAttempt {
   dateOfBirth     DateTime
   accountMode     AccountMode
   termsAcceptedAt DateTime
-  tokenHash       String                   @unique
+  tokenHash       String                    @unique
   expiresAt       DateTime
-  createdAt       DateTime                 @default(now())
-  updatedAt       DateTime                 @updatedAt
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
   verification    RegistrationVerification?
 
   @@index([expiresAt])
 }
 
 model RegistrationVerification {
-  id                    String               @id @default(cuid())
-  registrationAttemptId String               @unique
-  registrationAttempt   RegistrationAttempt  @relation(fields: [registrationAttemptId], references: [id], onDelete: Cascade)
+  id                    String              @id @default(cuid())
+  registrationAttemptId String              @unique
+  registrationAttempt   RegistrationAttempt @relation(fields: [registrationAttemptId], references: [id], onDelete: Cascade)
   codeHash              String
   channel               VerificationChannel
   providerReference     String?
   expiresAt             DateTime
   resendAfter           DateTime
-  attempts              Int                  @default(0)
-  createdAt             DateTime             @default(now())
-  updatedAt             DateTime             @updatedAt
+  attempts              Int                 @default(0)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
   @@index([expiresAt])
   @@index([providerReference])
@@ -395,7 +395,7 @@ model WaitlistEntry {
   source       String?
   notes        String?
   userId       String?             @unique
-  user         User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user         User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
   deletedAt    DateTime?
@@ -527,17 +527,17 @@ model PushDelivery {
 }
 
 model VerificationCode {
-  id          String              @id @default(cuid())
-  userId      String              @unique
-  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  codeHash    String
-  channel     VerificationChannel
+  id                String              @id @default(cuid())
+  userId            String              @unique
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash          String
+  channel           VerificationChannel
   providerReference String?
-  expiresAt   DateTime
-  resendAfter DateTime
-  attempts    Int                 @default(0)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  expiresAt         DateTime
+  resendAfter       DateTime
+  attempts          Int                 @default(0)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
 
   @@index([expiresAt])
 }
@@ -738,7 +738,7 @@ model LedgerEntry {
   type          EntryType
   amount        Decimal           @db.Decimal(30, 10)
   transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-  account       LedgerAccount     @relation(fields: [accountId], references: [id])
+  account       LedgerAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
   createdAt     DateTime          @default(now())
 
   @@index([accountId, createdAt])
@@ -797,8 +797,8 @@ model CommunityCampaign {
   title       String                  @db.VarChar(120)
   description String                  @db.VarChar(3000)
   status      CommunityCampaignStatus @default(DRAFT)
-  createdById String
-  createdBy   User                    @relation("CommunityCampaignCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdById String?
+  createdBy   User?                   @relation("CommunityCampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime                @default(now())
   updatedAt   DateTime                @updatedAt
   donations   CommunityDonation[]
@@ -807,17 +807,17 @@ model CommunityCampaign {
 }
 
 model CommunityDonation {
-  id                String           @id @default(cuid())
-  userId            String
-  user              User             @relation(fields: [userId], references: [id], onDelete: Restrict)
-  campaignId        String
-  campaign          CommunityCampaign @relation(fields: [campaignId], references: [id], onDelete: Restrict)
-  amount            Decimal          @db.Decimal(30, 10)
-  currency          String           @default("USD")
-  accountMode       AccountMode      @default(REAL)
-  ledgerReference   String           @unique
-  idempotencyKey    String           @unique
-  createdAt         DateTime         @default(now())
+  id              String            @id @default(cuid())
+  userId          String
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaignId      String
+  campaign        CommunityCampaign @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  amount          Decimal           @db.Decimal(30, 10)
+  currency        String            @default("USD")
+  accountMode     AccountMode       @default(REAL)
+  ledgerReference String            @unique
+  idempotencyKey  String            @unique
+  createdAt       DateTime          @default(now())
 
   @@index([userId, createdAt])
   @@index([campaignId, createdAt])
@@ -825,33 +825,33 @@ model CommunityDonation {
 }
 
 model CommunityLoan {
-  id                    String                 @id @default(cuid())
+  id                    String                     @id @default(cuid())
   userId                String
-  user                  User                   @relation("CommunityLoanBorrower", fields: [userId], references: [id], onDelete: Restrict)
-  principal             Decimal                @db.Decimal(30, 10)
-  currency              String                 @default("USD")
-  aprPercent            Decimal                @default(12) @db.Decimal(7, 4)
-  processingFeePercent  Decimal                @default(2) @db.Decimal(7, 4)
-  processingFeeAmount   Decimal?               @db.Decimal(30, 10)
-  netDisbursedAmount    Decimal?               @db.Decimal(30, 10)
+  user                  User                       @relation("CommunityLoanBorrower", fields: [userId], references: [id], onDelete: Cascade)
+  principal             Decimal                    @db.Decimal(30, 10)
+  currency              String                     @default("USD")
+  aprPercent            Decimal                    @default(12) @db.Decimal(7, 4)
+  processingFeePercent  Decimal                    @default(2) @db.Decimal(7, 4)
+  processingFeeAmount   Decimal?                   @db.Decimal(30, 10)
+  netDisbursedAmount    Decimal?                   @db.Decimal(30, 10)
   termMonths            Int
-  monthlyPayment        Decimal                @db.Decimal(30, 10)
-  qualifyingMonths      String[]               @default([])
-  status                LoanStatus             @default(PENDING_REVIEW)
-  idempotencyKey        String?                @unique
+  monthlyPayment        Decimal                    @db.Decimal(30, 10)
+  qualifyingMonths      String[]                   @default([])
+  status                LoanStatus                 @default(PENDING_REVIEW)
+  idempotencyKey        String?                    @unique
   acceptedTermsAt       DateTime
-  policyVersion         String                 @default("2026-10-v1") @db.VarChar(32)
-  reviewNote            String?                @db.VarChar(500)
+  policyVersion         String                     @default("2026-10-v1") @db.VarChar(32)
+  reviewNote            String?                    @db.VarChar(500)
   reviewedById          String?
-  reviewedBy            User?                  @relation("CommunityLoanReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  reviewedBy            User?                      @relation("CommunityLoanReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   reviewedAt            DateTime?
-  disbursementReference String?                @unique @db.VarChar(180)
-  disbursementNote      String?                @db.VarChar(500)
+  disbursementReference String?                    @unique @db.VarChar(180)
+  disbursementNote      String?                    @db.VarChar(500)
   disbursedById         String?
-  disbursedBy           User?                  @relation("CommunityLoanDisburser", fields: [disbursedById], references: [id], onDelete: Restrict)
+  disbursedBy           User?                      @relation("CommunityLoanDisburser", fields: [disbursedById], references: [id], onDelete: SetNull)
   disbursedAt           DateTime?
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
   installments          CommunityLoanInstallment[]
   payments              CommunityLoanPayment[]
 
@@ -860,40 +860,40 @@ model CommunityLoan {
 }
 
 model CommunityLoanInstallment {
-  id                 String                  @id @default(cuid())
-  loanId             String
-  loan               CommunityLoan           @relation(fields: [loanId], references: [id], onDelete: Restrict)
-  number             Int
-  dueAt              DateTime
-  principalAmount    Decimal                 @db.Decimal(30, 10)
-  interestAmount    Decimal                 @db.Decimal(30, 10)
-  totalAmount       Decimal                 @db.Decimal(30, 10)
-  lateFeeAmount     Decimal                 @default(0) @db.Decimal(30, 10)
-  lateFeeAppliedAt  DateTime?
-  status             LoanInstallmentStatus  @default(UPCOMING)
-  paidAt             DateTime?
-  ledgerReference    String?                 @unique
-  createdAt          DateTime                @default(now())
-  payments           CommunityLoanPayment[]
+  id               String                 @id @default(cuid())
+  loanId           String
+  loan             CommunityLoan          @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  number           Int
+  dueAt            DateTime
+  principalAmount  Decimal                @db.Decimal(30, 10)
+  interestAmount   Decimal                @db.Decimal(30, 10)
+  totalAmount      Decimal                @db.Decimal(30, 10)
+  lateFeeAmount    Decimal                @default(0) @db.Decimal(30, 10)
+  lateFeeAppliedAt DateTime?
+  status           LoanInstallmentStatus  @default(UPCOMING)
+  paidAt           DateTime?
+  ledgerReference  String?                @unique
+  createdAt        DateTime               @default(now())
+  payments         CommunityLoanPayment[]
 
   @@unique([loanId, number])
   @@index([status, dueAt])
 }
 
 model CommunityLoanPayment {
-  id                String                  @id @default(cuid())
+  id                String                   @id @default(cuid())
   loanId            String
-  loan              CommunityLoan           @relation(fields: [loanId], references: [id], onDelete: Restrict)
+  loan              CommunityLoan            @relation(fields: [loanId], references: [id], onDelete: Cascade)
   installmentId     String
-  installment       CommunityLoanInstallment @relation(fields: [installmentId], references: [id], onDelete: Restrict)
-  amount            Decimal                 @db.Decimal(30, 10)
-  currency          String                  @default("USD")
-  externalReference String                  @unique @db.VarChar(180)
-  adminNote         String?                 @db.VarChar(500)
-  recordedById      String
-  recordedBy        User                    @relation("CommunityLoanPaymentRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
-  ledgerReference   String                  @unique
-  createdAt         DateTime                @default(now())
+  installment       CommunityLoanInstallment @relation(fields: [installmentId], references: [id], onDelete: Cascade)
+  amount            Decimal                  @db.Decimal(30, 10)
+  currency          String                   @default("USD")
+  externalReference String                   @unique @db.VarChar(180)
+  adminNote         String?                  @db.VarChar(500)
+  recordedById      String?
+  recordedBy        User?                    @relation("CommunityLoanPaymentRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
+  ledgerReference   String                   @unique
+  createdAt         DateTime                 @default(now())
 
   @@index([loanId, createdAt])
   @@index([installmentId])
@@ -1005,7 +1005,7 @@ model SupportMessage {
   conversation   SupportConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   authorType     SupportAuthor
   authorId       String?
-  author         User?               @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  author         User?               @relation(fields: [authorId], references: [id], onDelete: Cascade)
   body           String
   createdAt      DateTime            @default(now())
 
@@ -1028,8 +1028,8 @@ model Broadcast {
   publishedAt DateTime?
   endedAt     DateTime?
   archivedAt  DateTime?
-  createdById String
-  createdBy   User            @relation("BroadcastCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdById String?
+  createdBy   User?           @relation("BroadcastCreator", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
   deletedAt   DateTime?
@@ -1065,8 +1065,8 @@ model Story {
   publishedAt  DateTime?
   expiresAt    DateTime?
   displayOrder Int               @default(0)
-  createdById  String
-  createdBy    User              @relation("StoryCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdById  String?
+  createdBy    User?             @relation("StoryCreator", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
   archivedAt   DateTime?
@@ -1158,8 +1158,8 @@ model InvestmentOpportunity {
   requiresApproval    Boolean                     @default(true)
   targetPrice         Decimal?                    @db.Decimal(30, 10)
   stopPrice           Decimal?                    @db.Decimal(30, 10)
-  createdById         String
-  createdBy           User                        @relation("InvestmentOpportunityCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdById         String?
+  createdBy           User?                       @relation("InvestmentOpportunityCreator", fields: [createdById], references: [id], onDelete: SetNull)
   requests            InvestmentRequest[]
   createdAt           DateTime                    @default(now())
   updatedAt           DateTime                    @updatedAt
@@ -1226,7 +1226,7 @@ model ClientStory {
   rating               Int?              @db.SmallInt
   imageReference       String?
   userId               String?
-  user                 User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user                 User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
   verifiedWithdrawalId String?           @unique
   withdrawal           FundingRequest?   @relation(fields: [verifiedWithdrawalId], references: [id], onDelete: SetNull)
   withdrawalAmount     Decimal?          @db.Decimal(30, 10)

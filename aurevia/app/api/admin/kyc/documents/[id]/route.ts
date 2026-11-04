@@ -5,7 +5,7 @@ import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {enqueueKycEmail,type KycEmailEvent} from '@/lib/kyc-email-outbox';
-import {createPrivateSignedUrl,PrivateStorageError} from '@/lib/private-storage';
+import {createPrivateSignedUrl,deletePrivateObject,PrivateStorageError} from '@/lib/private-storage';
 
 const reviewSchema=z.object({status:z.nativeEnum(DocumentStatus).refine(status=>status!=='SUBMITTED','Invalid review status.'),reviewNote:z.string().trim().max(500).optional()});
 
@@ -58,5 +58,34 @@ export async function PATCH(request:Request,{params}:{params:Promise<{id:string}
   if(error instanceof Error&&error.message==='DOCUMENT_NOT_FOUND')return NextResponse.json({error:'Document not found.'},{status:404});
   if(error instanceof Error&&error.message==='DOCUMENT_REVIEW_UNCHANGED')return NextResponse.json({error:'This document review was already recorded.'},{status:409});
   return NextResponse.json({error:'Unable to review this document.'},{status:500});
+ }
+}
+
+export async function DELETE(request:Request,{params}:{params:Promise<{id:string}>}){
+ try{
+  const {id}=await params;
+  const admin=await requireAdmin();
+  z.object({confirmation:z.literal('DELETE')}).parse(await request.json());
+  const file=await db.$transaction(async tx=>{
+   const current=await tx.kycDocument.findUnique({where:{id},select:{id:true,userId:true,kind:true,storageKey:true,status:true}});
+   if(!current)throw new Error('DOCUMENT_NOT_FOUND');
+   await tx.kycDocument.delete({where:{id:current.id}});
+   if(current.status==='APPROVED'&&(current.kind==='IDENTITY_DOCUMENT'||current.kind==='SELFIE')){
+    const remaining=await tx.kycDocument.findMany({where:{userId:current.userId,kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:'APPROVED'},select:{kind:true}});
+    if(!remaining.some(document=>document.kind==='IDENTITY_DOCUMENT')||!remaining.some(document=>document.kind==='SELFIE')){
+     await tx.user.update({where:{id:current.userId},data:{kycStatus:'PENDING',verifiedAt:null}});
+    }
+   }
+   await tx.auditLog.create({data:{actorId:admin.id,action:'ADMIN_KYC_SUBMISSION_DELETED',entity:'KYC_DOCUMENT',entityId:current.id}});
+   return {ownerId:current.userId,key:current.storageKey};
+  });
+  const fileCleanupPending=!await deletePrivateObject('kyc',file.ownerId,file.key);
+  return NextResponse.json({ok:true,fileCleanupPending});
+ }catch(error){
+  if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
+  if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
+  if(error instanceof ZodError)return NextResponse.json({error:'Type DELETE to confirm removing this submission.'},{status:400});
+  if(error instanceof Error&&error.message==='DOCUMENT_NOT_FOUND')return NextResponse.json({error:'Document not found.'},{status:404});
+  return NextResponse.json({error:'Unable to delete this KYC submission.'},{status:500});
  }
 }

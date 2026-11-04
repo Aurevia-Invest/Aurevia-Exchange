@@ -6,7 +6,6 @@ const mocks=vi.hoisted(()=>({
 	userFindFirst:vi.fn(),
 	transaction:vi.fn(),
 	createAccount:vi.fn(),
-	verifyTurnstile:vi.fn(),
 	trustedProxyClientIp:vi.fn(),
 	rateLimit:vi.fn(),
 	RateLimitError:class extends Error{
@@ -25,7 +24,6 @@ vi.mock('@/lib/db',()=>({db:{
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
 vi.mock('@/lib/request-ip',()=>({trustedProxyClientIp:mocks.trustedProxyClientIp}));
 vi.mock('@/lib/registration-attempt',()=>({createImmediateRegistration:mocks.createAccount}));
-vi.mock('@/lib/turnstile',()=>({verifyRegistrationTurnstile:mocks.verifyTurnstile}));
 
 import {POST} from '@/app/api/register/route';
 
@@ -38,7 +36,6 @@ const payload={
 	phone:'+12025550123',
 	accountMode:'DEMO',
 	termsAccepted:true,
-	captchaToken:'verified-turnstile-token',
 };
 
 function request(body:unknown=payload,requestId?:string){
@@ -56,7 +53,6 @@ function request(body:unknown=payload,requestId?:string){
 describe('immediate registration',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
-		mocks.verifyTurnstile.mockResolvedValue(true);
 		mocks.userFindFirst.mockResolvedValue(null);
 		mocks.trustedProxyClientIp.mockReturnValue('192.0.2.5');
 		mocks.rateLimit.mockReturnValue(undefined);
@@ -66,7 +62,7 @@ describe('immediate registration',()=>{
 
 	afterEach(()=>vi.unstubAllEnvs());
 
-	it('creates an active account after server-side Turnstile validation without an OTP',async()=>{
+	it('creates an active account without a security token or phone OTP',async()=>{
 		const response=await POST(request(payload,'e75c6069-6dc9-4de5-8a58-e8257d8f8e03'));
 		const body=await response.json();
 
@@ -74,8 +70,6 @@ describe('immediate registration',()=>{
 		expect(body).toMatchObject({created:true,email:payload.email,message:'Your account has been created. Signing you in…'});
 		expect(body).not.toHaveProperty('verificationRequired');
 		expect(JSON.stringify(body)).not.toContain(payload.password);
-		expect(mocks.verifyTurnstile).toHaveBeenCalledWith(payload.captchaToken,'e75c6069-6dc9-4de5-8a58-e8257d8f8e03');
-		expect(mocks.verifyTurnstile).toHaveBeenCalledOnce();
 		expect(mocks.createAccount).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({
 			email:payload.email,
 			passwordHash:expect.any(String),
@@ -87,32 +81,34 @@ describe('immediate registration',()=>{
 		}));
 		expect(mocks.createAccount.mock.calls[0][1].passwordHash).not.toBe(payload.password);
 		expect(response.headers.get('set-cookie')).toBeNull();
-		expect(mocks.rateLimit).toHaveBeenCalledWith('register:192.0.2.5',5,3_600_000);
+		expect(mocks.rateLimit).toHaveBeenCalledWith('register:192.0.2.5',5,600_000);
 	});
 
-	it('fails closed on a rejected Turnstile challenge without touching account data',async()=>{
-		mocks.verifyTurnstile.mockResolvedValue(false);
+	it('normalizes signup email by trimming and lowercasing before persistence',async()=>{
+		const response=await POST(request({...payload,email:'  NEW-USER@EXAMPLE.INVALID  '}));
+
+		expect(response.status).toBe(201);
+		expect(await response.json()).toMatchObject({created:true,email:'new-user@example.invalid'});
+		expect(mocks.createAccount).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({email:'new-user@example.invalid'}));
+	});
+
+	it('still applies a shared IP limit when the trusted proxy address is unavailable',async()=>{
+		mocks.trustedProxyClientIp.mockReturnValue(null);
+
 		const response=await POST(request());
 
+		expect(response.status).toBe(201);
+		expect(mocks.rateLimit).toHaveBeenCalledWith('register:unknown',5,600_000);
+	});
+
+	it('rejects a filled honeypot without touching account data',async()=>{
+		const response=await POST(request({...payload,website:'bot-filled-this'}));
+
 		expect(response.status).toBe(400);
-		expect(await response.json()).toMatchObject({code:'REGISTRATION_SECURITY_REJECTED'});
+		expect(await response.json()).toMatchObject({error:'Invalid registration request.'});
 		expect(mocks.userFindFirst).not.toHaveBeenCalled();
 		expect(mocks.transaction).not.toHaveBeenCalled();
 		expect(mocks.createAccount).not.toHaveBeenCalled();
-	});
-
-	it('returns a service error when Turnstile cannot be validated',async()=>{
-		mocks.verifyTurnstile.mockRejectedValue(new Error('TURNSTILE_PROVIDER_UNAVAILABLE'));
-		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
-
-		const response=await POST(request());
-
-		expect(response.status).toBe(503);
-		expect(await response.json()).toMatchObject({code:'REGISTRATION_SECURITY_UNAVAILABLE'});
-		expect(mocks.userFindFirst).not.toHaveBeenCalled();
-		expect(mocks.createAccount).not.toHaveBeenCalled();
-		expect(warning).toHaveBeenCalledOnce();
-		warning.mockRestore();
 	});
 
 	it('treats a case-variant retry with the correct password as sign-in',async()=>{
@@ -176,6 +172,20 @@ describe('immediate registration',()=>{
 
 		expect(response.status).toBe(500);
 		expect(await response.json()).not.toMatchObject({code:'ACCOUNT_ACCESS_REQUIRED'});
+		error.mockRestore();
+	});
+
+	it('logs a sanitized server-side cause for unexpected signup failures',async()=>{
+		const error=vi.spyOn(console,'error').mockImplementation(()=>undefined);
+		mocks.transaction.mockRejectedValue(new Error(`Write failed for ${payload.email} using ${payload.password}`));
+
+		const response=await POST(request());
+		const logged=JSON.stringify(error.mock.calls);
+
+		expect(response.status).toBe(500);
+		expect(logged).toContain('Write failed');
+		expect(logged).not.toContain(payload.email);
+		expect(logged).not.toContain(payload.password);
 		error.mockRestore();
 	});
 

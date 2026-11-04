@@ -71,25 +71,6 @@ describe('canonical environment configuration',()=>{
     expect(JSON.stringify(publicConfig)).not.toContain('private-service-key');
   });
 
-  it('requires both Turnstile keys while keeping the secret server-side',()=>{
-    const config=getServerConfiguration({
-      NEXT_PUBLIC_TURNSTILE_SITE_KEY:'public-site-key',
-      TURNSTILE_SECRET_KEY:'private-turnstile-secret',
-    });
-
-    expect(config.captcha).toEqual({
-      turnstileSiteKey:'public-site-key',
-      turnstileSecretKey:'private-turnstile-secret',
-      turnstileConfigured:true,
-    });
-    expect(getServerConfiguration({NEXT_PUBLIC_TURNSTILE_SITE_KEY:'public-site-key'}).captcha.turnstileConfigured).toBe(false);
-    expect(getServerConfiguration({TURNSTILE_SECRET_KEY:'private-turnstile-secret'}).captcha.turnstileConfigured).toBe(false);
-    expect(JSON.stringify(getPublicConfiguration({
-      NEXT_PUBLIC_TURNSTILE_SITE_KEY:'public-site-key',
-      TURNSTILE_SECRET_KEY:'private-turnstile-secret',
-    }))).not.toContain('private-turnstile-secret');
-  });
-
   it('keeps Akedly credentials server-side and reports only whether the set is complete',()=>{
     const akedlySource={
       AKEDLY_API_KEY:'test-api-key',

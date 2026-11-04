@@ -2,6 +2,7 @@ import {createHmac} from 'node:crypto';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {Webhook} from 'svix';
 import {
+	akedlyAttemptFailureDiagnostics,
 	akedlyReadiness,
 	createAkedlyAttempt,
 	isConfirmedAkedlyAttempt,
@@ -10,6 +11,19 @@ import {
 	lookupAkedlyAttempt,
 	verifyAkedlyWebhook,
 } from '@/lib/akedly';
+
+const cryptoFailureState=vi.hoisted(()=>({failCreateHmac:false}));
+
+vi.mock('node:crypto',async importOriginal=>{
+	const original=await importOriginal<typeof import('node:crypto')>();
+	return {
+		...original,
+		createHmac:(...args:Parameters<typeof original.createHmac>)=>{
+			if(cryptoFailureState.failCreateHmac)throw new Error('private key material');
+			return original.createHmac(...args);
+		},
+	};
+});
 
 const akedlyEnvironment={
 	AKEDLY_ENABLED:'true',
@@ -170,12 +184,34 @@ describe('Akedly V2 server integration',()=>{
 		vi.stubEnv('AKEDLY_WEBHOOK_SECRET','');
 		const fetch=vi.fn();
 		vi.stubGlobal('fetch',fetch);
-		await expect(createAkedlyAttempt({email:'person@example.invalid'})).rejects.toThrow('AKEDLY_CONFIGURATION_REQUIRED');
+		const configurationFailure=await createAkedlyAttempt({email:'person@example.invalid'}).catch(error=>error);
+		expect(configurationFailure).toMatchObject({
+			message:'AKEDLY_CONFIGURATION_REQUIRED',
+			providerCode:'CONFIGURATION_ERROR',
+			failureStage:'configuration',
+		});
 		expect(fetch).not.toHaveBeenCalled();
 
 		vi.stubEnv('AKEDLY_WEBHOOK_SECRET',akedlyEnvironment.AKEDLY_WEBHOOK_SECRET);
 		vi.stubGlobal('fetch',vi.fn(async()=>providerResponse('attempt_1234567890','https://attacker.invalid/auth?attemptId=attempt_1234567890')));
 		await expect(createAkedlyAttempt({email:'person@example.invalid'})).rejects.toThrow('AKEDLY_INVALID_WIDGET_URL');
+	});
+
+	it('classifies request signing failures without exposing the underlying error message',async()=>{
+		cryptoFailureState.failCreateHmac=true;
+		try{
+			const failure=await createAkedlyAttempt({phoneNumber:'+12125550123'}).catch(error=>error);
+
+			expect(failure).toMatchObject({
+				message:'AKEDLY_REQUEST_SIGNING_FAILED',
+				providerCode:'SIGNING_ERROR',
+				failureStage:'request_signing',
+				underlyingErrorType:'Error',
+			});
+			expect(JSON.stringify(failure)).not.toContain('private key material');
+		}finally{
+			cryptoFailureState.failCreateHmac=false;
+		}
 	});
 
 	it('reports only missing configuration variable names and never credential values',()=>{
@@ -278,9 +314,64 @@ describe('Akedly V2 server integration',()=>{
 		expect(failure).toMatchObject({
 			message:'AKEDLY_PROVIDER_UNAVAILABLE',
 			providerCode:'PROVIDER_TIMEOUT',
+			failureStage:'create_attempt_request',
+			underlyingErrorType:'TimeoutError',
 			providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
 			failureTimestamp:expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
 		});
+	});
+
+	it('classifies network failures without reporting a provider HTTP status or attempt ID',async()=>{
+		vi.stubGlobal('fetch',vi.fn(async()=>{
+			throw new TypeError('network failure containing private connection details');
+		}));
+
+		const failure=await createAkedlyAttempt({phoneNumber:'+12125550123'}).catch(error=>error);
+		const diagnostics=akedlyAttemptFailureDiagnostics(failure,'+12125550123');
+
+		expect(diagnostics).toMatchObject({
+			failureCode:'AKEDLY_PROVIDER_UNAVAILABLE',
+			failureStage:'create_attempt_request',
+			failureClassification:'NETWORK_ERROR',
+			providerCode:'NETWORK_ERROR',
+			underlyingErrorType:'TypeError',
+			providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+			providerAttemptId:null,
+			providerHttpStatus:null,
+		});
+		expect(JSON.stringify(diagnostics)).not.toContain('+12125550123');
+		expect(JSON.stringify(diagnostics)).not.toContain('private connection details');
+	});
+
+	it('records malformed provider JSON as a response-parsing failure',async()=>{
+		vi.stubGlobal('fetch',vi.fn(async()=>new Response('not-json',{status:200})));
+
+		const failure=await createAkedlyAttempt({phoneNumber:'+12125550123'}).catch(error=>error);
+
+		expect(failure).toMatchObject({
+			message:'AKEDLY_INVALID_PROVIDER_RESPONSE',
+			providerCode:'INVALID_JSON',
+			httpStatus:200,
+			failureStage:'response_parsing',
+			underlyingErrorType:'SyntaxError',
+		});
+	});
+
+	it('fills the create-attempt endpoint and a safe classification for unstructured errors',()=>{
+		const diagnostics=akedlyAttemptFailureDiagnostics(
+			new Error('AKEDLY_PROVIDER_UNAVAILABLE'),
+			'+12125550123',
+		);
+
+		expect(diagnostics).toMatchObject({
+			failureCode:'AKEDLY_PROVIDER_UNAVAILABLE',
+			failureStage:'unclassified_create_attempt_failure',
+			failureClassification:'UNCLASSIFIED',
+			providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+			providerAttemptId:null,
+			providerHttpStatus:null,
+		});
+		expect(JSON.stringify(diagnostics)).not.toContain('+12125550123');
 	});
 
 	it.each([

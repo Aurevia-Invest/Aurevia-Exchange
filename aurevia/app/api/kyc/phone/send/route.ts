@@ -8,7 +8,7 @@ import {rateLimit} from '@/lib/rate-limit';
 import {verificationConfig} from '@/lib/config';
 import {hashVerificationCode,hasConfiguredTermii,sendTermiiVerificationToken} from '@/lib/verification-delivery';
 import {isValidE164} from '@/lib/registration-validation';
-import {AkedlyProviderError,akedlyIsConfigured,akedlyReadiness} from '@/lib/akedly';
+import {AkedlyProviderError,akedlyAttemptFailureDiagnostics,akedlyIsConfigured,akedlyReadiness} from '@/lib/akedly';
 import {startAkedlyVerification} from '@/lib/akedly-verification';
 import {isTierThreePhoneVerificationEligible,getTierProfileRequirements} from '@/lib/production-policy';
 import {synchronizeCompletedProfileTier} from '@/lib/tier-progression';
@@ -63,27 +63,33 @@ export async function POST(request:Request){
 				},{status:200});
 			}catch(error){
 				if(error instanceof Error&&['AKEDLY_RESEND_COOLDOWN','AKEDLY_ATTEMPT_RESERVATION_LOST'].includes(error.message))throw error;
-				const providerFailure=error instanceof Error&&[
+				const akedlyFailure=error instanceof Error&&[
+					'AKEDLY_CONFIGURATION_REQUIRED',
+					'AKEDLY_INTEGRATION_DISABLED',
+					'AKEDLY_CONFIGURATION_FAILED',
+					'AKEDLY_REQUEST_SIGNING_FAILED',
 					'AKEDLY_PROVIDER_UNAVAILABLE',
 					'AKEDLY_ATTEMPT_REJECTED',
 					'AKEDLY_INVALID_PROVIDER_RESPONSE',
 					'AKEDLY_INVALID_WIDGET_URL',
 				].includes(error.message);
-				if(providerFailure){
+				const allowExistingSmsFallback=error instanceof Error&&[
+					'AKEDLY_PROVIDER_UNAVAILABLE',
+					'AKEDLY_ATTEMPT_REJECTED',
+					'AKEDLY_INVALID_PROVIDER_RESPONSE',
+					'AKEDLY_INVALID_WIDGET_URL',
+				].includes(error.message);
+				if(akedlyFailure){
+					const diagnostics=akedlyAttemptFailureDiagnostics(error,input.phone);
 					console.warn('[kyc-phone] Akedly verification attempt failed.',{
 						requestId,
 						referenceId:requestId,
 						endpoint:'/api/kyc/phone/send',
-						failureCode:error instanceof Error?error.message:'AKEDLY_REQUEST_FAILED',
+						...diagnostics,
 						failureTimestamp:error instanceof AkedlyProviderError?error.failureTimestamp:new Date().toISOString(),
-						providerEndpoint:error instanceof AkedlyProviderError?error.providerEndpoint:null,
-						providerAttemptId:error instanceof AkedlyProviderError?error.providerAttemptId||null:null,
-						providerHttpStatus:error instanceof AkedlyProviderError?error.httpStatus||null:null,
-						...(error instanceof AkedlyProviderError&&error.providerCode?{providerCode:error.providerCode}:{}),
-						...(error instanceof AkedlyProviderError&&error.providerMessage?{providerMessage:error.providerMessage}:{}),
 					});
 				}
-				if(!providerFailure||!hasConfiguredTermii())throw error;
+				if(!allowExistingSmsFallback||!hasConfiguredTermii())throw error;
 			}
 		}
 		if(!hasConfiguredTermii()){

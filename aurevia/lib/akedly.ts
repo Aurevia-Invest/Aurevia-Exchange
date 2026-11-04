@@ -12,10 +12,21 @@ type AkedlyProviderErrorDetails={
 	providerAttemptId?:string;
 	providerMessage?:string;
 	failureTimestamp?:string;
+	failureStage?:AkedlyFailureStage;
+	underlyingErrorType?:string;
 	signedTimestamp?:number;
 	providerDate?:string;
 	responseReceivedAt?:string;
 };
+
+export type AkedlyFailureStage=
+	|'configuration'
+	|'request_signing'
+	|'create_attempt_request'
+	|'response_parsing'
+	|'provider_response'
+	|'response_validation'
+	|'widget_url_validation';
 
 export class AkedlyProviderError extends Error{
 	readonly httpStatus?:number;
@@ -25,6 +36,8 @@ export class AkedlyProviderError extends Error{
 	readonly providerAttemptId?:string;
 	readonly providerMessage?:string;
 	readonly failureTimestamp:string;
+	readonly failureStage?:AkedlyFailureStage;
+	readonly underlyingErrorType?:string;
 	readonly signedTimestamp?:number;
 	readonly providerDate?:string;
 	readonly responseReceivedAt?:string;
@@ -39,6 +52,8 @@ export class AkedlyProviderError extends Error{
 		this.providerAttemptId=details.providerAttemptId;
 		this.providerMessage=details.providerMessage;
 		this.failureTimestamp=details.failureTimestamp||new Date().toISOString();
+		this.failureStage=details.failureStage;
+		this.underlyingErrorType=details.underlyingErrorType;
 		this.signedTimestamp=details.signedTimestamp;
 		this.providerDate=details.providerDate;
 		this.responseReceivedAt=details.responseReceivedAt;
@@ -93,8 +108,71 @@ export function assertAkedlyConfigured(){
 	return config;
 }
 
+export function akedlyAttemptFailureDiagnostics(error:unknown,phoneNumber:string){
+	const detail=isRecord(error)?error:null;
+	const errorMessage=error instanceof Error?error.message:'';
+	const knownFailureCodes=[
+		'AKEDLY_CONFIGURATION_REQUIRED',
+		'AKEDLY_INTEGRATION_DISABLED',
+		'AKEDLY_CONFIGURATION_FAILED',
+		'AKEDLY_REQUEST_SIGNING_FAILED',
+		'AKEDLY_PROVIDER_UNAVAILABLE',
+		'AKEDLY_ATTEMPT_REJECTED',
+		'AKEDLY_INVALID_PROVIDER_RESPONSE',
+		'AKEDLY_INVALID_WIDGET_URL',
+	];
+	const failureCode=knownFailureCodes.includes(errorMessage)?errorMessage:'AKEDLY_REQUEST_FAILED';
+	const failureStage=typeof detail?.failureStage==='string'
+		&&['configuration','request_signing','create_attempt_request','response_parsing','provider_response','response_validation','widget_url_validation'].includes(detail.failureStage)
+		?detail.failureStage
+		:'unclassified_create_attempt_failure';
+	const providerCode=typeof detail?.providerCode==='string'&&/^[A-Z][A-Z0-9_]{1,39}$/.test(detail.providerCode)
+		?detail.providerCode
+		:'UNCLASSIFIED';
+	const httpStatus=typeof detail?.httpStatus==='number'&&Number.isInteger(detail.httpStatus)&&detail.httpStatus>=100&&detail.httpStatus<=599
+		?detail.httpStatus
+		:null;
+	const attemptId=typeof detail?.providerAttemptId==='string'&&/^[A-Za-z0-9_-]{8,200}$/.test(detail.providerAttemptId)
+		?detail.providerAttemptId
+		:null;
+	const providerMessage=detail?.name==='AkedlyProviderError'&&typeof detail.providerMessage==='string'
+		?detail.providerMessage
+			.replaceAll(phoneNumber,'[redacted-number]')
+			.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,'[redacted-email]')
+			.replace(/(?<![\p{L}\p{N}])\+?[\p{Nd}][\p{Nd}\s().-]{5,}[\p{Nd}](?![\p{L}\p{N}])/gu,'[redacted-number]')
+			.replace(/(?<![\p{L}\p{N}])[\p{Nd}]{4,8}(?![\p{L}\p{N}])/gu,'[redacted-code]')
+			.replace(/\b(api[_ -]?key|secret|token|password)\s*[:=]\s*\S+/gi,'$1=[redacted]')
+			.slice(0,240)
+		:undefined;
+	return {
+		failureCode,
+		failureStage,
+		failureClassification:providerCode,
+		providerCode,
+		underlyingErrorType:typeof detail?.underlyingErrorType==='string'
+			&&/^[A-Za-z][A-Za-z0-9]{0,40}$/.test(detail.underlyingErrorType)
+			?detail.underlyingErrorType
+			:safeErrorType(error),
+		providerEndpoint:CREATE_ATTEMPT_ENDPOINT,
+		providerAttemptId:attemptId,
+		providerHttpStatus:httpStatus,
+		...(providerMessage?{providerMessage}:{}),
+	};
+}
+
 export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyAttempt>{
-	const config=assertAkedlyConfigured();
+	let config:ReturnType<typeof assertAkedlyConfigured>;
+	try{
+		config=assertAkedlyConfigured();
+	}catch(error){
+		const failureCode=error instanceof Error&&['AKEDLY_CONFIGURATION_REQUIRED','AKEDLY_INTEGRATION_DISABLED'].includes(error.message)
+			?error.message
+			:'AKEDLY_CONFIGURATION_FAILED';
+		throw new AkedlyProviderError(failureCode,undefined,'CONFIGURATION_ERROR',undefined,{
+			failureStage:'configuration',
+			underlyingErrorType:safeErrorType(error),
+		});
+	}
 	const timestamp=Date.now();
 	const signingPayload:Record<string,string|number>={
 		apiKey:config.apiKey,
@@ -102,9 +180,17 @@ export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyA
 		timestamp,
 	};
 	if(contact.phoneNumber!==undefined)signingPayload.phoneNumber=contact.phoneNumber;
-	const signature=createHmac('sha256',config.widgetSecret)
-		.update(JSON.stringify(signingPayload),'utf8')
-		.digest('hex');
+	let signature:string;
+	try{
+		signature=createHmac('sha256',config.widgetSecret)
+			.update(JSON.stringify(signingPayload),'utf8')
+			.digest('hex');
+	}catch(error){
+		throw new AkedlyProviderError('AKEDLY_REQUEST_SIGNING_FAILED',undefined,'SIGNING_ERROR',undefined,{
+			failureStage:'request_signing',
+			underlyingErrorType:safeErrorType(error),
+		});
+	}
 	const body={
 		apiKey:config.apiKey,
 		publicKey:config.publicKey,
@@ -130,10 +216,23 @@ export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyA
 			undefined,
 			error instanceof Error&&error.name==='TimeoutError'?'PROVIDER_TIMEOUT':'NETWORK_ERROR',
 			undefined,
-			{providerEndpoint:CREATE_ATTEMPT_ENDPOINT},
+			{
+				providerEndpoint:CREATE_ATTEMPT_ENDPOINT,
+				failureStage:'create_attempt_request',
+				underlyingErrorType:safeErrorType(error),
+			},
 		);
 	}
-	const result=await response.json().catch(()=>null) as unknown;
+	let result:unknown;
+	try{
+		result=await response.json();
+	}catch(error){
+		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,'INVALID_JSON',undefined,{
+			providerEndpoint:CREATE_ATTEMPT_ENDPOINT,
+			failureStage:'response_parsing',
+			underlyingErrorType:safeErrorType(error),
+		});
+	}
 	const responseReceivedAt=new Date().toISOString();
 	const providerDateHeader=response.headers.get('date');
 	const providerDateTime=providerDateHeader?Date.parse(providerDateHeader):NaN;
@@ -142,6 +241,7 @@ export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyA
 	const providerMessage=providerErrorMessage(result,contact,config);
 	const providerDetails={
 		providerEndpoint:CREATE_ATTEMPT_ENDPOINT,
+		failureStage:'provider_response' as const,
 		signedTimestamp:timestamp,
 		responseReceivedAt,
 		...(providerDate?{providerDate}:{}),
@@ -158,22 +258,37 @@ export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyA
 		);
 	}
 	if(!isRecord(result)||result.status!=='success'||!isRecord(result.data)){
-		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,undefined,undefined,providerDetails);
+		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,'INVALID_RESPONSE',undefined,{
+			...providerDetails,
+			failureStage:'response_validation',
+		});
 	}
 	const {attemptId,iframeUrl,expiresAt}=result.data;
 	if(typeof attemptId!=='string'||attemptId.length<8||attemptId.length>200){
-		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,undefined,undefined,providerDetails);
+		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,'INVALID_RESPONSE',undefined,{
+			...providerDetails,
+			failureStage:'response_validation',
+		});
 	}
 	const attemptDetails={...providerDetails,providerAttemptId:attemptId};
 	if(typeof iframeUrl!=='string'||!isSafeWidgetUrl(iframeUrl,attemptId)){
-		throw new AkedlyProviderError('AKEDLY_INVALID_WIDGET_URL',response.status,undefined,undefined,attemptDetails);
+		throw new AkedlyProviderError('AKEDLY_INVALID_WIDGET_URL',response.status,undefined,undefined,{
+			...attemptDetails,
+			failureStage:'widget_url_validation',
+		});
 	}
 	if(typeof expiresAt!=='string'){
-		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,undefined,undefined,attemptDetails);
+		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,'INVALID_RESPONSE',undefined,{
+			...attemptDetails,
+			failureStage:'response_validation',
+		});
 	}
 	const expiry=new Date(expiresAt);
 	if(!Number.isFinite(expiry.getTime())||expiry.getTime()<=Date.now()||expiry.getTime()>Date.now()+10*60_000){
-		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,undefined,undefined,attemptDetails);
+		throw new AkedlyProviderError('AKEDLY_INVALID_PROVIDER_RESPONSE',response.status,'INVALID_RESPONSE',undefined,{
+			...attemptDetails,
+			failureStage:'response_validation',
+		});
 	}
 	return {attemptId,iframeUrl,expiresAt:expiry};
 }
@@ -304,6 +419,11 @@ function completedWithinAttempt(transaction:Record<string,unknown>,widgetAttempt
 
 function isRecord(value:unknown):value is Record<string,unknown>{
 	return typeof value==='object'&&value!==null&&!Array.isArray(value);
+}
+
+function safeErrorType(error:unknown){
+	if(!(error instanceof Error))return 'UnknownError';
+	return /^[A-Za-z][A-Za-z0-9]{0,40}$/.test(error.name)?error.name:'UnknownError';
 }
 
 function providerErrorCode(value:unknown){

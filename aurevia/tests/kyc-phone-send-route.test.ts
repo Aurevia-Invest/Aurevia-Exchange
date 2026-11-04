@@ -8,6 +8,8 @@ const mocks=vi.hoisted(()=>({
 		readonly providerAttemptId='attempt_1234567890';
 		readonly providerMessage='provider returned [redacted-number]';
 		readonly failureTimestamp='2026-11-03T17:00:00.000Z';
+		readonly failureStage='provider_response';
+		readonly underlyingErrorType='Error';
 
 		constructor(httpStatus=401,providerCode='INVALID_SIGNATURE'){
 			super('AKEDLY_ATTEMPT_REJECTED');
@@ -24,6 +26,21 @@ const mocks=vi.hoisted(()=>({
 	transaction:vi.fn(),
 	akedlyConfigured:vi.fn(),
 	akedlyReadiness:vi.fn(),
+	akedlyAttemptFailureDiagnostics:vi.fn((_error:unknown,_phoneNumber:string):{
+		failureCode:string;failureStage:string;failureClassification:string;providerCode:string;
+		underlyingErrorType:string;providerEndpoint:string;providerAttemptId:string|null;
+		providerHttpStatus:number|null;providerMessage?:string;
+	}=>({
+		failureCode:'AKEDLY_ATTEMPT_REJECTED',
+		failureStage:'provider_response',
+		failureClassification:'INVALID_SIGNATURE',
+		providerCode:'INVALID_SIGNATURE',
+		underlyingErrorType:'Error',
+		providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+		providerAttemptId:'attempt_1234567890',
+		providerHttpStatus:401,
+		providerMessage:'provider returned [redacted-number]',
+	})),
 	startAkedly:vi.fn(),
 	hasConfiguredTermii:vi.fn(),
 	hashCode:vi.fn(),
@@ -46,6 +63,7 @@ vi.mock('@/lib/akedly',()=>({
 	AkedlyProviderError:mocks.AkedlyProviderError,
 	akedlyIsConfigured:mocks.akedlyConfigured,
 	akedlyReadiness:mocks.akedlyReadiness,
+	akedlyAttemptFailureDiagnostics:mocks.akedlyAttemptFailureDiagnostics,
 }));
 vi.mock('@/lib/akedly-verification',()=>({startAkedlyVerification:mocks.startAkedly}));
 vi.mock('@/lib/verification-delivery',()=>({
@@ -205,5 +223,40 @@ describe('phone verification provider fallback',()=>{
 		expect(errorLog).toHaveBeenCalledWith('[kyc-phone] Request failed.',expect.objectContaining({requestId:expect.any(String)}));
 		warning.mockRestore();
 		errorLog.mockRestore();
+	});
+
+	it('keeps endpoint and stage diagnostics when an unstructured provider error is thrown',async()=>{
+		mocks.hasConfiguredTermii.mockReturnValue(false);
+		mocks.startAkedly.mockRejectedValue(new Error('AKEDLY_PROVIDER_UNAVAILABLE'));
+		mocks.akedlyAttemptFailureDiagnostics.mockReturnValueOnce({
+			failureCode:'AKEDLY_PROVIDER_UNAVAILABLE',
+			failureStage:'unclassified_create_attempt_failure',
+			failureClassification:'UNCLASSIFIED',
+			providerCode:'UNCLASSIFIED',
+			underlyingErrorType:'Error',
+			providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+			providerAttemptId:null,
+			providerHttpStatus:null,
+		});
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+
+		const response=await POST(request());
+		const logDetails=warning.mock.calls[0]?.[1];
+
+		expect(response.status).toBe(503);
+		expect(mocks.akedlyAttemptFailureDiagnostics).toHaveBeenCalledWith(
+			expect.objectContaining({message:'AKEDLY_PROVIDER_UNAVAILABLE'}),
+			'+12125550123',
+		);
+		expect(logDetails).toMatchObject({
+			failureCode:'AKEDLY_PROVIDER_UNAVAILABLE',
+			failureStage:'unclassified_create_attempt_failure',
+			failureClassification:'UNCLASSIFIED',
+			providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
+			providerAttemptId:null,
+			providerHttpStatus:null,
+		});
+		expect(JSON.stringify(logDetails)).not.toContain('+12125550123');
+		warning.mockRestore();
 	});
 });

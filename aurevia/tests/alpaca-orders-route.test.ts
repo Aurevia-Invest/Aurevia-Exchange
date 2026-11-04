@@ -22,7 +22,7 @@ vi.mock('@/lib/alpaca-paper-orders',()=>({
 import {POST} from '@/app/api/orders/route';
 
 const payload={instrumentId:'instrument-1',side:'BUY',type:'MARKET',quantity:1,expectedPrice:100,observedAt:new Date().toISOString()};
-const request=()=>new Request('http://localhost/api/orders',{method:'POST',headers:{'content-type':'application/json','Idempotency-Key':'route-order-key-001'},body:JSON.stringify(payload)});
+const request=(accountMode?:AccountMode)=>new Request('http://localhost/api/orders',{method:'POST',headers:{'content-type':'application/json','Idempotency-Key':'route-order-key-001'},body:JSON.stringify({...payload,...(accountMode?{accountMode}:{})})});
 
 describe('order route mode separation',()=>{
 	beforeEach(()=>{
@@ -38,6 +38,14 @@ describe('order route mode separation',()=>{
 
 		expect(response.status).toBe(201);
 		expect(mocks.placeOrder).toHaveBeenCalledWith('user-1',AccountMode.DEMO,expect.objectContaining({instrumentId:'instrument-1'}),'route-order-key-001');
+	});
+
+	it('rejects a forged REAL mode request while the database account is in DEMO mode',async()=>{
+		const response=await POST(request(AccountMode.REAL));
+
+		expect(response.status).toBe(409);
+		expect(mocks.placeOrder).not.toHaveBeenCalled();
+		expect(mocks.submitAlpacaPaperOrder).not.toHaveBeenCalled();
 	});
 
 	it('routes the database-confirmed REAL mode to Alpaca Paper execution',async()=>{

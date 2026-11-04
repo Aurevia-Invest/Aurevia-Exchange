@@ -180,6 +180,15 @@ describe('canonical environment configuration',()=>{
     expect(getServerConfiguration({}).verification.configured).toBe(false);
     expect(getServerConfiguration({RESEND_API_KEY:'email-notifications-key'}).verification.configured).toBe(false);
     expect(getServerConfiguration({TERMII_API_KEY:'termii-key',TERMII_SENDER_ID:'AUREVIA'}).verification.configured).toBe(true);
+    expect(getServerConfiguration({TWILIO_ACCOUNT_SID:`AC${'1'.repeat(32)}`,TWILIO_AUTH_TOKEN:'test-token',TWILIO_VERIFY_SERVICE_SID:`VA${'2'.repeat(32)}`}).verification).toMatchObject({
+      configured:true,
+      twilioConfigured:true,
+      termiiConfigured:false,
+    });
+    expect(getServerConfiguration({TWILIO_ACCOUNT_SID:'invalid',TWILIO_AUTH_TOKEN:'test-token',TWILIO_VERIFY_SERVICE_SID:'invalid'}).verification.configured).toBe(false);
+    expect(getServerConfiguration({TERMII_API_KEY:'termii-key',TERMII_SENDER_ID:'AUREVIA'}).verification.termiiBaseUrl).toBe('https://api.ng.termii.com');
+    expect(getServerConfiguration({TERMII_API_KEY:'termii-key',TERMII_SENDER_ID:'AUREVIA',TERMII_BASE_URL:'https://api.eu.termii.com'}).verification.termiiBaseUrl).toBe('https://api.eu.termii.com');
+    expect(getServerConfiguration({TERMII_API_KEY:'termii-key',TERMII_SENDER_ID:'AUREVIA',TERMII_BASE_URL:'https://example.invalid'}).verification).toMatchObject({configured:false,termiiBaseUrlValid:false});
   });
 
   it('uses the Render HTTPS origin until a custom domain is explicitly verified',()=>{

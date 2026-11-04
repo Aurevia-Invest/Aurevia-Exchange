@@ -6,7 +6,7 @@ import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {rateLimit} from '@/lib/rate-limit';
 import {verificationConfig} from '@/lib/config';
-import {hashVerificationCode,hasConfiguredTermii,sendTermiiVerificationToken} from '@/lib/verification-delivery';
+import {hashVerificationCode,hasConfiguredSmsProvider,hasConfiguredTermii,hasConfiguredTwilio,sendTermiiVerificationToken,sendTwilioVerificationCode,TermiiProviderError,TwilioVerifyProviderError} from '@/lib/verification-delivery';
 import {isValidE164} from '@/lib/registration-validation';
 import {AkedlyProviderError,akedlyAttemptFailureDiagnostics,akedlyIsConfigured,akedlyReadiness} from '@/lib/akedly';
 import {startAkedlyVerification} from '@/lib/akedly-verification';
@@ -15,7 +15,7 @@ import {synchronizeCompletedProfileTier} from '@/lib/tier-progression';
 
 const schema=z.object({
 	phone:z.string().trim().max(16).refine(isValidE164,'Enter a valid phone number with its country code.'),
-	delivery:z.enum(['automatic','termii']).optional(),
+	delivery:z.enum(['automatic','sms','termii']).optional(),
 });
 
 export async function POST(request:Request){
@@ -43,7 +43,7 @@ export async function POST(request:Request){
 		if(!phoneVerificationEligible)return NextResponse.json({error:'Complete your name and country in Profile before verifying your phone.'},{status:403});
 		if(current.phone===input.phone&&current.phoneVerified)return NextResponse.json({error:'This phone number is already verified.'},{status:409});
 
-		if(akedlyIsConfigured()&&input.delivery!=='termii'){
+		if(akedlyIsConfigured()&&input.delivery!=='termii'&&input.delivery!=='sms'){
 			const existingChallenge=await db.verificationCode.findUnique({where:{userId:user.id},select:{resendAfter:true}});
 			if(existingChallenge&&existingChallenge.resendAfter>new Date())return NextResponse.json({error:'Please wait before requesting another verification attempt.'},{status:429});
 			try{
@@ -57,7 +57,7 @@ export async function POST(request:Request){
 				return NextResponse.json({
 					message:'Complete phone verification in the secure widget. If you cannot receive or complete it, request an SMS code instead.',
 					provider:'akedly',
-					termiiFallbackAvailable:hasConfiguredTermii(),
+					smsFallbackAvailable:hasConfiguredSmsProvider(),
 					resendAfterSeconds:verificationConfig.resendCooldownSeconds,
 					...attempt,
 				},{status:200});
@@ -74,6 +74,10 @@ export async function POST(request:Request){
 					'AKEDLY_INVALID_WIDGET_URL',
 				].includes(error.message);
 				const allowExistingSmsFallback=error instanceof Error&&[
+					'AKEDLY_CONFIGURATION_REQUIRED',
+					'AKEDLY_INTEGRATION_DISABLED',
+					'AKEDLY_CONFIGURATION_FAILED',
+					'AKEDLY_REQUEST_SIGNING_FAILED',
 					'AKEDLY_PROVIDER_UNAVAILABLE',
 					'AKEDLY_ATTEMPT_REJECTED',
 					'AKEDLY_INVALID_PROVIDER_RESPONSE',
@@ -89,13 +93,16 @@ export async function POST(request:Request){
 						failureTimestamp:error instanceof AkedlyProviderError?error.failureTimestamp:new Date().toISOString(),
 					});
 				}
-				if(!allowExistingSmsFallback||!hasConfiguredTermii())throw error;
+				if(!allowExistingSmsFallback||!hasConfiguredSmsProvider())throw error;
 			}
 		}
-		if(!hasConfiguredTermii()){
+		const smsProvider=input.delivery==='termii'
+			?(hasConfiguredTermii()?'termii':null)
+			:hasConfiguredTwilio()?'twilio':hasConfiguredTermii()?'termii':null;
+		if(!smsProvider){
 			if(input.delivery==='termii'){
 				console.warn('[kyc-phone] Requested SMS fallback is not configured.');
-				return NextResponse.json({error:'The SMS fallback is not configured. No code was sent. Use the secure verification widget or contact support.'},{status:503});
+				return NextResponse.json({error:'The requested SMS provider is not configured. No code was sent. Use the secure verification widget or contact support.'},{status:503});
 			}
 			const readiness=akedlyReadiness();
 			console.warn('[kyc-phone] No phone verification provider is configured.',{
@@ -140,11 +147,21 @@ export async function POST(request:Request){
 
 		let providerReference:string;
 		try{
-			providerReference=await sendTermiiVerificationToken(input.phone);
+			providerReference=smsProvider==='twilio'
+				?await sendTwilioVerificationCode(input.phone)
+				:await sendTermiiVerificationToken(input.phone);
 		}catch(error){
 			await db.verificationCode.deleteMany({where:{id:challengeId,codeHash:reservation}});
-			console.error('[kyc-phone] Termii send failed.',{userId:user.id,errorType:error instanceof Error?error.name:'UnknownError'});
-			return NextResponse.json({error:'We could not send a verification code. Check the phone number and try again.'},{status:502});
+			console.error('[kyc-phone] SMS provider send failed.',{
+				requestId,
+				referenceId:requestId,
+				provider:smsProvider,
+				endpoint:smsProvider==='twilio'?'/v2/Services/{ServiceSid}/Verifications':'/api/sms/otp/send',
+				failureStage:error instanceof TermiiProviderError||error instanceof TwilioVerifyProviderError?error.failureStage:'unclassified',
+				providerHttpStatus:error instanceof TermiiProviderError||error instanceof TwilioVerifyProviderError?error.httpStatus:null,
+				underlyingErrorType:error instanceof TermiiProviderError||error instanceof TwilioVerifyProviderError?error.underlyingErrorType:error instanceof Error?error.name:'UnknownError',
+			});
+			return NextResponse.json({error:'We could not send a verification code. Check the phone number and try again.',requestId,referenceId:requestId},{status:502});
 		}
 		const saved=await db.verificationCode.updateMany({
 			where:{id:challengeId,codeHash:reservation},

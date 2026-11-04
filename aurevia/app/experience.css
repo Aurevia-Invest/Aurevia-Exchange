@@ -12,6 +12,7 @@
 html{scroll-behavior:smooth;background:var(--color-ink)}
 body{margin:0;overflow-x:clip;font-family:"Avenir Next",Avenir,"Segoe UI",sans-serif;color:var(--color-text-primary);background:var(--color-ink)}
 .admin-scope{min-width:1280px;min-height:100vh}
+@media(max-width:1279px){.admin-scope:has(.admin-login-scene){width:100%;min-width:0}}
 html:has(.admin-scope),body:has(.admin-scope){overflow-x:auto}
 ::selection{background:rgba(212,167,44,.3);color:#fff}
 a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid color-mix(in srgb,var(--color-gold) 65%,white);outline-offset:3px}

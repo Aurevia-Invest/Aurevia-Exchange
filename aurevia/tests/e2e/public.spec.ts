@@ -15,7 +15,7 @@ const viewports=[
 	{width:1920,height:1080},
 ];
 
-const publicRoutes=['/','/login','/register','/markets','/stories','/client-stories','/about','/education','/support','/waitlist','/terms','/privacy','/risk-disclosure','/forgot-password','/reset-password'];
+const publicRoutes=['/','/login','/register','/markets','/stories','/client-stories','/about','/education','/support','/waitlist','/terms','/privacy','/risk-disclosure','/forgot-password','/reset-password','/admin/login'];
 
 function fixture(name:string){
 	const value=process.env[`AUREVIA_E2E_${name}`];
@@ -31,6 +31,7 @@ test.describe('public routes and responsive layout',()=>{
 				const response=await page.goto(route);
 				expect(response?.status(),route).toBe(200);
 				await expect(page.locator('h1').first(),route).toBeVisible();
+				if(route==='/admin/login')await expect(page.locator('.admin-login-card')).toBeVisible();
 				if(route==='/markets')await expect(page.getByRole('heading',{name:'Markets',exact:true})).toBeVisible();
 				if(route==='/support')await expect(page.getByRole('heading',{name:'Nova AI',exact:true})).toBeVisible();
 				if(route==='/register'){

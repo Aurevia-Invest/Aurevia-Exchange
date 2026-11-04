@@ -83,7 +83,10 @@ export async function verifySmtpConnection():Promise<{verified:boolean;reason?:E
 	}
 }
 
-export async function sendEmail(input:{to:string;subject:string;text:string;html?:string}):Promise<EmailDelivery>{
+export async function sendEmail(
+	input:{to:string;subject:string;text:string;html?:string},
+	options:{fallbackToResend?:boolean}={},
+):Promise<EmailDelivery>{
 	const config=getServerConfiguration();
 	const subject=input.subject.replace(/[\r\n]+/g,' ').slice(0,200);
 	const html=input.html||renderAureviaEmail({
@@ -96,7 +99,9 @@ export async function sendEmail(input:{to:string;subject:string;text:string;html
 	}catch(error){
 		const errorCode=safeSmtpErrorCode(error);
 		console.error('SMTP transport initialization failed.',{...(errorCode?{errorCode}:{})});
-		return {sent:false,provider:'smtp',reason:'failed',...(errorCode?{providerCode:errorCode}:{})};
+		if(!options.fallbackToResend||!config.verification.resendApiKey){
+			return {sent:false,provider:'smtp',reason:'failed',...(errorCode?{providerCode:errorCode}:{})};
+		}
 	}
 	if(smtp){
 		try{
@@ -110,7 +115,9 @@ export async function sendEmail(input:{to:string;subject:string;text:string;html
 					?'network-error'
 					:'failed';
 			console.error('SMTP email delivery failed.',{reason,...(errorCode?{errorCode}:{})});
-			return {sent:false,provider:'smtp',reason,...(errorCode?{providerCode:errorCode}:{})};
+			if(!options.fallbackToResend||!config.verification.resendApiKey){
+				return {sent:false,provider:'smtp',reason,...(errorCode?{providerCode:errorCode}:{})};
+			}
 		}finally{
 			smtp.transport.close();
 		}

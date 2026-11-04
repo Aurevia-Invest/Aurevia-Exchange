@@ -41,6 +41,13 @@ export type ServerConfiguration = {
     emailFrom: string;
     termiiApiKey: string;
     termiiSenderId: string;
+    termiiBaseUrl: string;
+    termiiBaseUrlValid: boolean;
+    termiiConfigured: boolean;
+    twilioAccountSid:string;
+    twilioAuthToken:string;
+    twilioVerifyServiceSid:string;
+    twilioConfigured:boolean;
     appUrl: string;
     configured: boolean;
   };
@@ -166,6 +173,18 @@ export function normalizeAlpacaTradingBaseUrl(value: string): string | null {
   }
 }
 
+export function normalizeTermiiBaseUrl(value: string): string | null {
+  try {
+    const parsed = new URL(value.trim());
+    const host = parsed.hostname.toLowerCase();
+    if(parsed.protocol !== 'https:' || !(host === 'termii.com' || host.endsWith('.termii.com'))) return null;
+    if(parsed.username || parsed.password || parsed.port || !['', '/'].includes(parsed.pathname) || parsed.search || parsed.hash) return null;
+    return `https://${host}`;
+  } catch {
+    return null;
+  }
+}
+
 export function getServerConfiguration(source: EnvironmentSource = process.env): ServerConfiguration {
   const databaseUrl = cleanUrl(env('DATABASE_URL', source));
   const directUrl = cleanUrl(env('DIRECT_URL', source));
@@ -179,7 +198,16 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
   const smtpPort = smtpPortValue ? Number(smtpPortValue) : 587;
   const smtpConfigured = Boolean(smtpHost && smtpUser && smtpPassword && smtpFrom)
     && Number.isInteger(smtpPort) && smtpPort > 0 && smtpPort <= 65535;
-  const verificationSmsConfigured = Boolean(env('TERMII_API_KEY', source) && env('TERMII_SENDER_ID', source));
+  const termiiBaseUrlValue=env('TERMII_BASE_URL',source);
+  const termiiBaseUrl=normalizeTermiiBaseUrl(termiiBaseUrlValue||'https://api.ng.termii.com');
+  const termiiBaseUrlValid=Boolean(termiiBaseUrl);
+  const termiiConfigured=Boolean(env('TERMII_API_KEY',source)&&env('TERMII_SENDER_ID',source)&&termiiBaseUrlValid);
+  const twilioAccountSid=env('TWILIO_ACCOUNT_SID',source);
+  const twilioAuthToken=env('TWILIO_AUTH_TOKEN',source);
+  const twilioVerifyServiceSid=env('TWILIO_VERIFY_SERVICE_SID',source);
+  const twilioConfigured=/^AC[0-9a-f]{32}$/i.test(twilioAccountSid)
+    &&Boolean(twilioAuthToken)
+    &&/^VA[0-9a-f]{32}$/i.test(twilioVerifyServiceSid);
   const executionProvider = env('ALPACA_PROVIDER', source) || env('BROKER_PROVIDER', source) || null;
   const alpacaProvider = env('ALPACA_PROVIDER', source) || 'alpaca';
   const brokerProvider = env('BROKER_PROVIDER', source);
@@ -254,8 +282,15 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
       emailFrom: env('RESEND_FROM_EMAIL', source) || env('VERIFICATION_EMAIL_FROM', source) || 'noreply@aureviaexchanged.dpdns.org',
       termiiApiKey: env('TERMII_API_KEY', source),
       termiiSenderId: env('TERMII_SENDER_ID', source),
+      termiiBaseUrl:termiiBaseUrl||'',
+      termiiBaseUrlValid,
+      twilioAccountSid,
+      twilioAuthToken,
+      twilioVerifyServiceSid,
       appUrl: cleanUrl(env('NEXT_PUBLIC_APP_URL', source) || env('NEXTAUTH_URL', source) || env('RENDER_EXTERNAL_URL', source) || 'https://aurevia-exchange-6hfi.onrender.com'),
-      configured: verificationSmsConfigured,
+      configured:termiiConfigured||twilioConfigured,
+      termiiConfigured,
+      twilioConfigured,
     },
     execution: {
       realEnabled: booleanEnv('REAL_EXECUTION_ENABLED', source),

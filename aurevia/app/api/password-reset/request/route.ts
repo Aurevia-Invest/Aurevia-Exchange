@@ -1,4 +1,4 @@
-import {createHash,randomBytes} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
 import {trustedProxyClientIp} from '@/lib/request-ip';
@@ -6,6 +6,7 @@ import {db} from '@/lib/db';
 import {isEmailConfigured,sendEmail} from '@/lib/email';
 import {renderAureviaEmail} from '@/lib/email-template';
 import {rateLimit} from '@/lib/rate-limit';
+import {resolveRenderApplicationUrls} from '@/lib/config/render-urls';
 
 export const dynamic='force-dynamic';
 
@@ -17,7 +18,8 @@ function getClientIp(request:Request){
 }
 
 function getPasswordResetUrl(){
-	const configuredOrigin=process.env.NEXT_PUBLIC_APP_URL||process.env.NEXTAUTH_URL||process.env.RENDER_EXTERNAL_URL;
+	const renderUrls=resolveRenderApplicationUrls(process.env);
+	const configuredOrigin=renderUrls?.publicAppUrl||process.env.NEXT_PUBLIC_APP_URL||process.env.NEXTAUTH_URL||process.env.RENDER_EXTERNAL_URL;
 	if(!configuredOrigin)return null;
 	try{
 		const origin=new URL(configuredOrigin);
@@ -32,6 +34,7 @@ function getPasswordResetUrl(){
 }
 
 export async function POST(request:Request){
+	const requestId=randomUUID();
 	try{
 		rateLimit(`password-reset-request:${getClientIp(request)}`,5,60*60_000);
 		const input=schema.parse(await request.json());
@@ -69,9 +72,16 @@ export async function POST(request:Request){
 				],
 				action:{label:'Reset password',href:resetUrl.toString()},
 			}),
-		});
+		},{fallbackToResend:true});
 		if(!delivery.sent){
 			await db.passwordResetToken.updateMany({where:{tokenHash,consumedAt:null},data:{consumedAt:new Date()}});
+			console.warn('[password-reset] Recovery email delivery failed.',{
+				requestId,
+				provider:delivery.provider||'none',
+				reason:delivery.reason||'failed',
+				...(delivery.httpStatus?{httpStatus:delivery.httpStatus}:{}),
+				...(delivery.providerCode?{providerCode:delivery.providerCode}:{}),
+			});
 			return NextResponse.json(genericResponse,{status:202});
 		}
 		return NextResponse.json(genericResponse,{status:202});
@@ -80,6 +90,6 @@ export async function POST(request:Request){
 		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many recovery requests. Try again later.'},{status:429});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
 		if(['P1001','P1002','P1017'].includes(code))return NextResponse.json({error:'Password recovery is temporarily unavailable.'},{status:503});
-		return NextResponse.json({error:'Password recovery is temporarily unavailable.'},{status:503});
+		return NextResponse.json({error:'Password recovery is temporarily unavailable.',requestId},{status:503});
 	}
 }

@@ -17,12 +17,35 @@ const mocks=vi.hoisted(()=>({
 			this.providerCode=providerCode;
 		}
 	},
+	TwilioVerifyProviderError:class extends Error{
+		constructor(
+			message:'PHONE_VERIFICATION_PROVIDER_UNAVAILABLE'|'PHONE_VERIFICATION_PROVIDER_FAILED',
+			readonly failureStage:'transport'|'provider_response'|'invalid_response',
+			readonly httpStatus:number|null,
+			readonly underlyingErrorType:string|null=null,
+		){
+			super(message);
+			this.name='TwilioVerifyProviderError';
+		}
+	},
+	TermiiProviderError:class extends Error{
+		constructor(
+			message:'PHONE_VERIFICATION_PROVIDER_UNAVAILABLE'|'PHONE_VERIFICATION_PROVIDER_FAILED',
+			readonly failureStage:'transport'|'provider_response'|'invalid_response',
+			readonly httpStatus:number|null,
+			readonly underlyingErrorType:string|null=null,
+		){
+			super(message);
+			this.name='TermiiProviderError';
+		}
+	},
 	requireUser:vi.fn(),
 	userFindUnique:vi.fn(),
 	userUpdate:vi.fn(),
 	codeFindUnique:vi.fn(),
 	codeCreate:vi.fn(),
 	codeUpdateMany:vi.fn(),
+	codeDeleteMany:vi.fn(),
 	transaction:vi.fn(),
 	akedlyConfigured:vi.fn(),
 	akedlyReadiness:vi.fn(),
@@ -43,8 +66,11 @@ const mocks=vi.hoisted(()=>({
 	})),
 	startAkedly:vi.fn(),
 	hasConfiguredTermii:vi.fn(),
+	hasConfiguredTwilio:vi.fn(),
+	hasConfiguredSmsProvider:vi.fn(),
 	hashCode:vi.fn(),
 	sendTermii:vi.fn(),
+	sendTwilio:vi.fn(),
 	rateLimit:vi.fn(),
 	synchronizeTier:vi.fn(),
 }));
@@ -56,6 +82,7 @@ vi.mock('@/lib/db',()=>({db:{
 		findUnique:mocks.codeFindUnique,
 		create:mocks.codeCreate,
 		updateMany:mocks.codeUpdateMany,
+		deleteMany:mocks.codeDeleteMany,
 	},
 	$transaction:mocks.transaction,
 }}));
@@ -68,15 +95,20 @@ vi.mock('@/lib/akedly',()=>({
 vi.mock('@/lib/akedly-verification',()=>({startAkedlyVerification:mocks.startAkedly}));
 vi.mock('@/lib/verification-delivery',()=>({
 	hasConfiguredTermii:mocks.hasConfiguredTermii,
+	hasConfiguredTwilio:mocks.hasConfiguredTwilio,
+	hasConfiguredSmsProvider:mocks.hasConfiguredSmsProvider,
 	hashVerificationCode:mocks.hashCode,
 	sendTermiiVerificationToken:mocks.sendTermii,
+	sendTwilioVerificationCode:mocks.sendTwilio,
+	TermiiProviderError:mocks.TermiiProviderError,
+	TwilioVerifyProviderError:mocks.TwilioVerifyProviderError,
 }));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit}));
 vi.mock('@/lib/tier-progression',()=>({synchronizeCompletedProfileTier:mocks.synchronizeTier}));
 
 import {POST} from '@/app/api/kyc/phone/send/route';
 
-function request(delivery?:'automatic'|'termii'){
+function request(delivery?:'automatic'|'sms'|'termii'){
 	return new Request('https://aurevia.test/api/kyc/phone/send',{
 		method:'POST',
 		headers:{'content-type':'application/json','x-forwarded-for':'192.0.2.6'},
@@ -96,6 +128,7 @@ describe('phone verification provider fallback',()=>{
 		mocks.codeFindUnique.mockResolvedValue(null);
 		mocks.codeCreate.mockResolvedValue({});
 		mocks.codeUpdateMany.mockResolvedValue({count:1});
+		mocks.codeDeleteMany.mockResolvedValue({count:1});
 		mocks.transaction.mockImplementation(async(callback:(tx:unknown)=>Promise<unknown>)=>callback({
 			user:{findUnique:mocks.userFindUnique,update:mocks.userUpdate},
 			verificationCode:{create:mocks.codeCreate},
@@ -105,8 +138,11 @@ describe('phone verification provider fallback',()=>{
 		mocks.akedlyReadiness.mockReturnValue({enabled:false,missing:['AKEDLY_API_KEY'],ready:false});
 		mocks.startAkedly.mockRejectedValue(new Error('AKEDLY_PROVIDER_UNAVAILABLE'));
 		mocks.hasConfiguredTermii.mockReturnValue(true);
+		mocks.hasConfiguredTwilio.mockReturnValue(false);
+		mocks.hasConfiguredSmsProvider.mockReturnValue(true);
 		mocks.hashCode.mockReturnValue('hashed-reservation');
 		mocks.sendTermii.mockResolvedValue('termii-pin-reference');
+		mocks.sendTwilio.mockResolvedValue('TWILIO');
 	});
 
 	it('sends an OTP after profile completion before KYC details or files are submitted',async()=>{
@@ -135,6 +171,15 @@ describe('phone verification provider fallback',()=>{
 		}));
 	});
 
+	it('uses SMS fallback when Akedly is configured but disabled',async()=>{
+		mocks.startAkedly.mockRejectedValue(new Error('AKEDLY_INTEGRATION_DISABLED'));
+
+		const response=await POST(request());
+
+		expect(response.status).toBe(200);
+		expect(mocks.sendTermii).toHaveBeenCalledWith('+12125550123');
+	});
+
 	it('does not switch providers while an Akedly attempt is cooling down',async()=>{
 		mocks.startAkedly.mockRejectedValue(new Error('AKEDLY_RESEND_COOLDOWN'));
 		mocks.codeFindUnique.mockResolvedValue({resendAfter:new Date(Date.now()+60_000)});
@@ -144,7 +189,7 @@ describe('phone verification provider fallback',()=>{
 		expect(mocks.sendTermii).not.toHaveBeenCalled();
 	});
 
-	it('offers a configured Termii SMS fallback when Akedly starts successfully',async()=>{
+	it('offers a configured SMS fallback when Akedly starts successfully',async()=>{
 		mocks.startAkedly.mockResolvedValue({
 			attemptId:'attempt-12345678',
 			iframeUrl:'https://auth.akedly.io/widget?attemptId=attempt-12345678',
@@ -156,19 +201,45 @@ describe('phone verification provider fallback',()=>{
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({
 			provider:'akedly',
-			termiiFallbackAvailable:true,
+			smsFallbackAvailable:true,
 			resendAfterSeconds:expect.any(Number),
 		});
 		expect(mocks.sendTermii).not.toHaveBeenCalled();
 	});
 
-	it('sends a requested Termii code without starting another Akedly attempt',async()=>{
-		const response=await POST(request('termii'));
+	it('sends a requested SMS code without starting another Akedly attempt',async()=>{
+		mocks.hasConfiguredTwilio.mockReturnValue(true);
+		const response=await POST(request('sms'));
 
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({message:'A verification code was sent to your phone.'});
 		expect(mocks.startAkedly).not.toHaveBeenCalled();
-		expect(mocks.sendTermii).toHaveBeenCalledWith('+12125550123');
+		expect(mocks.sendTwilio).toHaveBeenCalledWith('+12125550123');
+		expect(mocks.sendTermii).not.toHaveBeenCalled();
+		expect(mocks.codeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+			data:expect.objectContaining({providerReference:'TWILIO'}),
+		}));
+	});
+
+	it('returns a reference and logs safe Termii diagnostics on provider rejection',async()=>{
+		mocks.sendTermii.mockRejectedValue(new mocks.TermiiProviderError('PHONE_VERIFICATION_PROVIDER_FAILED','provider_response',401));
+		const errorLog=vi.spyOn(console,'error').mockImplementation(()=>undefined);
+
+		const response=await POST(request('termii'));
+		const body=await response.json();
+		const details=errorLog.mock.calls[0]?.[1];
+
+		expect(response.status).toBe(502);
+		expect(body).toMatchObject({requestId:expect.any(String),referenceId:expect.any(String)});
+		expect(details).toMatchObject({
+			requestId:body.requestId,
+			referenceId:body.requestId,
+			endpoint:'/api/sms/otp/send',
+			failureStage:'provider_response',
+			providerHttpStatus:401,
+		});
+		expect(JSON.stringify(details)).not.toContain('+12125550123');
+		errorLog.mockRestore();
 	});
 
 	it('explains that no code was sent when neither phone provider is configured',async()=>{
@@ -189,6 +260,7 @@ describe('phone verification provider fallback',()=>{
 
 	it('logs correlated, sanitized Akedly provider diagnostics when fallback is unavailable',async()=>{
 		mocks.hasConfiguredTermii.mockReturnValue(false);
+		mocks.hasConfiguredSmsProvider.mockReturnValue(false);
 		mocks.startAkedly.mockRejectedValue(new mocks.AkedlyProviderError());
 		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
 		const errorLog=vi.spyOn(console,'error').mockImplementation(()=>undefined);
@@ -227,6 +299,7 @@ describe('phone verification provider fallback',()=>{
 
 	it('keeps endpoint and stage diagnostics when an unstructured provider error is thrown',async()=>{
 		mocks.hasConfiguredTermii.mockReturnValue(false);
+		mocks.hasConfiguredSmsProvider.mockReturnValue(false);
 		mocks.startAkedly.mockRejectedValue(new Error('AKEDLY_PROVIDER_UNAVAILABLE'));
 		mocks.akedlyAttemptFailureDiagnostics.mockReturnValueOnce({
 			failureCode:'AKEDLY_PROVIDER_UNAVAILABLE',

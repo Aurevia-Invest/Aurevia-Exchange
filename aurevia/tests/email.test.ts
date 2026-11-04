@@ -152,6 +152,26 @@ describe('shared outbound email delivery',()=>{
 		error.mockRestore();
 	});
 
+	it('can fall back to Resend after SMTP failure when explicitly requested',async()=>{
+		vi.stubEnv('SMTP_HOST','smtp-relay.brevo.com');
+		vi.stubEnv('SMTP_PORT','587');
+		vi.stubEnv('SMTP_USER','test-smtp-user');
+		vi.stubEnv('SMTP_PASSWORD','test-smtp-password');
+		vi.stubEnv('SMTP_FROM','Aurevia Exchange <mail@example.invalid>');
+		vi.stubEnv('RESEND_API_KEY','test-resend-key');
+		smtpMocks.transport.sendMail.mockRejectedValueOnce(Object.assign(new Error('SMTP failure'),{code:'ECONNECTION'}));
+		const fetchMock=vi.fn().mockResolvedValue(new Response(null,{status:200}));
+		vi.stubGlobal('fetch',fetchMock);
+
+		await expect(sendEmail(
+			{to:'person@example.invalid',subject:'Password recovery',text:'Use this one-time link.'},
+			{fallbackToResend:true},
+		)).resolves.toEqual({sent:true,provider:'resend'});
+
+		expect(smtpMocks.transport.close).toHaveBeenCalledOnce();
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
 	it('fails explicitly when neither supported outbound email provider is configured',async()=>{
 		expect(isEmailConfigured()).toBe(false);
 		await expect(sendEmail({to:'person@example.invalid',subject:'Test',text:'Test'}))

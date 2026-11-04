@@ -153,6 +153,7 @@ export async function checkIntegration(id:IntegrationId,aiEngineStatus?:Promise<
 	if(id==='database')return checkDatabase();
 	if(id==='termii'){
 		const config=getServerConfiguration().verification;
+		if(!config.termiiBaseUrlValid)return item(id,'Termii SMS','CONFIGURATION_REQUIRED','TERMII_BASE_URL must be an HTTPS URL on an official Termii domain, without a path.','Phone verification',false);
 		return checkConfiguredOnly(id,'Termii SMS',Boolean(config.termiiApiKey&&config.termiiSenderId),'Phone verification','TERMII_API_KEY and TERMII_SENDER_ID are required.');
 	}
 	if(id==='akedly'){

@@ -10,7 +10,7 @@ import type {TranslationKey} from '@/lib/i18n';
 type VerificationStatus='PENDING'|'APPROVED'|'REJECTED'|'NEEDS_CHANGES';
 type VerificationForm={legalName:string;dob:string;address:string;idType:string;idNumber:string};
 type KycDocument={id:string;kind:string;filename:string;mimeType:string;size:number;status:string;uploadedAt:string;reviewedAt:string|null;reviewNote:string|null};
-type AkedlyPhoneAttempt={attemptId:string;iframeUrl:string;expiresAt:string;termiiFallbackAvailable:boolean};
+type AkedlyPhoneAttempt={attemptId:string;iframeUrl:string;expiresAt:string;smsFallbackAvailable:boolean};
 const emptyForm:VerificationForm={legalName:'',dob:'',address:'',idType:'PASSPORT',idNumber:''};
 
 const statusCopy:Record<VerificationStatus,{label:TranslationKey;description:TranslationKey}>={
@@ -117,7 +117,7 @@ export default function Kyc(){
     finally{setSubmitting(false)}
   }
 
-  async function sendPhoneCode(delivery:'automatic'|'termii'='automatic'){
+  async function sendPhoneCode(delivery:'automatic'|'sms'='automatic'){
     if(sendingPhoneCode||!phone.trim())return;
     setSendingPhoneCode(true);setError('');setPhoneMessage('');
     try{
@@ -130,7 +130,7 @@ export default function Kyc(){
           attemptId:result.attemptId,
           iframeUrl:result.iframeUrl,
           expiresAt:result.expiresAt,
-          termiiFallbackAvailable:result.termiiFallbackAvailable===true,
+          smsFallbackAvailable:result.smsFallbackAvailable===true,
         });
       }else setPhoneAttempt(null);
     }catch(exception){setError(exception instanceof Error?exception.message:'Unable to send a phone verification code.')}
@@ -198,7 +198,7 @@ export default function Kyc(){
           <label className="account-label">Six-digit verification code<input className="input" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={phoneCode} onChange={event=>setPhoneCode(event.target.value.replace(/\D/g,'').slice(0,6))}/></label>
           <button className="btn bg-gold text-black self-end" type="button" disabled={verifyingPhoneCode||loading||phoneCode.length!==6||phoneVerified} onClick={()=>void verifyPhoneCode()}>{verifyingPhoneCode?'Verifying…':phoneVerified?'Phone verified':'Verify phone'}</button>
         </div>}
-        {phoneAttempt?.termiiFallbackAvailable&&<button className="mt-3 text-link text-sm" type="button" disabled={sendingPhoneCode||loading} onClick={()=>void sendPhoneCode('termii')}>{sendingPhoneCode?'Requesting SMS code…':'Can’t use the widget? Send me an SMS code instead'}</button>}
+        {phoneAttempt?.smsFallbackAvailable&&<button className="mt-3 text-link text-sm" type="button" disabled={sendingPhoneCode||loading} onClick={()=>void sendPhoneCode('sms')}>{sendingPhoneCode?'Requesting SMS code…':'Can’t use the widget? Send me an SMS code instead'}</button>}
         <p className="mt-3 text-xs muted" role="status">{phoneVerified?'Phone number verified for Tier 3.':'Verify your phone number to continue with Tier 3.'}</p>
         {phoneMessage&&<p className="mt-2 text-sm text-profit" role="status">{phoneMessage}</p>}
         {phoneVerified&&<p className="mt-3 text-sm text-profit" role="status">Phone verified. Complete and submit your identity information and documents below for administrator review.</p>}

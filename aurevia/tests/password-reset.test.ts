@@ -108,6 +108,46 @@ describe('password recovery',()=>{
 		expect(message.html).toContain(`token=${token}`);
 	});
 
+	it('uses the canonical Render origin instead of an unverified public URL',async()=>{
+		vi.stubEnv('NODE_ENV','production');
+		vi.stubEnv('RENDER_EXTERNAL_URL','https://aurevia.onrender.com');
+		vi.stubEnv('NEXT_PUBLIC_APP_URL','https://unverified.example.invalid');
+		mocks.userFindFirst.mockResolvedValue({id:'user-1',email:'person@example.invalid',status:'ACTIVE'});
+
+		const response=await requestReset(request('/api/password-reset/request',{email:'person@example.invalid'}));
+
+		expect(response.status).toBe(202);
+		expect(mocks.sendEmail.mock.calls[0][0].text).toContain('https://aurevia.onrender.com/reset-password#token=');
+	});
+
+	it('invalidates an undelivered reset token and logs sanitized delivery diagnostics',async()=>{
+		mocks.userFindFirst.mockResolvedValue({id:'user-1',email:'person@example.invalid',status:'ACTIVE'});
+		mocks.sendEmail.mockResolvedValue({
+			sent:false,
+			provider:'resend',
+			reason:'provider_error',
+			httpStatus:401,
+			providerCode:'INVALID_API_KEY',
+		});
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+
+		const response=await requestReset(request('/api/password-reset/request',{email:'person@example.invalid'}));
+
+		expect(response.status).toBe(202);
+		expect(mocks.resetUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+			where:expect.objectContaining({consumedAt:null}),
+			data:expect.objectContaining({consumedAt:expect.any(Date)}),
+		}));
+		expect(warning).toHaveBeenCalledWith('[password-reset] Recovery email delivery failed.',expect.objectContaining({
+			requestId:expect.any(String),
+			provider:'resend',
+			reason:'provider_error',
+			httpStatus:401,
+			providerCode:'INVALID_API_KEY',
+		}));
+		warning.mockRestore();
+	});
+
 	it('keeps the explicit service-configuration failure when no email provider is available',async()=>{
 		mocks.isEmailConfigured.mockReturnValue(false);
 

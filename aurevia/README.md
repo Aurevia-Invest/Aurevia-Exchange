@@ -240,9 +240,18 @@ AKEDLY_WIDGET_SECRET=
 AKEDLY_WEBHOOK_SECRET=
 NEXT_PUBLIC_APP_URL=https://aureviaexchanged.dpdns.org
 # Optional fallback for REAL-mode phone verification when Akedly is unavailable or the user requests SMS instead.
+# Twilio Verify is preferred for SMS when all three credentials are configured. Enable the required destination countries in Twilio.
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_VERIFY_SERVICE_SID=
+# Optional Termii fallback; use your account-specific HTTPS base URL.
 TERMII_API_KEY=
 TERMII_SENDER_ID=
+# Set this to the account-specific HTTPS base URL shown in your Termii dashboard.
+TERMII_BASE_URL=https://api.ng.termii.com
 ```
+
+The international SMS fallback uses [Twilio Verify](https://www.twilio.com/docs/verify/api/verification) when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_VERIFY_SERVICE_SID` are configured. Twilio requires E.164 destinations, a Verify Service, and enabled geographic permissions; country delivery depends on the provider's country support and account configuration, not every number worldwide. Codes are verified with Twilio's [Verification Check](https://www.twilio.com/docs/verify/api/verification-check) before marking a phone as verified. Credentials are sent only to Twilio's fixed HTTPS Verify API host. The optional Termii SMS provider uses the account-specific HTTPS base URL from the [Termii developer documentation](https://developers.termii.com/), which says each account has its own base URL in the Termii dashboard. `TERMII_BASE_URL` is restricted to HTTPS hosts on the official `termii.com` domain family; it defaults to `https://api.ng.termii.com`. Twilio is preferred when fully configured; Termii is used otherwise or can be explicitly selected. Provider diagnostics log a request reference, stage, and HTTP status without credentials, phone numbers, OTPs, or provider response bodies. Password recovery uses Resend as a fallback if configured SMTP delivery fails; both messages carry the same single-use reset link.
 
 The official integration contracts are documented at [Akedly V2 create attempt](https://docs.akedly.io/authentication/v2/start), [widget client](https://docs.akedly.io/authentication/v2/client), [result callbacks](https://docs.akedly.io/authentication/v2/results), and [transaction status lookup](https://docs.akedly.io/authentication/transaction-status). The Svix package verifies raw-body webhook signatures. Configure the Akedly pipeline's backend callback to the route above and verify WhatsApp/SMS availability, country coverage, and callback receipt in staging before relying on registration verification in production. Set Render environment values as raw values, not `.env` assignment syntax: the enable flag accepts `true` (including matching surrounding quotes), while quote-wrapped provider credentials are rejected and diagnosed by variable name only. New registration signs and verifies the E.164 phone address with Akedly; it does not use email delivery as a fallback. Previously started email challenges remain recoverable. KYC email events are generic, contain no submitted identity details or administrator notes, and cannot change the review decision. Password reset remains email-only.
 

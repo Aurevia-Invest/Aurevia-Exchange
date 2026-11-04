@@ -6,7 +6,7 @@ import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
 import {verificationConfig} from '@/lib/config';
-import {verificationCodeMatches,verifyTermiiVerificationToken} from '@/lib/verification-delivery';
+import {verificationCodeMatches,verifyTermiiVerificationToken,verifyTwilioVerificationCode,TwilioVerifyProviderError} from '@/lib/verification-delivery';
 import {akedlyAttemptIdFromReference} from '@/lib/akedly-verification';
 import {isTierThreePhoneVerificationEligible,getTierProfileRequirements} from '@/lib/production-policy';
 
@@ -47,9 +47,17 @@ export async function POST(request:Request){
 
 		let verified:boolean;
 		try{
-			verified=await verifyTermiiVerificationToken(challenge.providerReference,code);
+			verified=challenge.providerReference==='TWILIO'
+				?await verifyTwilioVerificationCode(account.phone,code)
+				:await verifyTermiiVerificationToken(challenge.providerReference,code);
 		}catch(error){
-			console.error('[kyc-phone] Termii verify failed.',{userId:user.id,errorType:error instanceof Error?error.name:'UnknownError'});
+			console.error('[kyc-phone] SMS provider verification failed.',{
+				userId:user.id,
+				provider:challenge.providerReference==='TWILIO'?'twilio':'termii',
+				failureStage:error instanceof TwilioVerifyProviderError?error.failureStage:'unclassified',
+				providerHttpStatus:error instanceof TwilioVerifyProviderError?error.httpStatus:null,
+				errorType:error instanceof Error?error.name:'UnknownError',
+			});
 			return NextResponse.json({error:'Phone verification is temporarily unavailable. Please try again.'},{status:503});
 		}
 		if(!verified){

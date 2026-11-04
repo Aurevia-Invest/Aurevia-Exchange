@@ -1,9 +1,9 @@
 import {NextResponse} from 'next/server';
-import {AccountMode,FundingStatus,FundingType,Prisma,Role,UserStatus} from '@prisma/client';
+import {AccountMode,EntryType,FundingStatus,FundingType,Prisma,Role,UserStatus} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance} from '@/lib/ledger';
+import {roundUsdAmount} from '@/lib/ledger';
 import {jsonSafe} from '@/lib/serializers';
 
 const querySchema=z.object({search:z.string().trim().max(120).default('')});
@@ -20,11 +20,21 @@ export async function GET(request:Request){
 		const userIds=users.map(user=>user.id);
 		const accounts=userIds.length?await db.ledgerAccount.findMany({where:{userId:{in:userIds},currency:'USD',accountMode:{in:[AccountMode.DEMO,AccountMode.REAL]}},select:{userId:true,accountMode:true,id:true}}):[];
 		const reservations=userIds.length?await db.fundingRequest.groupBy({by:['userId','accountMode'],where:{userId:{in:userIds},currency:'USD',type:FundingType.WITHDRAWAL,status:{in:[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,FundingStatus.APPROVED,FundingStatus.PROCESSING]}},_sum:{amount:true}}):[];
-		const balances=await Promise.all(accounts.map(async account=>[`${account.userId}:${account.accountMode}`,await balance(db,account.id)] as const));
-		const balanceByAccount=new Map(balances);
+		const ledgerEntries=accounts.length?await db.ledgerEntry.groupBy({by:['accountId','type'],where:{accountId:{in:accounts.map(account=>account.id)}},_sum:{amount:true}}):[];
+		const balanceByAccount=new Map<string,Prisma.Decimal>();
+		for(const entry of ledgerEntries){
+			const current=balanceByAccount.get(entry.accountId)??new Prisma.Decimal(0);
+			const amount=entry._sum.amount??new Prisma.Decimal(0);
+			balanceByAccount.set(entry.accountId,entry.type===EntryType.CREDIT?current.plus(amount):current.minus(amount));
+		}
+		const accountByUserMode=new Map(accounts.map(account=>[`${account.userId}:${account.accountMode}`,account.id]));
 		const reservationByAccount=new Map(reservations.map(reservation=>[`${reservation.userId}:${reservation.accountMode}`,reservation._sum.amount??new Prisma.Decimal(0)]));
 		const items=users.map(user=>{
-			const available=(mode:AccountMode)=>Prisma.Decimal.max(new Prisma.Decimal(0),new Prisma.Decimal(balanceByAccount.get(`${user.id}:${mode}`)??0).minus(reservationByAccount.get(`${user.id}:${mode}`)??0));
+			const available=(mode:AccountMode)=>{
+				const key=`${user.id}:${mode}`;
+				const total=balanceByAccount.get(accountByUserMode.get(key)??'')??new Prisma.Decimal(0);
+				return Prisma.Decimal.max(new Prisma.Decimal(0),roundUsdAmount(total).minus(reservationByAccount.get(key)??0));
+			};
 			return {...user,availableBalances:{DEMO:available(AccountMode.DEMO),REAL:available(AccountMode.REAL)}};
 		});
 		return NextResponse.json(jsonSafe({items}),{headers:{'Cache-Control':'private, no-store'}});

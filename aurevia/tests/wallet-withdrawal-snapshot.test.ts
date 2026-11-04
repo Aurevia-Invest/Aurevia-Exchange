@@ -95,6 +95,20 @@ beforeEach(()=>{
 });
 
 describe('wallet withdrawal destination snapshot',()=>{
+	it('rate-limits REAL deposit requests before starting database work',async()=>{
+		mocks.rateLimit.mockImplementationOnce(()=>{throw new Error('RATE_LIMITED')});
+		const response=await POST(new Request('https://aurevia.test/api/wallet',{
+			method:'POST',
+			headers:{'content-type':'application/json','Idempotency-Key':'deposit-rate-limited'},
+			body:JSON.stringify({type:FundingType.DEPOSIT,amount:100,currency:'USD'}),
+		}));
+
+		expect(response.status).toBe(429);
+		expect((await response.json()).error).toContain('Too many funding requests');
+		expect(mocks.rateLimit).toHaveBeenCalledWith('real-deposit:user-1',20,60*60_000);
+		expect(mocks.transaction).not.toHaveBeenCalled();
+	});
+
 	it('stores encrypted immutable destination details alongside the request without returning secrets',async()=>{
 		const response=await POST(request());
 		const body=await response.json();

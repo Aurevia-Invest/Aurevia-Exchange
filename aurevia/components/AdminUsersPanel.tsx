@@ -46,7 +46,7 @@ function AdminLoginHistory({userId}:{userId:string}){
 	}
 	return <section className="mt-4 border-t border-white/10 pt-4">
 		<div className="account-panel-title"><div><h3>Login history</h3><p className="account-panel-subtitle">Login and logout records with device and network details.</p></div><button className="btn min-h-10 bg-white/5" type="button" onClick={()=>void load()} disabled={loading}>{loading?'Loading…':events?'Refresh history':'View history'}</button></div>
-		<p className="mt-2 text-xs muted">IP addresses are approximate network data. No verified physical-location provider is configured; an IP does not establish a person’s location.</p>
+		<p className="mt-2 text-xs muted">IP addresses are approximate. No verified location provider is configured; an IP does not establish a person’s location.</p>
 		{error&&<p className="mt-2 text-sm text-loss" role="alert">{error}</p>}
 		{events&&<div className="mt-3 grid gap-2">{events.length?events.map(event=><article className="rounded border border-white/10 p-3" key={event.id}>
 			<div className="flex flex-wrap items-center justify-between gap-2"><b>{event.action==='LOGIN_SUCCESS'?'Successful sign-in':event.action==='LOGIN_FAILED'?'Failed sign-in':event.action==='LOGOUT_SUCCESS'?'Signed out':event.action}</b><time className="text-xs muted" dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time></div>

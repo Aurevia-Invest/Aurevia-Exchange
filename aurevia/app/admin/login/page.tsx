@@ -26,7 +26,7 @@ export default function AdminLogin(){
    finally{setBusy(false)}
  }
  return <main className="admin-login-scene min-h-screen px-4 py-10 sm:py-16">
-   <div className="admin-orb admin-orb-a"/><div className="admin-orb admin-orb-b"/>
+   <div className="admin-orb admin-orb-a pointer-events-none" aria-hidden="true"/><div className="admin-orb admin-orb-b pointer-events-none" aria-hidden="true"/>
    <div className="admin-login-card card mx-auto max-w-md p-7 sm:p-9">
     <div className="flex justify-center"><Image src="/aurevia-logo.png" alt="Aurevia Exchange" width={92} height={92} className="admin-login-logo" priority/></div>
     <div className="mt-4 text-center"><div className="gold text-xs font-bold tracking-[0.28em]">AUREVIA EXCHANGE</div><h1 className="mt-2 text-3xl font-black">Administrator sign in</h1><p className="mt-2 muted">Restricted control-center access.</p></div>

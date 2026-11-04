@@ -1,7 +1,7 @@
 import {createHash,randomBytes} from 'node:crypto';
-import {isIP} from 'node:net';
 import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
+import {trustedProxyClientIp} from '@/lib/request-ip';
 import {db} from '@/lib/db';
 import {isEmailConfigured,sendEmail} from '@/lib/email';
 import {renderAureviaEmail} from '@/lib/email-template';
@@ -13,9 +13,7 @@ const schema=z.object({email:z.string().trim().email().max(254)});
 const genericResponse={message:'If an eligible account matches, recovery instructions may be emailed. If no email arrives, contact support.'};
 
 function getClientIp(request:Request){
-	const forwarded=request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()||'';
-	const real=request.headers.get('x-real-ip')?.trim()||'';
-	return forwarded&&isIP(forwarded)?forwarded:real&&isIP(real)?real:'unknown';
+	return trustedProxyClientIp(request)||'unknown';
 }
 
 function getPasswordResetUrl(){

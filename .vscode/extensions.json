@@ -2,6 +2,7 @@
     "recommendations": [
         "openai.chatgpt",
         "openai.codex-audio",
-        "inandi.renderflow"
+        "inandi.renderflow",
+        "spylogsster.app-debug-helper"
     ]
 }

@@ -159,14 +159,14 @@ export default function Trade() {
         if (!active) return;
         setItems(market);
         setSelected(market[0]?.id||"");
-        if(walletData.accountMode==="REAL"&&!market.length)setMsg("No fresh provider quotes are available for the supported trading instruments.");
+        if(walletData.accountMode==="REAL"&&!market.length)setMsg("Fresh provider quotes are unavailable. Refresh to retry; REAL orders do not use internal reference prices.");
       } catch {
         if (active){
           if(activeMode==="REAL"){
             setItems([]);
             setSelected("");
-            setMsg("Unable to load fresh provider quotes. Internal reference prices are not used for REAL orders.");
-          }else setMsg("Unable to load trading data. Refresh to try again.");
+            setMsg("Provider quotes could not load. Refresh to retry; REAL orders do not use internal reference prices.");
+          }else setMsg("Trading data could not load. Refresh to retry.");
         }
       }
     };
@@ -179,13 +179,13 @@ export default function Trade() {
         setItems(market);
         setSelected(current=>market.some(item=>item.id===current)?current:market[0]?.id||"");
         if(activeMode==="DEMO")updateStore(market);
-        if(activeMode==="REAL"&&!market.length)setMsg("Live provider quotes are temporarily unavailable. Internal reference prices are not used for REAL orders.");
-        else setMsg(current=>current.startsWith("Live provider quotes")||current.startsWith("No fresh provider quotes")?"":current);
+        if(activeMode==="REAL"&&!market.length)setMsg("Provider quotes are unavailable. Refresh to retry; REAL orders do not use internal reference prices.");
+        else setMsg(current=>current.startsWith("Provider quotes")||current.startsWith("Fresh provider quotes")?"":current);
       }catch{
         if(active&&activeMode==="REAL"){
           setItems([]);
           setSelected("");
-          setMsg("Unable to refresh provider quotes. Internal reference prices are not used for REAL orders.");
+          setMsg("Provider quotes could not refresh. Try again; REAL orders do not use internal reference prices.");
         }
       }
     };
@@ -393,7 +393,7 @@ export default function Trade() {
                   })}
                 </button>
               ))}
-              {!items.length&&<p className="muted text-sm">{accountMode==="REAL"?"No supported instruments have a fresh provider quote.":"No trading instruments are currently available."}</p>}
+              {!items.length&&<p className="muted text-sm">{accountMode==="REAL"?"No supported instruments have fresh provider quotes. Refresh to check again.":"No trading instruments are available."}</p>}
             </div>
             <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_220px]">
               <div className="trade-chart-panel">

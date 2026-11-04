@@ -15,6 +15,7 @@ const groups=[
 	]},
 	{title:'Accounts',links:[
 		{href:'/admin/users',label:'Users',icon:UsersRound},
+		{href:'/admin/sessions',label:'Account sessions',icon:Activity},
 		{href:'/admin/users?mode=DEMO',label:'Demo Accounts',icon:Building2},
 		{href:'/admin/users?mode=REAL',label:'Real Accounts',icon:Building2},
 		{href:'/admin/kyc',label:'KYC Verification',icon:ClipboardCheck},
@@ -164,7 +165,7 @@ export default function AdminNav(){
 	return <div className="admin-shell-chrome">
 		{open&&<button type="button" className="admin-sidebar-backdrop" aria-label="Close admin navigation" onClick={close}/>}
 		<aside className={`admin-sidebar ${open?'is-open':''}`}>
-			<Link href="/admin" className="admin-brand" onClick={close} aria-label="Aurevia administration dashboard">
+			<Link href="/admin" className="admin-brand" onClick={close}>
 				<span className="admin-brand-mark"><Image src="/aurevia-logo.png" alt="" width={34} height={34}/></span>
 				<span className="admin-brand-type"><b>AUREVIA</b><small>INVEST · ADMIN</small></span>
 			</Link>

@@ -15,9 +15,9 @@ type TierData={
 	requests:TierRequest[];
 };
 const tiers=[
-	{number:1,title:'Registered account',icon:UserRound,description:'Sign in, use your dashboard, and access basic account features.'},
-	{number:2,title:'Identity reviewed',icon:Sparkles,description:'Submit a government-issued ID and selfie for administrator review. Phone OTP is not required.'},
-	{number:3,title:'Verified account',icon:Crown,description:'Add proof of address, verify your phone, and receive administrator approval.'},
+	{number:1,title:'Registered account',icon:UserRound,description:'Sign in, use your dashboard, and manage core account features.'},
+	{number:2,title:'Identity reviewed',icon:Sparkles,description:'Submit a government-issued ID and selfie for admin review. Phone OTP is not required.'},
+	{number:3,title:'Verified account',icon:Crown,description:'Submit proof of address, verify your phone, and get admin approval.'},
 ];
 
 export default function AccountTierPanel(){
@@ -46,7 +46,7 @@ export default function AccountTierPanel(){
 			const response=await fetch('/api/tier-requests',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message})});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to submit your tier review request.');
-			setNotice('Your Tier 3 request is waiting for administrator review.');
+			setNotice('Your Tier 3 request is awaiting administrator review.');
 			setMessage('');await load();
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to submit your tier review request.')}
 		finally{setBusy(false)}
@@ -61,7 +61,7 @@ export default function AccountTierPanel(){
 			const response=await fetch('/api/tier-requests',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({id:latest.id,message})});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to submit additional information.');
-			setNotice('Your additional information is back with the administrator for review.');
+			setNotice('Your additional information was sent to the administrator for review.');
 			setMessage('');await load();
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to submit additional information.')}
 		finally{setBusy(false)}
@@ -84,7 +84,7 @@ export default function AccountTierPanel(){
 	];
 
 	return <><Nav/><main className="account-page tier-page">
-		<header className="account-heading tier-heading"><div><span className="account-kicker">AUREVIA · ACCOUNT PROGRESSION</span><h1>Account tiers</h1><p>See what is active, what is complete, and what remains to reach the next tier.</p></div><span className={`status-pill ${data?.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{data?.accountMode||session?.user?.accountMode||'ACCOUNT'} · TIER {currentTier}</span></header>
+		<header className="account-heading tier-heading"><div><span className="account-kicker">AUREVIA · ACCOUNT PROGRESSION</span><h1>Account tiers</h1><p>See your current tier and what you need to advance.</p></div><span className={`status-pill ${data?.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{data?.accountMode||session?.user?.accountMode||'ACCOUNT'} · TIER {currentTier}</span></header>
 		{loading&&!data&&<p className="account-empty" role="status">Loading your tier progress…</p>}
 		{error&&<div className="account-callout mb-3" role="alert"><span>{error}</span><button className="text-link" type="button" disabled={loading} onClick={()=>void load()}>Retry</button></div>}
 		{notice&&<p className="mb-3 text-sm text-profit" role="status">{notice}</p>}

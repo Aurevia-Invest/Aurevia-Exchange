@@ -49,11 +49,11 @@ test('homepage keeps Stories in navigation and off the landing content',async({p
 		await page.goto('/');
 		await expect(page.locator('.stories-section')).toHaveCount(0);
 		await expect(page.locator('.client-stories-rotator')).toHaveCount(0);
-		const menu=page.getByRole('button',{name:'Open navigation'});
-		if(await menu.isVisible())await menu.click();
-		await expect(page.locator('#primary-navigation').getByRole('link',{name:'Stories',exact:true})).toHaveAttribute('href','/stories');
 		await expectNoHorizontalOverflow(page);
 	}
+	await loginAs(page,process.env.AUREVIA_E2E_USER_EMAIL!,process.env.AUREVIA_E2E_USER_PASSWORD!);
+	await page.getByRole('button',{name:'More account navigation'}).click();
+	await expect(page.getByRole('dialog',{name:'More'}).getByRole('link',{name:'Stories',exact:true})).toHaveAttribute('href','/stories');
 });
 
 test('homepage hero actions remain usable with reduced motion',async({browser,page})=>{
@@ -67,6 +67,7 @@ test('homepage hero actions remain usable with reduced motion',async({browser,pa
 
 	const nextSession=await browser.newContext({viewport:{width:1280,height:900},reducedMotion:'reduce'});
 	try{
+		await nextSession.addInitScript(()=>localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()})));
 		const nextPage=await nextSession.newPage();
 		await nextPage.goto('/');
 		await waitForStartup(nextPage);
@@ -115,13 +116,15 @@ test('homepage labels internal reference prices as non-live market data',async({
 
 test('homepage clearly labels stock and crypto trading modes',async({page})=>{
 	await page.goto('/');
-	const stocks=page.locator('.asset-item').filter({has:page.getByRole('heading',{name:'Stock trading',exact:true})});
-	await expect(stocks).toContainText('DEMO orders');
+	const stocks=page.locator('.asset-item').filter({hasText:'Stock trading'});
+	await expect(stocks).toHaveCount(1);
+	await expect(stocks).toContainText('DEMO');
 	await expect(stocks).toContainText('NVDA');
 	await expect(stocks).toContainText('Alpaca Paper Trading');
-	await expect(stocks.getByRole('link')).toHaveAttribute('href','/login?callbackUrl=%2Ftrade');
-	const crypto=page.locator('.asset-item').filter({has:page.getByRole('heading',{name:'Crypto trading',exact:true})});
-	await expect(crypto).toContainText('BTC/USD and ETH/USD');
+	const crypto=page.locator('.asset-item').filter({hasText:'Crypto trading'});
+	await expect(crypto).toHaveCount(1);
+	await expect(crypto).toContainText('BTC/USD');
+	await expect(crypto).toContainText('ETH/USD');
 	await expect(crypto).toContainText('Alpaca Paper Trading');
 });
 

@@ -20,7 +20,6 @@ type StartupMode='loading'|'cinematic'|'hidden';
 export default function StartupShell({children}:{children:ReactNode}){
 	const {status}=useSession();
 	const pathname=usePathname();
-	const contentRef=useRef<HTMLDivElement>(null);
 	const currentPath=useRef(pathname);
 	const startupInitialized=useRef(false);
 	const introductionTimers=useRef<{start?:number;exit?:number}>({});
@@ -99,10 +98,6 @@ export default function StartupShell({children}:{children:ReactNode}){
 	},[pathname]);
 
 	useEffect(()=>{
-		contentRef.current?.toggleAttribute('inert',showStartup||showPageTransition);
-	},[showPageTransition,showStartup]);
-
-	useEffect(()=>{
 		if(startupMode!=='cinematic'||pathname==='/')return;
 		markIntroductionComplete();
 	},[markIntroductionComplete,pathname,startupMode]);
@@ -175,7 +170,7 @@ export default function StartupShell({children}:{children:ReactNode}){
 
 	return <div className="app-shell" onClickCapture={handleNavigationClick}>
 		<div className="scene-depth" aria-hidden="true"/>
-		<div className="scene-content"><div ref={contentRef} aria-hidden={showStartup||showPageTransition}>{children}</div>
+		<div className="scene-content"><div inert={showStartup||showPageTransition} aria-hidden={showStartup||showPageTransition}>{children}</div>
 			{startupMode==='cinematic'&&introductionStarted&&<AureviaStartup isExiting={isExiting} onSkip={skipIntroduction}/>}
 			{startupMode==='loading'&&<AureviaStartupLoader isExiting={isExiting}/>}
 			{showPageTransition&&<AureviaLoading label="Loading the next page" detail="Moving securely through Aurevia Exchange"/>}

@@ -7,6 +7,7 @@ import {createNotification,notifyActiveAdmins} from '@/lib/notifications';
 import {emailDeliveryStatus,sendSupportEmail} from '@/lib/email';
 import {FundingEvidenceError,maxFundingEvidenceBytes,validateFundingEvidence} from '@/lib/funding-evidence';
 import {createPrivateObjectKey,createPrivateSignedUrl,deletePrivateObject,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
+import {rateLimit} from '@/lib/rate-limit';
 
 const reviewableStatuses=[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,FundingStatus.PROCESSING];
 
@@ -20,6 +21,7 @@ export async function POST(request:Request,{params}:{params:Promise<{id:string}>
 		if(!currentUser||currentUser.status!=='ACTIVE')return NextResponse.json({error:'Wallet account is unavailable.'},{status:403});
 		if(currentUser.accountMode!==AccountMode.REAL)return NextResponse.json({error:'Receipt management is available in REAL mode only.'},{status:403});
 		ownerId=user.id;
+		rateLimit(`funding-receipt:${user.id}`,10,60*60_000);
 		const contentLength=Number(request.headers.get('content-length')||0);
 		if(contentLength>maxFundingEvidenceBytes+64*1024)return NextResponse.json({error:'Evidence must be 5 MB or smaller.'},{status:413});
 		const form=await request.formData();
@@ -49,6 +51,7 @@ export async function POST(request:Request,{params}:{params:Promise<{id:string}>
 		if(newKey&&ownerId)await deletePrivateObject('receipt',ownerId,newKey);
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Sign in to upload a receipt.'},{status:401});
 		if(error instanceof Error&&error.message==='RECEIPT_REQUEST_CHANGED')return NextResponse.json({error:'The funding request changed. Refresh and try again.'},{status:409});
+		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many receipt uploads. Try again later.'},{status:429});
 		if(error instanceof FundingEvidenceError)return NextResponse.json({error:error.message},{status:error.status});
 		if(error instanceof PrivateStorageError)return NextResponse.json({error:error.message},{status:error.status});
 		console.error('Payment receipt upload failed.');

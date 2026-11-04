@@ -40,7 +40,7 @@ export default defineConfig({
 	testMatch:'**/*.spec.ts',
 	outputDir:join(tmpdir(),'aurevia-playwright-results'),
 	fullyParallel:false,
-	workers:2,
+	workers:1, // Integration tests share mutable database fixtures and authentication sessions.
 	retries:0,
 	reporter:'list',
 	timeout:90000,

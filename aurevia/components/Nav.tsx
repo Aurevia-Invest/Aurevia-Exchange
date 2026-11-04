@@ -218,7 +218,7 @@ export default function Nav(){
  if(userMode&&data?.user)return <>
   <header className="site-nav site-nav-authenticated site-nav-user-shell">
   <div className="nav-inner">
-   <Link href="/dashboard" className="brand" onClick={close} aria-label="Aurevia Exchange home"><Image className="brand-logo-image" src="/aurevia-logo.png" alt="" width={36} height={36}/><span className="brand-copy"><strong>Aurevia</strong><small>EXCHANGE</small></span></Link>
+   <Link href="/dashboard" className="brand" onClick={close}><Image className="brand-logo-image" src="/aurevia-logo.png" alt="" width={36} height={36}/><span className="brand-copy"><strong>Aurevia</strong><small>EXCHANGE</small></span></Link>
    <form className="user-market-search" role="search" onSubmit={submitMarketSearch}>
     <Search size={16} aria-hidden="true"/>
     <input aria-label="Search markets and account pages" autoComplete="off" value={marketSearch} onFocus={()=>setMarketSearchOpen(true)} onBlur={()=>setMarketSearchOpen(false)} onChange={event=>setMarketSearch(event.target.value)} placeholder="Search markets or pages"/>
@@ -256,7 +256,7 @@ export default function Nav(){
   </section>
  </>;
  return <header className={`site-nav ${status==='authenticated'?'site-nav-authenticated':''} ${status==='authenticated'&&data?.user?.role==='ADMIN'?'site-nav-admin':''}`}><div className="nav-inner">
-   <Link href="/" className="brand" onClick={close} aria-label="Aurevia Exchange home"><Image className="brand-logo-image" src="/aurevia-logo.png" alt="" width={38} height={38}/><span className="brand-copy"><strong>Aurevia</strong><small>EXCHANGE</small></span></Link>
+   <Link href="/" className="brand" onClick={close}><Image className="brand-logo-image" src="/aurevia-logo.png" alt="" width={38} height={38}/><span className="brand-copy"><strong>Aurevia</strong><small>EXCHANGE</small></span></Link>
    <nav id="primary-navigation" aria-label="Primary navigation" className={`nav-links ${open?'nav-open':''}`} onKeyDown={event=>{if(event.key==='Escape')close()}}>
     {status==='loading'?<span className="muted text-sm" aria-live="polite">{translate('restoringSession')}</span>:<>
      {status==='unauthenticated'&&<section className="nav-menu-group" aria-labelledby="nav-access-heading">

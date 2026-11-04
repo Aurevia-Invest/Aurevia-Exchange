@@ -48,7 +48,7 @@ export default function CountrySelector({label,value,onChange,required=false,inv
 	}
 
 	return <div className="country-selector">
-		<button ref={triggerRef} type="button" className={`country-selector-trigger ${invalid?'is-invalid':''}`} aria-label={`${label}${required?', required':''}: ${selected?`${selected.name} ${selected.dialCode}`:'Select a country'}`} aria-haspopup="dialog" aria-expanded={open} aria-describedby={errorId} onClick={()=>setOpen(true)}>
+		<button ref={triggerRef} type="button" className={`country-selector-trigger ${invalid?'is-invalid':''}`} aria-label={`${label}${required?', required':''}: ${selected?`${selected.name} ${selected.dialCode}`:'Select country'}`} aria-haspopup="dialog" aria-expanded={open} aria-describedby={errorId} onClick={()=>setOpen(true)}>
 			{selected?<><span className="country-flag" aria-hidden="true">{selected.flag}</span><span className="country-selector-name">{selected.name}</span>{showDialCode&&<span className="country-dial-code">{selected.dialCode}</span>}</>:<span className="muted">Select country</span>}
 			<ChevronDown size={16} aria-hidden="true"/>
 		</button>

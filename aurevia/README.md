@@ -286,6 +286,8 @@ Password: configured with ADMIN_PASSWORD
 
 Set `ADMIN_USERNAME`, `ADMIN_EMAIL`, and a unique, strong `ADMIN_PASSWORD` in the deployment secret manager or an ignored local `.env` file. No administrator password is included in the repository. On a fresh database, use those exact credentials at `/admin/login`; first sign-in provisions the ADMIN account. If an admin already exists and the configured email is unused, first sign-in updates that existing admin record to the configured identity rather than creating a second one. Alternatively, run `npm run db:seed` to provision explicitly.
 
+The admin **Account sessions** page (`/admin/sessions`) displays recent registered-account sign-ins and allows an administrator to revoke an active session. It reuses the existing login audit records and current-session marker; it does not collect anonymous browsing activity, expose IP addresses or raw user-agent strings, resolve location, or issue arbitrary commands to a visitor's device. Passwords remain one-way hashed and can only be changed through the account recovery flow.
+
 ## Docker
 
 ```bash

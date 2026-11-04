@@ -19,15 +19,18 @@ export async function deleteAccountData(tx:Prisma.TransactionClient,input:{userI
 	});
 	if(!current)throw new Error('ACCOUNT_NOT_FOUND');
 
+	const accounts=await tx.ledgerAccount.findMany({where:{userId:current.id},select:{id:true}});
 	if(!input.force){
 		const activeFunding=await tx.fundingRequest.count({
 			where:{userId:current.id,status:{in:[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,FundingStatus.APPROVED,FundingStatus.PROCESSING]}},
 		});
 		if(activeFunding)throw new Error('ACCOUNT_HAS_ACTIVE_FUNDING');
-		const accounts=await tx.ledgerAccount.findMany({where:{userId:current.id},select:{id:true,startingBalance:true}});
 		for(const account of accounts){
-			if(!account.startingBalance.isZero()||!(await balance(tx,account.id)).isZero())throw new Error('ACCOUNT_HAS_NONZERO_BALANCE');
+			if(!(await balance(tx,account.id)).isZero())throw new Error('ACCOUNT_HAS_NONZERO_BALANCE');
 		}
+	}
+	for(const account of accounts){
+		await tx.ledgerAccount.update({where:{id:account.id},data:{userId:null,code:`CLOSED:${account.id}`,name:'Closed customer account'}});
 	}
 
 	const privateFiles:PrivateFile[]=[
@@ -39,7 +42,6 @@ export async function deleteAccountData(tx:Prisma.TransactionClient,input:{userI
 		...current.taxCases.flatMap(taxCase=>taxCase.documents.map(document=>({area:'tax' as const,ownerId:document.userId,key:document.storageKey}))),
 	];
 
-	await tx.ledgerTransaction.deleteMany({where:{entries:{some:{account:{userId:current.id}}}}});
 	await tx.supportMessage.deleteMany({where:{authorId:current.id}});
 	await tx.auditLog.updateMany({
 		where:{OR:[{actorId:current.id},{entityId:current.id}]},

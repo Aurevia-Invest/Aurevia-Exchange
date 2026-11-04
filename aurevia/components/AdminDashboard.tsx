@@ -140,7 +140,7 @@ function PlatformChart({daily}:{daily:DashboardData['daily']}){
 	return <section className="admin-panel admin-chart-panel" aria-labelledby="admin-platform-overview">
 		<header className="admin-panel-heading"><div><p className="admin-eyebrow">REAL ACCOUNT ACTIVITY</p><h2 id="admin-platform-overview">Funding activity</h2><p>Approved USD deposits and settled USD withdrawals, daily.</p></div><span className="admin-period-label">LAST 7 DAYS · REAL</span></header>
 		<div className="admin-chart-legend"><span><i className="deposit-dot"/>Deposits</span><span><i className="withdrawal-dot"/>Withdrawals</span></div>
-		{daily.length===0?<p className="admin-empty-state">Daily activity is currently unavailable.</p>:<>
+		{daily.length===0?<p className="admin-empty-state">Daily activity unavailable.</p>:<>
 			<svg className="admin-platform-chart" viewBox="0 0 700 250" role="img" aria-labelledby="admin-chart-title admin-chart-description">
 				<title id="admin-chart-title">Daily approved deposits and settled withdrawals</title>
 				<desc id="admin-chart-description">{daily.map(day=>`${day.date}: deposits ${money.format(day.depositsUsd)}, withdrawals ${money.format(day.withdrawalsUsd)}`).join('; ')}</desc>
@@ -170,7 +170,7 @@ function AccountStatus({kyc}:{kyc:DashboardData['kyc']}){
 	return <section className="admin-panel" aria-labelledby="admin-kyc-heading">
 		<header className="admin-panel-heading"><div><p className="admin-eyebrow">IDENTITY REVIEW</p><h2 id="admin-kyc-heading">Account status</h2></div><Link href="/admin/kyc" className="admin-panel-link">Review <ArrowRight size={14}/></Link></header>
 		<div className="admin-status-overview">
-			<div className="admin-status-donut" role="img" aria-label={`${kyc.verified} verified, ${kyc.pending} pending review, ${kyc.rejected} rejected`} style={{background:`conic-gradient(#d4a72c 0 ${verified}%,#7b8c7f ${verified}% ${verified+pending}%,#c87868 ${verified+pending}% ${verified+pending+rejected}%,rgba(255,255,255,.08) ${verified+pending+rejected}% 100%)`}}><div><b>{integer.format(total)}</b><span>profiles</span></div></div>
+			<div className="admin-status-donut" role="img" aria-label={`${kyc.verified} verified, ${kyc.pending} pending review, ${kyc.rejected} rejected`} style={{background:`conic-gradient(var(--color-gold) 0 ${verified}%,var(--color-muted) ${verified}% ${verified+pending}%,var(--color-loss) ${verified+pending}% ${verified+pending+rejected}%,var(--color-border) ${verified+pending+rejected}% 100%)`}}><div><b>{integer.format(total)}</b><span>profiles</span></div></div>
 			<div className="admin-status-legend">
 				<StatusRow label="Verified" count={kyc.verified} total={total} color="gold"/>
 				<StatusRow label="Pending" count={kyc.pending} total={total} color="muted"/>
@@ -276,14 +276,14 @@ export default function AdminDashboard(){
 				<div className="admin-dashboard-side-stack">
 					<AccountStatus kyc={data.kyc}/>
 					<section className="admin-panel" aria-labelledby="admin-account-types-heading">
-						<header className="admin-panel-heading"><div><p className="admin-eyebrow">CURRENT ACCOUNT MODES</p><h2 id="admin-account-types-heading">Account types</h2></div><UsersRound size={18} className="admin-panel-icon"/></header>
+						<header className="admin-panel-heading"><div><p className="admin-eyebrow">ACCOUNT MODES</p><h2 id="admin-account-types-heading">Account types</h2></div><UsersRound size={18} className="admin-panel-icon"/></header>
 						<div className="admin-account-type-list"><div><span className="admin-mode-icon demo"><Activity size={16}/></span><span><b>DEMO</b><small>Current account mode</small></span><strong>{integer.format(data.accountTypes.DEMO)}</strong></div><div><span className="admin-mode-icon real"><ShieldCheck size={16}/></span><span><b>REAL</b><small>Internal ledger mode</small></span><strong>{integer.format(data.accountTypes.REAL)}</strong></div></div>
 						<p className="admin-panel-note">{data.limitations.accountTypesMeaning}</p>
 					</section>
 				</div>
 			</div>
 			<section className="admin-quick-actions" aria-labelledby="admin-quick-actions-heading">
-				<div><p className="admin-eyebrow">WORKSPACE SHORTCUTS</p><h2 id="admin-quick-actions-heading">Quick actions</h2></div>
+				<div><p className="admin-eyebrow">SHORTCUTS</p><h2 id="admin-quick-actions-heading">Quick actions</h2></div>
 				<div className="admin-quick-action-list">
 					<QuickAction href="/admin/kyc" label="Review KYC" icon={CheckCircle2}/>
 					<QuickAction href="/admin/payments" label="Process deposit" icon={WalletCards}/>
@@ -294,20 +294,20 @@ export default function AdminDashboard(){
 			</section>
 			<div className="admin-dashboard-bottom-grid">
 				<section className="admin-panel admin-recent-users" aria-labelledby="admin-recent-users-heading">
-					<header className="admin-panel-heading"><div><p className="admin-eyebrow">CUSTOMER ACCOUNTS</p><h2 id="admin-recent-users-heading">Latest customers</h2></div><Link href="/admin/users" className="admin-panel-link">All customers <ArrowRight size={14}/></Link></header>
+					<header className="admin-panel-heading"><div><p className="admin-eyebrow">USER ACCOUNTS</p><h2 id="admin-recent-users-heading">Recent users</h2></div><Link href="/admin/users" className="admin-panel-link">All users <ArrowRight size={14}/></Link></header>
 					<div className="admin-table-wrap"><table className="admin-dashboard-table"><thead><tr><th>User</th><th>Mode</th><th>KYC</th><th>Joined</th><th><span className="sr-only">View user</span></th></tr></thead><tbody>{data.recentUsers.map(user=><tr key={user.id}><td><Link href={`/admin/users?search=${encodeURIComponent(user.email)}`} className="admin-user-link"><span className="admin-user-avatar">{(user.name||user.email).slice(0,1).toUpperCase()}</span><span><b>{user.name||'Unnamed user'}</b><small>{user.email}</small></span></Link></td><td><span className={`admin-mode-tag ${user.accountMode.toLowerCase()}`}>{user.accountMode}</span></td><td><span className={`admin-kyc-tag ${user.kycStatus.toLowerCase()}`}>{user.kycStatus.replaceAll('_',' ')}</span></td><td>{new Date(user.createdAt).toLocaleDateString()}</td><td><Link href={`/admin/users?search=${encodeURIComponent(user.email)}`} className="admin-row-action">View <ArrowRight size={13}/></Link></td></tr>)}</tbody></table></div>
-					{data.recentUsers.length===0&&<p className="admin-empty-state">No active customer accounts to show.</p>}
+					{data.recentUsers.length===0&&<p className="admin-empty-state">No active users.</p>}
 				</section>
 				<section className="admin-panel admin-activity-panel" aria-labelledby="admin-activity-heading">
-					<header className="admin-panel-heading"><div><p className="admin-eyebrow">ADMINISTRATIVE RECORDS · ROLLING 24 HOURS</p><h2 id="admin-activity-heading">Live activity</h2></div><Link href="/admin/audit-logs" className="admin-panel-link">Audit log <ArrowRight size={14}/></Link></header>
+					<header className="admin-panel-heading"><div><p className="admin-eyebrow">ADMIN ACTIVITY · PAST 24 HOURS</p><h2 id="admin-activity-heading">Live activity</h2></div><Link href="/admin/audit-logs" className="admin-panel-link">Audit log <ArrowRight size={14}/></Link></header>
 					{activityError&&<p className="admin-dashboard-error" role="alert">{activityError}</p>}
-					{visibleLiveActivity.length?<ol className="admin-activity-list">{visibleLiveActivity.map(event=><ActivityRow key={event.id} event={event} reference={new Date(data.generatedAt).getTime()} hidden={false} busy={activityBusyId===event.id} onToggle={setActivityVisibility}/>)}</ol>:<p className="admin-empty-state">No visible audit activity in the last 24 hours.</p>}
+					{visibleLiveActivity.length?<ol className="admin-activity-list">{visibleLiveActivity.map(event=><ActivityRow key={event.id} event={event} reference={new Date(data.generatedAt).getTime()} hidden={false} busy={activityBusyId===event.id} onToggle={setActivityVisibility}/>)}</ol>:<p className="admin-empty-state">No audit activity in the past 24 hours.</p>}
 					<details className="admin-activity-hidden">
 						<summary>Archived activity · {archivedActivityDays.reduce((count,[,events])=>count+events.length,0)} records by date</summary>
-						{archivedActivityDays.length?archivedActivityDays.map(([date,events])=><div className="admin-activity-day" key={date}><h3>{new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined,{dateStyle:'full',timeZone:'UTC'})} · {events.length}</h3><ol className="admin-activity-list">{events.map(event=><ActivityRow key={event.id} event={event} reference={new Date(data.generatedAt).getTime()} hidden={false} busy={activityBusyId===event.id} onToggle={setActivityVisibility}/>)}</ol></div>):<p className="admin-empty-state">No archived activity is currently available.</p>}
+						{archivedActivityDays.length?archivedActivityDays.map(([date,events])=><div className="admin-activity-day" key={date}><h3>{new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined,{dateStyle:'full',timeZone:'UTC'})} · {events.length}</h3><ol className="admin-activity-list">{events.map(event=><ActivityRow key={event.id} event={event} reference={new Date(data.generatedAt).getTime()} hidden={false} busy={activityBusyId===event.id} onToggle={setActivityVisibility}/>)}</ol></div>):<p className="admin-empty-state">No archived activity.</p>}
 					</details>
 					{data.dismissedActivity.length>0&&<details className="admin-activity-hidden"><summary>Hidden from dashboard · {data.dismissedActivity.length} records</summary><ol className="admin-activity-list">{data.dismissedActivity.map(event=><ActivityRow key={event.id} event={event} reference={new Date(data.generatedAt).getTime()} hidden busy={activityBusyId===event.id} onToggle={setActivityVisibility}/>)}</ol></details>}
-					<p className="admin-panel-note">Activity older than 24 hours moves into this date-grouped archive. Hiding an item only removes it from this dashboard; original audit records remain available in the audit log. Dashboard refreshes every minute.</p>
+					<p className="admin-panel-note">Activity older than 24 hours is archived by date. Hiding an item removes it from this dashboard only; the audit log retains the original. This dashboard refreshes every minute.</p>
 				</section>
 			</div>
 		</>}

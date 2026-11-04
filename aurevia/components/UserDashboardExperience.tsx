@@ -49,7 +49,7 @@ const timeframes:Array<{label:string;value:TimeframeId}>=[
 	{label:'1H',value:'1h'},{label:'1D',value:'1d'},{label:'1W',value:'5d'},{label:'1M',value:'1m'},
 	{label:'3M',value:'3m'},{label:'1Y',value:'1y'},{label:'ALL',value:'max'},
 ];
-const allocationColors=['#d4a72c','#51a878','#65a6ba','#aa8bd1','#cc7869','#8d9c8e'];
+const allocationColors=['var(--color-gold)','#51a878','#65a6ba','#aa8bd1','#cc7869','#8d9c8e'];
 
 function formatMarketPrice(value:number,currency:string){
 	return new Intl.NumberFormat(undefined,{style:'currency',currency,maximumFractionDigits:value<10?5:2}).format(value);

@@ -117,6 +117,7 @@ export async function POST(req:Request){
 		const idempotencyKey=req.headers.get('Idempotency-Key');
 		if(!idempotencyKey||idempotencyKey.length>128)return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
 		if(parsed.type===FundingType.WITHDRAWAL)rateLimit(`real-withdrawal:${user.id}`,5,60_000);
+		if(parsed.type===FundingType.DEPOSIT)rateLimit(`real-deposit:${user.id}`,20,60*60_000);
 		if(parsed.type===FundingType.DEPOSIT){
 			if(!currentUser.depositEnabled)throw new Error('DEPOSITS_DISABLED');
 		}
@@ -243,7 +244,7 @@ export async function POST(req:Request){
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This submission was already received.'},{status:409});
 		if(error instanceof Error&&error.message==='ACCOUNT_MODE_CHANGED')return NextResponse.json({error:'Your active account mode changed. Refresh and submit the request again.'},{status:409});
 		if(error instanceof Error&&error.message==='WALLET_ACCOUNT_UNAVAILABLE')return NextResponse.json({error:'Wallet account is unavailable.'},{status:403});
-		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many withdrawal requests. Try again shortly.'},{status:429});
+		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many funding requests. Try again later.'},{status:429});
 		if(error instanceof Error&&error.message==='WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED')return NextResponse.json({error:'Secure destination storage is not configured. Contact Aurevia support.'},{status:503});
 		if(error instanceof Error&&error.message==='WITHDRAWAL_DESTINATION_DECRYPTION_FAILED')return NextResponse.json({error:'The saved destination could not be verified. Contact Aurevia support.'},{status:503});
 		if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2034')return NextResponse.json({error:'The account changed while submitting this request. Refresh and try again.'},{status:409});

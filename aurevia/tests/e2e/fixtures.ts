@@ -14,6 +14,13 @@ export const test=base;
 export {expect};
 
 export async function waitForStartup(page:Page){
+	const skipIntroduction=page.getByRole('button',{name:'Skip introduction'});
+	const availableContent=page.locator('.scene-content > div[aria-hidden="false"]');
+	await Promise.race([
+		skipIntroduction.waitFor({state:'visible'}),
+		availableContent.waitFor({state:'attached'}),
+	]);
+	if(await skipIntroduction.isVisible())await skipIntroduction.click();
 	await expect(page.locator('.startup-screen')).toHaveCount(0);
 	await expect(page.locator('.scene-content > div[inert]')).toHaveCount(0);
 }
@@ -28,9 +35,13 @@ export async function loginAs(page:Page,email:string,password:string){
 		await page.goto(administrator?'/admin/login':'/login');
 		await waitForStartup(page);
 		await page.getByLabel(administrator?'Admin username or email':'Email or administrator username').fill(email);
-		await page.getByLabel(administrator?'Admin password':'Password',{exact:true}).fill(password);
-		await page.getByRole('checkbox',{name:administrator?/Replace another active Aurevia session/:/Replace the active Aurevia session/}).check();
-		await page.getByRole('button',{name:administrator?'Enter control center':'Sign in'}).click();
+		const passwordInput=page.getByLabel(administrator?'Admin password':'Password',{exact:true});
+		await passwordInput.fill(password);
+		const replaceSession=page.getByRole('checkbox',{name:administrator?/Replace another active Aurevia session/:/Replace the active Aurevia session/});
+		await replaceSession.focus();
+		await page.keyboard.press('Space');
+		await expect(replaceSession).toBeChecked();
+		await passwordInput.press('Enter');
 		await page.waitForURL(administrator?/\/admin(?:$|\/)/:/dashboard/);
 		await expect.poll(async()=>{
 			const response=await page.request.get('/api/auth/session');

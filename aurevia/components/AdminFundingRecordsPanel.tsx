@@ -46,7 +46,7 @@ export default function AdminFundingRecordsPanel({title,description,type,initial
 	}
 
 	async function deleteFunding(id:string){
-		if(!window.confirm('Permanently delete this funding request and its attached receipt?'))return;
+		if(!window.confirm('Delete this funding request and receipt permanently?'))return;
 		try{
 			const response=await fetch(`/api/admin/funding/${encodeURIComponent(id)}`,{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({confirmation:'DELETE'})});
 			const data=await response.json();if(!response.ok)throw new Error(data.error||'Unable to delete this funding request.');

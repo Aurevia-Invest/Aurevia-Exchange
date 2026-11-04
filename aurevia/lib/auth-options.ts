@@ -14,7 +14,7 @@ import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '@/lib/auth-sess
 
 function headerValue(value:string|string[]|undefined){return Array.isArray(value)?value[0]||'':value||''}
 function auditClientIp(headers:IncomingHttpHeaders){
-  const forwarded=headerValue(headers['x-forwarded-for']).split(',')[0]?.trim();
+  const forwarded=headerValue(headers['x-forwarded-for']).split(',').at(-1)?.trim();
   const real=headerValue(headers['x-real-ip']).trim();
   const candidate=forwarded&&isIP(forwarded)?forwarded:real&&isIP(real)?real:'';
   return candidate||null;

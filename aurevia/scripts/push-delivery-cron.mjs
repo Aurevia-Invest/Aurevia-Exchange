@@ -1,16 +1,15 @@
 const endpoint=process.env.PUSH_DELIVERY_WORKER_URL;
 const pushSecret=process.env.PUSH_DELIVERY_CRON_SECRET;
-const cleanupSecret=process.env.CRON_SECRET;
+const cronSecret=process.env.CRON_SECRET;
 const appUrl=process.env.NEXTAUTH_URL;
-if(!endpoint||!pushSecret||!cleanupSecret||!appUrl){
+if(!endpoint||!pushSecret||!cronSecret||!appUrl){
 	console.error('PUSH_DELIVERY_WORKER_URL, both cron secrets, and NEXTAUTH_URL are required.');
 	process.exit(1);
 }
-let parsed,appOrigin,cleanupUrl;
+let parsed,appOrigin;
 try{
 	parsed=new URL(endpoint);
 	appOrigin=new URL(appUrl);
-	cleanupUrl=new URL('/api/cron/registration-cleanup',appOrigin);
 }catch{
 	console.error('Cron worker URLs must be valid HTTPS URLs.');
 	process.exit(1);
@@ -22,24 +21,18 @@ if(parsed.protocol!=='https:'||parsed.origin!==appOrigin.origin||parsed.username
 
 try{
 	const kycEmailUrl=new URL('/api/cron/kyc-email-delivery',appOrigin);
-	const [pushResponse,cleanupResponse,kycEmailResponse]=await Promise.all([
+	const [pushResponse,kycEmailResponse]=await Promise.all([
 		fetch(parsed,{headers:{authorization:'Bearer '+pushSecret}}),
-		fetch(cleanupUrl,{headers:{authorization:'Bearer '+cleanupSecret}}),
-		fetch(kycEmailUrl,{headers:{authorization:'Bearer '+cleanupSecret}}),
+		fetch(kycEmailUrl,{headers:{authorization:'Bearer '+cronSecret}}),
 	]);
 	if(!pushResponse.ok)throw new Error(`PUSH_WORKER_HTTP_${pushResponse.status}`);
-	if(!cleanupResponse.ok)throw new Error(`REGISTRATION_CLEANUP_HTTP_${cleanupResponse.status}`);
 	if(!kycEmailResponse.ok)throw new Error(`KYC_EMAIL_WORKER_HTTP_${kycEmailResponse.status}`);
-	const [pushResult,cleanupResult,kycEmailResult]=await Promise.all([pushResponse.json(),cleanupResponse.json(),kycEmailResponse.json()]);
-	if(!cleanupResult||!Number.isInteger(cleanupResult.deletedAttempts)||cleanupResult.deletedAttempts<0){
-		throw new Error('REGISTRATION_CLEANUP_INVALID_RESPONSE');
-	}
+	const [pushResult,kycEmailResult]=await Promise.all([pushResponse.json(),kycEmailResponse.json()]);
 	console.log(JSON.stringify({
 		push:pushResult,
-		registrationCleanup:{deletedAttempts:cleanupResult.deletedAttempts},
 		kycEmailDelivery:kycEmailResult.result,
 	}));
 }catch(error){
-	console.error('Scheduled registration/push cleanup failed.',error instanceof Error?error.name:'UnknownError');
+	console.error('Scheduled push/KYC email delivery failed.',error instanceof Error?error.name:'UnknownError');
 	process.exit(1);
 }

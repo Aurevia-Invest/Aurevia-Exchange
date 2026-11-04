@@ -231,7 +231,7 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
     verification: {
       codeSecret: env('VERIFICATION_CODE_SECRET', source) || env('NEXTAUTH_SECRET', source),
       resendApiKey: env('RESEND_API_KEY', source),
-      emailFrom: env('VERIFICATION_EMAIL_FROM', source) || 'noreply@aureviaexchanged.dpdns.org',
+      emailFrom: env('RESEND_FROM_EMAIL', source) || env('VERIFICATION_EMAIL_FROM', source) || 'noreply@aureviaexchanged.dpdns.org',
       termiiApiKey: env('TERMII_API_KEY', source),
       termiiSenderId: env('TERMII_SENDER_ID', source),
       appUrl: cleanUrl(env('NEXT_PUBLIC_APP_URL', source) || env('NEXTAUTH_URL', source) || env('RENDER_EXTERNAL_URL', source) || 'https://aurevia-exchange-6hfi.onrender.com'),

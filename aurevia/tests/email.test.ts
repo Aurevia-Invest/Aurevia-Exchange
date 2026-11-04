@@ -17,7 +17,7 @@ import {renderAureviaEmail} from '@/lib/email-template';
 describe('shared outbound email delivery',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
-		for(const key of ['SMTP_HOST','SMTP_PORT','SMTP_USER','SMTP_PASSWORD','SMTP_FROM','RESEND_API_KEY','VERIFICATION_EMAIL_FROM']){
+		for(const key of ['SMTP_HOST','SMTP_PORT','SMTP_USER','SMTP_PASSWORD','SMTP_FROM','RESEND_API_KEY','RESEND_FROM_EMAIL','VERIFICATION_EMAIL_FROM']){
 			vi.stubEnv(key,'');
 		}
 		smtpMocks.createTransport.mockReturnValue(smtpMocks.transport);
@@ -114,6 +114,20 @@ describe('shared outbound email delivery',()=>{
 			subject:'Password recovery',
 			text:'Use this one-time link.',
 		});
+	});
+
+	it('accepts RESEND_FROM_EMAIL and prefers it to the legacy sender setting',async()=>{
+		vi.stubEnv('RESEND_API_KEY','test-resend-key');
+		vi.stubEnv('RESEND_FROM_EMAIL','Aurevia <verified@example.invalid>');
+		vi.stubEnv('VERIFICATION_EMAIL_FROM','legacy@example.invalid');
+		const fetchMock=vi.fn().mockResolvedValue(new Response(null,{status:200}));
+		vi.stubGlobal('fetch',fetchMock);
+
+		await expect(sendEmail({to:'person@example.invalid',subject:'KYC update',text:'Status update'}))
+			.resolves.toMatchObject({sent:true,provider:'resend'});
+
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).from)
+			.toBe('Aurevia <verified@example.invalid>');
 	});
 
 	it('reports SMTP failures without logging provider messages or email contents',async()=>{

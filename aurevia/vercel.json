@@ -8,10 +8,6 @@
       "schedule": "* * * * *"
     },
     {
-      "path": "/api/cron/registration-cleanup",
-      "schedule": "* * * * *"
-    },
-    {
       "path": "/api/cron/kyc-email-delivery",
       "schedule": "* * * * *"
     }

@@ -29,10 +29,8 @@ describe('Tier 3 Akedly verification status route',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
 		mocks.findUnique.mockResolvedValue({
-			accountMode:'REAL',status:'ACTIVE',approvedTier:2,kycStatus:'APPROVED',
+			accountMode:'REAL',status:'ACTIVE',approvedTier:2,
 			name:'Test User',country:'Nigeria',phone:'+2348031234567',
-			kyc:{submittedAt:new Date()},
-			kycDocuments:[{kind:'IDENTITY_DOCUMENT'},{kind:'SELFIE'}],
 		});
 		mocks.requireUser.mockResolvedValue({id:'user-1'});
 		mocks.getState.mockResolvedValue({verified:false,expiresAt:new Date(Date.now()+60_000)});

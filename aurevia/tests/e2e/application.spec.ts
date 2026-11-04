@@ -1787,6 +1787,7 @@ test('profile completion and administrator identity review progress the account 
 
 	const isolated=await db.user.findUniqueOrThrow({where:{email:user.email},select:{id:true}});
 	const submittedAt=new Date();
+	await db.user.update({where:{id:isolated.id},data:{phoneVerified:true,phoneVerifiedAt:submittedAt}});
 	const kycSubmission=await page.request.post('/api/kyc',{data:{
 		legalName:'Profile Complete User',
 		dob:'1990-01-01',
@@ -1803,9 +1804,6 @@ test('profile completion and administrator identity review progress the account 
 		}});
 		expect(documentUpload.status()).toBe(201);
 	}
-	await db.$transaction(async tx=>{
-		await tx.user.update({where:{id:isolated.id},data:{phoneVerified:true,phoneVerifiedAt:submittedAt}});
-	});
 	const eligibility=await page.request.get('/api/tier-requests').then(response=>response.json());
 	expect(eligibility.canRequest).toBe(true);
 	expect(eligibility.requirements.identityApproved).toBe(false);

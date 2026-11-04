@@ -2,7 +2,6 @@
 
 import {FormEvent,useCallback,useEffect,useState} from 'react';
 import {useSession} from 'next-auth/react';
-import Link from 'next/link';
 import {FileCheck2,Info,ShieldCheck,Upload} from 'lucide-react';
 import Nav from '@/components/Nav';
 import {useLocale} from '@/lib/i18n-context';
@@ -33,7 +32,6 @@ export default function Kyc(){
   const [loading,setLoading]=useState(true);
   const [submitting,setSubmitting]=useState(false);
   const [documents,setDocuments]=useState<KycDocument[]>([]);
-  const [kycSubmitted,setKycSubmitted]=useState(false);
   const [currentTier,setCurrentTier]=useState(1);
   const [retryCount,setRetryCount]=useState(0);
   const [uploadKind,setUploadKind]=useState<'IDENTITY_DOCUMENT'|'SELFIE'|'PROOF_OF_ADDRESS'>('IDENTITY_DOCUMENT');
@@ -59,7 +57,6 @@ export default function Kyc(){
       const [kyc,profile,uploadedDocuments,tier]=await Promise.all(responses.map(response=>response.json()));
       if(!active())return;
       if(kyc)setForm({legalName:kyc.legalName||'',dob:kyc.dob?String(kyc.dob).slice(0,10):'',address:kyc.address||'',idType:kyc.idType||'PASSPORT',idNumber:kyc.idNumber||''});
-      setKycSubmitted(Boolean(kyc?.submittedAt));
       setPhone(profile.phone||'');
       setPhoneVerified(Boolean(profile.phoneVerified));
       setCurrentTier(typeof tier.currentTier==='number'?tier.currentTier:1);
@@ -105,10 +102,7 @@ export default function Kyc(){
   const completed=[form.legalName,form.dob,form.address,form.idType,form.idNumber].filter(Boolean).length;
   const completion=Math.round(completed/5*100);
   const state={label:translate(statusCopy[status].label),description:translate(statusCopy[status].description)};
-  const hasSubmittedTierTwoDocuments=documents.some(document=>document.kind==='IDENTITY_DOCUMENT'&&document.status!=='REJECTED'&&document.status!=='RESUBMISSION_REQUIRED')
-    &&documents.some(document=>document.kind==='SELFIE'&&document.status!=='REJECTED'&&document.status!=='RESUBMISSION_REQUIRED');
-  const hasSubmittedKyc=kycSubmitted;
-  const showTierThreePhoneVerification=isRealAccount&&currentTier>=2&&hasSubmittedKyc&&hasSubmittedTierTwoDocuments;
+  const showTierThreePhoneVerification=isRealAccount&&currentTier>=2;
 
   async function submit(event:FormEvent<HTMLFormElement>){
     event.preventDefault();
@@ -118,7 +112,7 @@ export default function Kyc(){
       const response=await fetch('/api/kyc',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(form)});
       const result=await response.json();
       if(!response.ok)throw new Error(result.error||translate('unableSubmitVerification'));
-      setStatus('PENDING');setKycSubmitted(true);setMessage(translate('verificationSubmitted'));
+      setStatus('PENDING');setMessage(translate('verificationSubmitted'));
     }catch(exception){setError(exception instanceof Error?exception.message:translate('unableSubmitVerification'))}
     finally{setSubmitting(false)}
   }
@@ -195,7 +189,7 @@ export default function Kyc(){
       </div>
     </section>
     <div className="account-content-grid">
-      {showTierThreePhoneVerification&&<section className="account-panel card p-5 md:col-span-2"><div className="account-panel-title"><div><h2>Tier 3 phone verification</h2><p className="account-panel-subtitle">Verify your phone and submit the remaining Tier 3 requirements while your identity documents await administrator review. Tier 3 is not activated until an administrator reviews and approves your submission.</p></div><ShieldCheck size={18} className="gold" aria-hidden="true"/></div>
+      {showTierThreePhoneVerification&&<section className="account-panel card p-5 md:col-span-2"><div className="account-panel-title"><div><h2>Verify your phone before KYC document review</h2><p className="account-panel-subtitle">You can verify your phone before submitting identity documents for administrator review. Phone verification confirms phone ownership only; identity and Tier 3 approval remain subject to administrator review.</p></div><ShieldCheck size={18} className="gold" aria-hidden="true"/></div>
         <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
           <label className="account-label">Phone number<input className="input" type="tel" autoComplete="tel" inputMode="tel" value={phone} onChange={event=>{setPhone(event.target.value);setPhoneVerified(false);setPhoneCode('');setPhoneAttempt(null)}} placeholder="+12125550123" required/></label>
           <button className="btn bg-gold text-black self-end" type="button" disabled={sendingPhoneCode||loading||!phone.trim()} onClick={()=>void sendPhoneCode()}>{sendingPhoneCode?'Sending…':phoneAttempt?'Restart verification':'Start verification'}</button>
@@ -207,7 +201,7 @@ export default function Kyc(){
         {phoneAttempt?.termiiFallbackAvailable&&<button className="mt-3 text-link text-sm" type="button" disabled={sendingPhoneCode||loading} onClick={()=>void sendPhoneCode('termii')}>{sendingPhoneCode?'Requesting SMS code…':'Can’t use the widget? Send me an SMS code instead'}</button>}
         <p className="mt-3 text-xs muted" role="status">{phoneVerified?'Phone number verified for Tier 3.':'Verify your phone number to continue with Tier 3.'}</p>
         {phoneMessage&&<p className="mt-2 text-sm text-profit" role="status">{phoneMessage}</p>}
-        {phoneVerified&&<Link href="/tier" className="mt-3 inline-flex text-link">Continue to Tier 3 review</Link>}
+        {phoneVerified&&<p className="mt-3 text-sm text-profit" role="status">Phone verified. Complete and submit your identity information and documents below for administrator review.</p>}
       </section>
       }
       <section className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('personalInformation')}</h2><p className="account-panel-subtitle">{translate('useIdentityDocument')}</p></div><FileCheck2 size={18} className="gold" aria-hidden="true"/></div>

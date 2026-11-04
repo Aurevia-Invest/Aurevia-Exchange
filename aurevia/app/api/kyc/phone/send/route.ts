@@ -29,9 +29,7 @@ export async function POST(request:Request){
 		const current=await db.$transaction(async tx=>{
 			await synchronizeCompletedProfileTier(tx,user.id);
 			return tx.user.findUnique({where:{id:user.id},select:{
-				id:true,phone:true,phoneVerified:true,accountMode:true,status:true,approvedTier:true,kycStatus:true,name:true,country:true,
-				kyc:{select:{submittedAt:true}},
-				kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:{notIn:['REJECTED','RESUBMISSION_REQUIRED']}},select:{kind:true,status:true}},
+				id:true,phone:true,phoneVerified:true,accountMode:true,status:true,approvedTier:true,name:true,country:true,
 			}});
 		});
 		if(!current||current.status!=='ACTIVE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
@@ -41,11 +39,8 @@ export async function POST(request:Request){
 			accountStatus:current.status,
 			approvedTier:current.approvedTier,
 			profileComplete:requirements.profileComplete,
-			verificationSubmitted:Boolean(current.kyc?.submittedAt),
-			identityDocumentSubmitted:current.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT'),
-			selfieSubmitted:current.kycDocuments.some(document=>document.kind==='SELFIE'),
 		});
-		if(!phoneVerificationEligible)return NextResponse.json({error:'Submit your identity details and upload an ID and selfie before starting Tier 3 phone verification.'},{status:403});
+		if(!phoneVerificationEligible)return NextResponse.json({error:'Complete your name and country in Profile before verifying your phone.'},{status:403});
 		if(current.phone===input.phone&&current.phoneVerified)return NextResponse.json({error:'This phone number is already verified.'},{status:409});
 
 		if(akedlyIsConfigured()&&input.delivery!=='termii'){

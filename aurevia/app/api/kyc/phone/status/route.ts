@@ -16,19 +16,14 @@ export async function POST(request:Request){
 		const user=await requireUser();
 		const {attemptId}=schema.parse(await request.json());
 		const account=await db.user.findUnique({where:{id:user.id},select:{
-			accountMode:true,status:true,approvedTier:true,kycStatus:true,name:true,country:true,phone:true,
-			kyc:{select:{submittedAt:true}},
-			kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:{notIn:['REJECTED','RESUBMISSION_REQUIRED']}},select:{kind:true,status:true}},
+			accountMode:true,status:true,approvedTier:true,name:true,country:true,phone:true,
 		}});
 		if(!account||!isTierThreePhoneVerificationEligible({
 			accountMode:account.accountMode,
 			accountStatus:account.status,
 			approvedTier:account.approvedTier,
 			profileComplete:getTierProfileRequirements(account).profileComplete,
-			verificationSubmitted:Boolean(account.kyc?.submittedAt),
-			identityDocumentSubmitted:account.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT'),
-			selfieSubmitted:account.kycDocuments.some(document=>document.kind==='SELFIE'),
-		}))return NextResponse.json({error:'Submit your identity details and upload an ID and selfie before checking phone verification.'},{status:403});
+		}))return NextResponse.json({error:'Complete your name and country in Profile before checking phone verification.'},{status:403});
 		rateLimit(`akedly-phone-status-ip:${request.headers.get('x-forwarded-for')||'unknown'}`,30,60_000);
 		rateLimit(`akedly-phone-status-user:${user.id}`,30,60_000);
 		let state=await getAkedlyVerificationState(user.id,attemptId,VerificationChannel.SMS);

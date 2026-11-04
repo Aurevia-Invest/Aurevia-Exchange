@@ -41,17 +41,11 @@ export function isTierThreePhoneVerificationEligible(input:{
 	accountStatus:string;
 	approvedTier:number;
 	profileComplete:boolean;
-	verificationSubmitted:boolean;
-	identityDocumentSubmitted:boolean;
-	selfieSubmitted:boolean;
 }){
 	return input.accountMode===AccountMode.REAL
 		&&input.accountStatus==='ACTIVE'
 		&&input.approvedTier>=2
-		&&input.profileComplete
-		&&input.verificationSubmitted
-		&&input.identityDocumentSubmitted
-		&&input.selfieSubmitted;
+		&&input.profileComplete;
 }
 
 export function assertKycSubmissionAllowed(status:KycStatus){

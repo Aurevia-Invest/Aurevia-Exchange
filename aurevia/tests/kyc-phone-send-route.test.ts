@@ -91,17 +91,16 @@ describe('phone verification provider fallback',()=>{
 		mocks.sendTermii.mockResolvedValue('termii-pin-reference');
 	});
 
-	it('does not send an OTP before the user submits identity details and files',async()=>{
+	it('sends an OTP after profile completion before KYC details or files are submitted',async()=>{
 		mocks.userFindUnique.mockResolvedValue({
-			id:'user-1',phone:null,phoneVerified:false,accountMode:'REAL',status:'ACTIVE',approvedTier:1,kycStatus:'PENDING',
-			name:'Test User',country:'US',kyc:{submittedAt:null},kycDocuments:[],
+			id:'user-1',phone:null,phoneVerified:false,accountMode:'REAL',status:'ACTIVE',approvedTier:2,
+			name:'Test User',country:'US',
 		});
 		const response=await POST(request());
 
-		expect(response.status).toBe(403);
-		expect(await response.json()).toMatchObject({error:'Submit your identity details and upload an ID and selfie before starting Tier 3 phone verification.'});
-		expect(mocks.startAkedly).not.toHaveBeenCalled();
-		expect(mocks.sendTermii).not.toHaveBeenCalled();
+		expect(response.status).toBe(200);
+		expect(mocks.startAkedly).toHaveBeenCalledOnce();
+		expect(mocks.sendTermii).toHaveBeenCalledWith('+12125550123');
 	});
 
 	afterEach(()=>vi.unstubAllEnvs());

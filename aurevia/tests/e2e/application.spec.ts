@@ -857,7 +857,7 @@ test('sign-in password visibility, recovery link, and account link are accessibl
 });
 
 test('signup submits without a security widget and creates an account without phone OTP',async({page})=>{
-	const email=`immediate-signup-${randomUUID()}@example.invalid`;
+	const email=`aurevia-e2e-immediate-signup-${randomUUID()}@example.invalid`;
 	let registrationRequests=0;
 	const registrationPayloads:Record<string,unknown>[]=[];
 	page.on('request',request=>{
@@ -900,14 +900,50 @@ test('signup submits without a security widget and creates an account without ph
 
 	const signedIn=await page.request.get('/api/auth/session').then(response=>response.json());
 	expect(signedIn.user.email).toBe(email);
-	expect(await db.user.findUnique({where:{email},select:{status:true,phone:true,phoneVerified:true,phoneVerifiedAt:true}})).toEqual({
+	const registeredUser=await db.user.findUniqueOrThrow({where:{email},select:{id:true,status:true,phone:true,phoneVerified:true,phoneVerifiedAt:true}});
+	expect(registeredUser).toMatchObject({
 		status:'ACTIVE',phone:'+447400123456',phoneVerified:false,phoneVerifiedAt:null,
 	});
+	expect(await db.kycProfile.findUnique({where:{userId:registeredUser.id},select:{dob:true}})).toEqual({dob:new Date('2000-02-29T00:00:00.000Z')});
+	expect(await db.ledgerAccount.findMany({where:{userId:registeredUser.id},select:{accountMode:true},orderBy:{accountMode:'asc'}})).toEqual([
+		{accountMode:'DEMO'},
+		{accountMode:'REAL'},
+	]);
+	expect(await db.notification.findUnique({where:{dedupeKey:`registration:${registeredUser.id}:created`},select:{userId:true}})).toEqual({userId:registeredUser.id});
 	expect(await db.user.count({where:{email}})).toBe(1);
 	expect(await db.registrationAttempt.findUnique({where:{email}})).toBeNull();
 	expect(registrationPayloads).toHaveLength(1);
 	expect(registrationPayloads[0]).not.toHaveProperty('captchaToken');
 	expect(registrationPayloads[0].website).toBe('');
+});
+
+test('eight concurrent signups with phone numbers complete without transaction timeouts',async({page})=>{
+	const registrations=Array.from({length:8},(_,index)=>({
+		email:`aurevia-e2e-concurrent-signup-${randomUUID()}@example.invalid`,
+		password:'SecureTestPassword1',
+		name:`Concurrent Signup ${index+1}`,
+		country:'United Kingdom',
+		dateOfBirth:'1990-01-01',
+		phone:`+4474001234${String(index+57)}`,
+		accountMode:'DEMO',
+		termsAccepted:true,
+		website:'',
+	}));
+	const responses=await Promise.all(registrations.map((data,index)=>page.request.post('/api/register',{
+		data,
+		headers:{'x-forwarded-for':`192.0.2.${index+10}`},
+	})));
+	expect(responses.map(response=>response.status())).toEqual(Array(8).fill(201));
+
+	const users=await db.user.findMany({
+		where:{email:{in:registrations.map(registration=>registration.email)}},
+		select:{id:true,email:true,phone:true},
+	});
+	expect(users).toHaveLength(registrations.length);
+	for(const user of users){
+		expect(await db.kycProfile.findUnique({where:{userId:user.id},select:{id:true}})).not.toBeNull();
+		expect(await db.ledgerAccount.count({where:{userId:user.id,accountMode:{in:['DEMO','REAL']}}})).toBe(2);
+	}
 });
 
 test('duplicate signup offers sign-in with the typed email prefilled',async({page})=>{

@@ -1,7 +1,6 @@
-import {AccountMode,NotificationType,Prisma} from '@prisma/client';
+import {AccountMode,Prisma} from '@prisma/client';
 import {generateAureviaExchangeId} from '@/lib/aurevia-exchange-id';
-import {createNotification,notifyActiveAdmins} from '@/lib/notifications';
-import {ensureSystemAccount,initializePaperAccount} from '@/lib/ledger';
+import {initializePaperAccount} from '@/lib/ledger';
 
 export type ImmediateRegistrationInput={
 	email:string;
@@ -56,10 +55,6 @@ export async function createImmediateRegistration(
 	if(!userCreated)throw new Error('AUREVIA_ID_COLLISION_RETRIES_EXHAUSTED');
 
 	const user=await tx.user.findUniqueOrThrow({where:{email:input.email}});
-	await tx.waitlistEntry.updateMany({
-		where:{email:input.email,userId:null},
-		data:{userId:user.id,status:'REGISTERED',updatedAt:now},
-	});
 	await tx.kycProfile.upsert({
 		where:{userId:user.id},
 		update:{dob:input.dateOfBirth},
@@ -67,23 +62,5 @@ export async function createImmediateRegistration(
 	});
 	await initializePaperAccount(tx,user.id,AccountMode.DEMO);
 	await initializePaperAccount(tx,user.id,AccountMode.REAL);
-	await ensureSystemAccount(tx,'SYSTEM:LIABILITY','Customer Funds');
-	await createNotification(tx,{
-		userId:user.id,
-		type:NotificationType.ACCOUNT,
-		title:'Welcome to Aurevia Exchange',
-		message:'Your account is active. Identity verification is only required for eligible account services.',
-		dedupeKey:`registration:${user.id}:created`,
-		actionUrl:'/dashboard',
-	});
-	await notifyActiveAdmins(tx,{
-		type:NotificationType.ACCOUNT,
-		title:'New account registration',
-		message:'A new customer account was created.',
-		dedupeKey:`registration:${user.id}:admin`,
-		relatedEntity:'USER',
-		relatedId:user.id,
-		actionUrl:'/admin',
-	});
 	return user;
 }

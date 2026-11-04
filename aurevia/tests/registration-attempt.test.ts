@@ -9,14 +9,10 @@ const mocks=vi.hoisted(()=>({
 	userFindUniqueOrThrow:vi.fn(),
 	waitlistUpdateMany:vi.fn(),
 	kycUpsert:vi.fn(),
-	createNotification:vi.fn(),
-	notifyActiveAdmins:vi.fn(),
 	initializePaperAccount:vi.fn(),
-	ensureSystemAccount:vi.fn(),
 }));
 
-vi.mock('@/lib/notifications',()=>({createNotification:mocks.createNotification,notifyActiveAdmins:mocks.notifyActiveAdmins}));
-vi.mock('@/lib/ledger',()=>({initializePaperAccount:mocks.initializePaperAccount,ensureSystemAccount:mocks.ensureSystemAccount}));
+vi.mock('@/lib/ledger',()=>({initializePaperAccount:mocks.initializePaperAccount}));
 
 import {createImmediateRegistration} from '@/lib/registration-attempt';
 
@@ -29,10 +25,7 @@ describe('immediate registration account creation',()=>{
 		mocks.userFindUniqueOrThrow.mockResolvedValue({id:'new-user',accountMode:'DEMO'});
 		mocks.waitlistUpdateMany.mockResolvedValue({count:0});
 		mocks.kycUpsert.mockResolvedValue({});
-		mocks.createNotification.mockResolvedValue({});
-		mocks.notifyActiveAdmins.mockResolvedValue(undefined);
 		mocks.initializePaperAccount.mockResolvedValue(undefined);
-		mocks.ensureSystemAccount.mockResolvedValue(undefined);
 	});
 
 	it('creates active accounts without signup email or phone verification',async()=>{
@@ -64,11 +57,5 @@ describe('immediate registration account creation',()=>{
 			skipDuplicates:true,
 		}));
 		expect(mocks.initializePaperAccount).toHaveBeenCalledTimes(2);
-		expect(mocks.createNotification).toHaveBeenCalledOnce();
-		expect(mocks.createNotification).toHaveBeenCalledWith(tx,expect.objectContaining({
-			title:'Welcome to Aurevia Exchange',
-			message:expect.not.stringContaining('verified'),
-		}));
-		expect(mocks.notifyActiveAdmins).toHaveBeenCalledOnce();
 	});
 });

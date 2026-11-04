@@ -1,13 +1,14 @@
 import {NextResponse} from 'next/server';
 import {randomUUID} from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import {AccountMode,Prisma} from '@prisma/client';
+import {AccountMode,NotificationType,Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {db} from '@/lib/db';
 import {rateLimit,RateLimitError} from '@/lib/rate-limit';
 import {trustedProxyClientIp} from '@/lib/request-ip';
 import {isValidE164,parseDateOfBirth} from '@/lib/registration-validation';
 import {createImmediateRegistration} from '@/lib/registration-attempt';
+import {createNotification,notifyActiveAdmins} from '@/lib/notifications';
 
 const schema=z.object({
 	email:z.string().trim().email().max(254),
@@ -35,10 +36,20 @@ function emailUniqueConstraint(error:Prisma.PrismaClientKnownRequestError){
 		:target==='email'||target==='User_email_key';
 }
 
+function registrationDiagnosticText(value:string,input:z.infer<typeof schema>|null,passwordHash:string){
+	let redacted=value;
+	for(const sensitiveValue of [input?.email,input?.password,passwordHash,input?.phone,input?.name,input?.country,input?.dateOfBirth]){
+		if(sensitiveValue&&sensitiveValue.length>=4)redacted=redacted.replaceAll(sensitiveValue,'[REDACTED]');
+	}
+	return redacted
+		.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,'[email]')
+		.replace(/(?:postgres(?:ql)?:\/\/)[^\s"'`]+/gi,'[database-url]');
+}
+
 function accountAccessRequired(requestId:string){
 	return NextResponse.json({
 		code:'ACCOUNT_ACCESS_REQUIRED',
-		error:'We could not complete signup. Sign in or reset your password if you already have an account.',
+		error:'Sign in or reset your password if you already have an account.',
 		requestId,
 		referenceId:requestId,
 	},{status:409,headers:{'Cache-Control':'no-store'}});
@@ -62,10 +73,54 @@ async function matchExistingAccount(email:string,password:string,requestId:strin
 	return accountAccessRequired(requestId);
 }
 
+async function writePostRegistrationEffects(userId:string,email:string,requestId:string,input:z.infer<typeof schema>,passwordHash:string){
+	const effects=await Promise.allSettled([
+		db.waitlistEntry.updateMany({
+			where:{email,userId:null},
+			data:{userId,status:'REGISTERED',updatedAt:new Date()},
+		}),
+		createNotification(db,{
+			userId,
+			type:NotificationType.ACCOUNT,
+			title:'Welcome to Aurevia Exchange',
+			message:'Your account is active. Identity verification is only required for eligible account services.',
+			dedupeKey:`registration:${userId}:created`,
+			actionUrl:'/dashboard',
+		}),
+		notifyActiveAdmins(db,{
+			type:NotificationType.ACCOUNT,
+			title:'New account registration',
+			message:'A new customer account was created.',
+			dedupeKey:`registration:${userId}:admin`,
+			relatedEntity:'USER',
+			relatedId:userId,
+			actionUrl:'/admin',
+		}),
+	]);
+	const effectNames=['waitlist update','welcome notification','admin notification'];
+	effects.forEach((effect,index)=>{
+		if(effect.status==='rejected'){
+			const error=effect.reason;
+			const errorCode=error&&typeof error==='object'&&'code' in error&&typeof error.code==='string'?error.code:undefined;
+			console.error('[signup] Post-registration effect failed.',{
+				referenceId:requestId,
+				effect:effectNames[index],
+				errorName:error instanceof Error?error.name:'UnknownError',
+				...(errorCode?{errorCode}:{}),
+				errorMessage:registrationDiagnosticText(error instanceof Error?error.message:'Unknown error',input,passwordHash).slice(0,1000),
+				...(error instanceof Error&&error.stack?{errorStack:registrationDiagnosticText(error.stack,input,passwordHash).slice(0,12000)}:{}),
+			});
+		}
+	});
+}
+
 export async function POST(request:Request){
 	const requestId=requestReference(request);
+	const requestStartedAt=Date.now();
 	let parsedInput:z.infer<typeof schema>|null=null;
 	let passwordHashForRedaction='';
+	let transactionDurationMs:number|null=null;
+	let transactionOutcome:'not_started'|'succeeded'|'failed'='not_started';
 	try{
 		const clientIp=trustedProxyClientIp(request);
 		rateLimit(`register:${clientIp||'unknown'}`,5,10*60_000);
@@ -83,16 +138,27 @@ export async function POST(request:Request){
 		const passwordHash=await bcrypt.hash(input.password,12);
 		passwordHashForRedaction=passwordHash;
 		try{
-			await db.$transaction(async tx=>createImmediateRegistration(tx,{
-				email,
-				passwordHash,
-				name:input.name.replace(/\s+/g,' ').trim(),
-				country:input.country,
-				phone:input.phone||null,
-				dateOfBirth,
-				accountMode:input.accountMode,
-				termsAcceptedAt:new Date(),
-			}),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+			const transactionStartedAt=Date.now();
+			let user:Awaited<ReturnType<typeof createImmediateRegistration>>;
+			try{
+				user=await db.$transaction(async tx=>createImmediateRegistration(tx,{
+					email,
+					passwordHash,
+					name:input.name.replace(/\s+/g,' ').trim(),
+					country:input.country,
+					phone:input.phone||null,
+					dateOfBirth,
+					accountMode:input.accountMode,
+					termsAcceptedAt:new Date(),
+				}),{isolationLevel:Prisma.TransactionIsolationLevel.ReadCommitted,maxWait:5_000,timeout:15_000});
+				transactionOutcome='succeeded';
+			}catch(error){
+				transactionOutcome='failed';
+				throw error;
+			}finally{
+				transactionDurationMs=Date.now()-transactionStartedAt;
+			}
+			await writePostRegistrationEffects(user.id,email,requestId,input,passwordHash);
 		}catch(error){
 			const recoveredAccount=await matchExistingAccount(email,input.password,requestId);
 			if(recoveredAccount)return recoveredAccount;
@@ -120,7 +186,7 @@ export async function POST(request:Request){
 		}
 		if(error instanceof Error&&error.message==='REGISTRATION_PHONE_ALREADY_IN_USE')return NextResponse.json({
 			code:'PHONE_ALREADY_IN_USE',
-			error:'This phone number is already associated with another account. Use a different number.',
+			error:'Phone number already in use. Try another number.',
 			requestId,
 			referenceId:requestId,
 		},{status:409,headers:{'Cache-Control':'no-store'}});
@@ -138,16 +204,27 @@ export async function POST(request:Request){
 		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many registration attempts. Try again later.'},{status:429});
 		const rawErrorCode=error&&typeof error==='object'&&'code' in error&&typeof error.code==='string'?error.code:'';
 		const errorCode=/^[A-Z0-9_]{2,32}$/.test(rawErrorCode)?rawErrorCode:undefined;
-		let errorMessage=error instanceof Error?error.message:'Unknown registration error';
-		for(const sensitiveValue of [parsedInput?.email,parsedInput?.password,passwordHashForRedaction]){
-			if(sensitiveValue)errorMessage=errorMessage.replaceAll(sensitiveValue,'[REDACTED]');
-		}
-		errorMessage=errorMessage.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,'[email]')
-			.replace(/(?:postgres(?:ql)?:\/\/)[^\s"'`]+/gi,'[database-url]')
-			.slice(0,500);
-		console.error('Registration request failed.',{requestId,errorName:error instanceof Error?error.name:'UnknownError',errorCode,errorMessage});
-		if(error instanceof Prisma.PrismaClientKnownRequestError&&['P2021','P2022'].includes(error.code))return NextResponse.json({error:'The registration service is being updated. Please try again shortly.',requestId},{status:503});
-		if(error&&typeof error==='object'&&'code' in error&&['P1001','P1002','P1017'].includes(String(error.code)))return NextResponse.json({error:'The registration service is temporarily unavailable. Please try again shortly.',requestId},{status:503});
-		return NextResponse.json({error:'We could not create your account. Please try again or contact support.',requestId},{status:500});
+		const prismaMeta=error instanceof Prisma.PrismaClientKnownRequestError?{
+			...(typeof error.meta?.modelName==='string'?{modelName:error.meta.modelName}:{}),
+			...(Array.isArray(error.meta?.target)?{target:error.meta.target.filter((value):value is string=>typeof value==='string')}:typeof error.meta?.target==='string'?{target:error.meta.target}:{}),
+		}:undefined;
+		console.error('[signup] Registration request failed.',{
+			referenceId:requestId,
+			errorName:error instanceof Error?error.name:'UnknownError',
+			...(errorCode?{errorCode}:{}),
+			...(prismaMeta&&Object.keys(prismaMeta).length?{prismaMeta}:{}),
+			errorMessage:registrationDiagnosticText(error instanceof Error?error.message:'Unknown registration error',parsedInput,passwordHashForRedaction).slice(0,1000),
+			...(error instanceof Error&&error.stack?{errorStack:registrationDiagnosticText(error.stack,parsedInput,passwordHashForRedaction).slice(0,12000)}:{}),
+		});
+		if(error instanceof Prisma.PrismaClientKnownRequestError&&['P2021','P2022'].includes(error.code))return NextResponse.json({error:'Registration service update in progress. Try again shortly.',requestId},{status:503});
+		if(error&&typeof error==='object'&&'code' in error&&['P1001','P1002','P1017'].includes(String(error.code)))return NextResponse.json({error:'Registration service unavailable. Try again shortly.',requestId},{status:503});
+		return NextResponse.json({error:'Account creation failed. Try again or contact support.',requestId},{status:500});
+	}finally{
+		console.info('[signup] Registration attempt completed.',{
+			referenceId:requestId,
+			durationMs:Date.now()-requestStartedAt,
+			transactionDurationMs,
+			transactionOutcome,
+		});
 	}
 }

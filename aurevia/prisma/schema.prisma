@@ -345,6 +345,8 @@ model User {
 
   tierReviews TierUpgradeRequest[] @relation("TierRequestReviewer")
   avatarKey   String?
+
+  @@index([phone])
 }
 
 model RegistrationAttempt {

@@ -6,6 +6,9 @@ const mocks=vi.hoisted(()=>({
 	userFindFirst:vi.fn(),
 	transaction:vi.fn(),
 	createAccount:vi.fn(),
+	waitlistUpdateMany:vi.fn(),
+	createNotification:vi.fn(),
+	notifyActiveAdmins:vi.fn(),
 	trustedProxyClientIp:vi.fn(),
 	rateLimit:vi.fn(),
 	RateLimitError:class extends Error{
@@ -19,11 +22,13 @@ const mocks=vi.hoisted(()=>({
 
 vi.mock('@/lib/db',()=>({db:{
 	user:{findFirst:mocks.userFindFirst},
+	waitlistEntry:{updateMany:mocks.waitlistUpdateMany},
 	$transaction:mocks.transaction,
 }}));
 vi.mock('@/lib/rate-limit',()=>({rateLimit:mocks.rateLimit,RateLimitError:mocks.RateLimitError}));
 vi.mock('@/lib/request-ip',()=>({trustedProxyClientIp:mocks.trustedProxyClientIp}));
 vi.mock('@/lib/registration-attempt',()=>({createImmediateRegistration:mocks.createAccount}));
+vi.mock('@/lib/notifications',()=>({createNotification:mocks.createNotification,notifyActiveAdmins:mocks.notifyActiveAdmins}));
 
 import {POST} from '@/app/api/register/route';
 
@@ -57,6 +62,9 @@ describe('immediate registration',()=>{
 		mocks.trustedProxyClientIp.mockReturnValue('192.0.2.5');
 		mocks.rateLimit.mockReturnValue(undefined);
 		mocks.createAccount.mockResolvedValue({id:'user-1'});
+		mocks.waitlistUpdateMany.mockResolvedValue({count:0});
+		mocks.createNotification.mockResolvedValue({});
+		mocks.notifyActiveAdmins.mockResolvedValue(undefined);
 		mocks.transaction.mockImplementation(async(callback:(tx:unknown)=>Promise<unknown>)=>callback({}));
 	});
 
@@ -82,6 +90,14 @@ describe('immediate registration',()=>{
 		expect(mocks.createAccount.mock.calls[0][1].passwordHash).not.toBe(payload.password);
 		expect(response.headers.get('set-cookie')).toBeNull();
 		expect(mocks.rateLimit).toHaveBeenCalledWith('register:192.0.2.5',5,600_000);
+		expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function),{
+			isolationLevel:Prisma.TransactionIsolationLevel.ReadCommitted,
+			maxWait:5_000,
+			timeout:15_000,
+		});
+		expect(mocks.waitlistUpdateMany).toHaveBeenCalledWith(expect.objectContaining({where:{email:payload.email,userId:null}}));
+		expect(mocks.createNotification).toHaveBeenCalledOnce();
+		expect(mocks.notifyActiveAdmins).toHaveBeenCalledOnce();
 	});
 
 	it('normalizes signup email by trimming and lowercasing before persistence',async()=>{
@@ -168,24 +184,52 @@ describe('immediate registration',()=>{
 		}));
 		const error=vi.spyOn(console,'error').mockImplementation(()=>undefined);
 
-		const response=await POST(request());
+		const requestId='e75c6069-6dc9-4de5-8a58-e8257d8f8e03';
+		const response=await POST(request(payload,requestId));
+		const logged=JSON.stringify(error.mock.calls);
 
 		expect(response.status).toBe(500);
 		expect(await response.json()).not.toMatchObject({code:'ACCOUNT_ACCESS_REQUIRED'});
+		expect(logged).toContain(requestId);
+		expect(logged).toContain('P2002');
+		expect(logged).toContain('phone');
+		expect(logged).toContain('errorStack');
 		error.mockRestore();
 	});
 
 	it('logs a sanitized server-side cause for unexpected signup failures',async()=>{
 		const error=vi.spyOn(console,'error').mockImplementation(()=>undefined);
+		const info=vi.spyOn(console,'info').mockImplementation(()=>undefined);
 		mocks.transaction.mockRejectedValue(new Error(`Write failed for ${payload.email} using ${payload.password}`));
+
+		const requestId='e75c6069-6dc9-4de5-8a58-e8257d8f8e03';
+		const response=await POST(request(payload,requestId));
+		const logged=JSON.stringify(error.mock.calls);
+		const timing=JSON.stringify(info.mock.calls);
+
+		expect(response.status).toBe(500);
+		expect(logged).toContain('Write failed');
+		expect(logged).toContain(requestId);
+		expect(logged).toContain('errorStack');
+		expect(logged).not.toContain(payload.email);
+		expect(logged).not.toContain(payload.password);
+		expect(timing).toContain(requestId);
+		expect(timing).toContain('transactionDurationMs');
+		expect(timing).toContain('"transactionOutcome":"failed"');
+		error.mockRestore();
+		info.mockRestore();
+	});
+
+	it('keeps post-commit notification failures from turning a committed signup into an API failure',async()=>{
+		const error=vi.spyOn(console,'error').mockImplementation(()=>undefined);
+		mocks.createNotification.mockRejectedValueOnce(new Error('notification insert unavailable'));
 
 		const response=await POST(request());
 		const logged=JSON.stringify(error.mock.calls);
 
-		expect(response.status).toBe(500);
-		expect(logged).toContain('Write failed');
-		expect(logged).not.toContain(payload.email);
-		expect(logged).not.toContain(payload.password);
+		expect(response.status).toBe(201);
+		expect(logged).toContain('Post-registration effect failed');
+		expect(logged).toContain('welcome notification');
 		error.mockRestore();
 	});
 

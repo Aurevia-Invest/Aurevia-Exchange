@@ -62,7 +62,7 @@ export const authOptions:NextAuthOptions={
       const authConfig=serverConfig.auth;
       const {isAdminUsername,lookupEmail}=resolveCredentialLookup(username,email,authConfig.adminUsername,authConfig.adminEmail,c?.adminLogin==='true');
       if(!lookupEmail){await writeLoginAudit('FAILED',undefined,undefined,'MISSING_IDENTIFIER');return null;}
-      let u=await db.user.findUnique({where:{email:lookupEmail}});
+      let u=await db.user.findFirst({where:{email:{equals:lookupEmail,mode:'insensitive'}}});
       if((!u||u.role!==Role.ADMIN)&&c?.adminLogin==='true'&&authConfig.adminUsername&&authConfig.adminEmail&&authConfig.adminPassword?.length>=12&&matchesConfiguredAdminIdentity(username,email,authConfig.adminUsername,authConfig.adminEmail)&&matchesConfiguredAdminPassword(password,authConfig.adminPassword)){
         const configuredEmail=authConfig.adminEmail.trim().toLowerCase();
         const passwordHash=await bcrypt.hash(authConfig.adminPassword,12);

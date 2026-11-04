@@ -2,7 +2,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {createHash} from 'node:crypto';
 
 const mocks=vi.hoisted(()=>({
-	userFindUnique:vi.fn(),
+	userFindFirst:vi.fn(),
 	resetFindUnique:vi.fn(),
 	resetUpdateMany:vi.fn(),
 	txResetUpdateMany:vi.fn(),
@@ -18,7 +18,7 @@ const mocks=vi.hoisted(()=>({
 }));
 
 vi.mock('@/lib/db',()=>({db:{
-	user:{findUnique:mocks.userFindUnique,update:mocks.txUserUpdate},
+	user:{findFirst:mocks.userFindFirst,update:mocks.txUserUpdate},
 	passwordResetToken:{
 		findUnique:mocks.resetFindUnique,
 		updateMany:mocks.resetUpdateMany,
@@ -51,7 +51,7 @@ describe('password recovery',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
 		vi.stubEnv('NEXT_PUBLIC_APP_URL','https://aurevia.test');
-		mocks.userFindUnique.mockResolvedValue(null);
+		mocks.userFindFirst.mockResolvedValue(null);
 		mocks.resetFindUnique.mockResolvedValue(null);
 		mocks.resetUpdateMany.mockResolvedValue({count:1});
 		mocks.txResetUpdateMany.mockResolvedValue({count:0});
@@ -80,10 +80,14 @@ describe('password recovery',()=>{
 	});
 
 	it('delivers only a hashed, expiring token in a fragment on a trusted HTTPS link',async()=>{
-		mocks.userFindUnique.mockResolvedValue({id:'user-1',email:'person@example.invalid',status:'ACTIVE'});
+		mocks.userFindFirst.mockResolvedValue({id:'user-1',email:'person@example.invalid',status:'ACTIVE'});
 		const response=await requestReset(request('/api/password-reset/request',{email:'Person@example.invalid'}));
 
 		expect(response.status).toBe(202);
+		expect(mocks.userFindFirst).toHaveBeenCalledWith({
+			where:{email:{equals:'person@example.invalid',mode:'insensitive'}},
+			select:{id:true,email:true,status:true},
+		});
 		expect(mocks.txResetCreate).toHaveBeenCalledTimes(1);
 		const stored=mocks.txResetCreate.mock.calls[0][0].data;
 		expect(stored).toMatchObject({userId:'user-1',tokenHash:expect.any(String),expiresAt:expect.any(Date)});
@@ -111,13 +115,13 @@ describe('password recovery',()=>{
 
 		expect(response.status).toBe(503);
 		expect(await response.json()).toMatchObject({error:'Password recovery email is not configured. Contact support.'});
-		expect(mocks.userFindUnique).not.toHaveBeenCalled();
+		expect(mocks.userFindFirst).not.toHaveBeenCalled();
 		expect(mocks.txResetCreate).not.toHaveBeenCalled();
 	});
 
 	it('rejects non-HTTPS recovery origins without revealing account eligibility',async()=>{
 		vi.stubEnv('NEXT_PUBLIC_APP_URL','http://aurevia.test');
-		mocks.userFindUnique.mockResolvedValue({id:'user-1',email:'person@example.invalid',status:'ACTIVE'});
+		mocks.userFindFirst.mockResolvedValue({id:'user-1',email:'person@example.invalid',status:'ACTIVE'});
 		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
 
 		const response=await requestReset(request('/api/password-reset/request',{email:'person@example.invalid'}));
@@ -126,6 +130,29 @@ describe('password recovery',()=>{
 		expect(mocks.txResetCreate).not.toHaveBeenCalled();
 		expect(mocks.sendEmail).not.toHaveBeenCalled();
 		warning.mockRestore();
+	});
+
+	it('rejects loopback HTTP reset URLs in production',async()=>{
+		vi.stubEnv('NODE_ENV','production');
+		vi.stubEnv('NEXT_PUBLIC_APP_URL','http://localhost:3000');
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+
+		const response=await requestReset(request('/api/password-reset/request',{email:'person@example.invalid'}));
+
+		expect(response.status).toBe(503);
+		expect(mocks.userFindFirst).not.toHaveBeenCalled();
+		expect(mocks.sendEmail).not.toHaveBeenCalled();
+		warning.mockRestore();
+	});
+
+	it('allows a loopback HTTP reset URL only outside production',async()=>{
+		vi.stubEnv('NEXT_PUBLIC_APP_URL','http://localhost:3000');
+		mocks.userFindFirst.mockResolvedValue({id:'user-1',email:'person@example.invalid',status:'ACTIVE'});
+
+		const response=await requestReset(request('/api/password-reset/request',{email:'person@example.invalid'}));
+
+		expect(response.status).toBe(202);
+		expect(mocks.sendEmail.mock.calls[0][0].text).toContain('http://localhost:3000/reset-password#token=');
 	});
 
 	it('rejects expired or already-consumed tokens',async()=>{

@@ -21,7 +21,10 @@ function getPasswordResetUrl(){
 	if(!configuredOrigin)return null;
 	try{
 		const origin=new URL(configuredOrigin);
-		if(origin.protocol!=='https:'||origin.username||origin.password||origin.search||origin.hash)return null;
+		const isLocalDevelopment=process.env.NODE_ENV!=='production'
+			&&origin.protocol==='http:'
+			&&['localhost','127.0.0.1','[::1]'].includes(origin.hostname);
+		if((origin.protocol!=='https:'&&!isLocalDevelopment)||origin.username||origin.password||origin.search||origin.hash)return null;
 		return new URL('/reset-password',origin.origin);
 	}catch{
 		return null;
@@ -43,7 +46,7 @@ export async function POST(request:Request){
 			console.warn('Password reset is unavailable: a trusted HTTPS application origin is not configured.');
 			return NextResponse.json({error:'Password recovery is temporarily unavailable.'},{status:503});
 		}
-		const user=await db.user.findUnique({where:{email},select:{id:true,email:true,status:true}});
+		const user=await db.user.findFirst({where:{email:{equals:email,mode:'insensitive'}},select:{id:true,email:true,status:true}});
 		if(!user||user.status!=='ACTIVE')return NextResponse.json(genericResponse,{status:202});
 		const token=randomBytes(32).toString('base64url');
 		const tokenHash=createHash('sha256').update(token).digest('hex');

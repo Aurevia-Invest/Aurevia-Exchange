@@ -1,6 +1,40 @@
-import {describe,expect,it} from 'vitest';
+import {beforeEach,describe,expect,it,vi} from 'vitest';
+import bcrypt from 'bcryptjs';
 import {matchesConfiguredAdminIdentity,matchesConfiguredAdminPassword,resolveCredentialLookup} from '../lib/credential-lookup';
 import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '../lib/auth-session';
+
+const authMocks=vi.hoisted(()=>({
+	userFindFirst:vi.fn(),
+	userUpdateMany:vi.fn(),
+	auditCreate:vi.fn(),
+}));
+
+vi.mock('next-auth/providers/credentials',()=>({default:(configuration:unknown)=>configuration}));
+vi.mock('@/lib/db',()=>({db:{
+	user:{findFirst:authMocks.userFindFirst,updateMany:authMocks.userUpdateMany},
+	auditLog:{create:authMocks.auditCreate},
+}}));
+vi.mock('@/lib/notifications',()=>({createNotification:vi.fn()}));
+vi.mock('@/lib/rate-limit',()=>({rateLimit:vi.fn()}));
+vi.mock('@/lib/config/env',()=>({getServerConfiguration:()=>({auth:{
+	adminUsername:'administrator',
+	adminEmail:'admin@example.invalid',
+	adminPassword:'',
+}})}));
+
+import {authOptions} from '../lib/auth-options';
+
+beforeEach(()=>{
+	vi.clearAllMocks();
+	authMocks.userUpdateMany.mockResolvedValue({count:1});
+	authMocks.auditCreate.mockResolvedValue({});
+});
+
+async function authorize(credentials:Record<string,string>){
+	const provider=authOptions.providers[0];
+	if(typeof provider==='string'||!('authorize' in provider))throw new Error('Credentials provider is unavailable.');
+	return provider.authorize(credentials,{headers:{},query:{},body:{},method:'POST'});
+}
 
 describe('auth session expiration',()=>{
   const now=Date.UTC(2026,0,1);
@@ -18,6 +52,35 @@ describe('auth session expiration',()=>{
   it('treats a missing session timestamp as stale',()=>{
     expect(isAuthSessionExpired(null,now)).toBe(true);
   });
+});
+
+describe('credentials authorization',()=>{
+	it('finds legacy accounts case-insensitively while preserving their stored email',async()=>{
+		const password='LegacyPassword1';
+		authMocks.userFindFirst.mockResolvedValue({
+			id:'legacy-user',
+			email:'Legacy.User@Example.invalid',
+			name:'Legacy User',
+			passwordHash:await bcrypt.hash(password,4),
+			role:'USER',
+			accountMode:'DEMO',
+			status:'ACTIVE',
+			activeSessionId:null,
+			activeSessionUpdatedAt:null,
+		});
+
+		const result=await authorize({
+			username:'legacy.user@example.invalid',
+			email:'legacy.user@example.invalid',
+			password,
+			replaceSession:'false',
+		});
+
+		expect(authMocks.userFindFirst).toHaveBeenCalledWith({
+			where:{email:{equals:'legacy.user@example.invalid',mode:'insensitive'}},
+		});
+		expect(result).toMatchObject({id:'legacy-user',email:'Legacy.User@Example.invalid'});
+	});
 });
 
 describe('resolveCredentialLookup',()=>{

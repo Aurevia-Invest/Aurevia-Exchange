@@ -8,7 +8,7 @@ export default withAuth(function middleware(request:NextRequestWithAuth){
 	const role=request.nextauth.token?.role;
 	const pathname=request.nextUrl.pathname;
 	if(role==='ADMIN'&&!pathname.startsWith('/admin'))return NextResponse.redirect(new URL('/admin',request.url));
-	if(role==='USER'&&pathname.startsWith('/admin'))return NextResponse.redirect(new URL('/dashboard',request.url));
+	if(role==='USER'&&pathname.startsWith('/admin')&&pathname!=='/admin/login')return NextResponse.redirect(new URL('/dashboard',request.url));
 	return NextResponse.next();
 },{callbacks:{authorized:({token,req})=>{
 	const pathname=req.nextUrl.pathname;

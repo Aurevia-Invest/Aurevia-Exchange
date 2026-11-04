@@ -34,7 +34,7 @@ export async function loginAs(page:Page,email:string,password:string){
 	try{
 		await page.goto(administrator?'/admin/login':'/login');
 		await waitForStartup(page);
-		await page.getByLabel(administrator?'Admin username or email':'Email or administrator username').fill(email);
+		await page.getByLabel(administrator?'Admin username or email':'Email address').fill(email);
 		const passwordInput=page.getByLabel(administrator?'Admin password':'Password',{exact:true});
 		await passwordInput.fill(password);
 		const replaceSession=page.getByRole('checkbox',{name:administrator?/Replace another active Aurevia session/:/Replace the active Aurevia session/});

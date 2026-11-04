@@ -408,7 +408,7 @@ test('login and registration fields receive real pointer and keyboard input',asy
 	await page.setViewportSize({width:390,height:844});
 	await page.goto('/login');
 	await waitForStartup(page);
-	const identifier=page.getByLabel('Email or administrator username');
+	const identifier=page.getByLabel('Email address');
 	const password=page.getByLabel('Password',{exact:true});
 	await typeInto(page,identifier,'invalid-user@example.test');
 	await typeInto(page,password,'NotARealPassword123!');
@@ -514,7 +514,7 @@ test('password reset consumes a database token and changes the account password'
 
 	await page.goto('/login');
 	await waitForStartup(page);
-	await page.getByLabel('Email or administrator username').fill(user.email);
+	await page.getByLabel('Email address').fill(user.email);
 	await page.getByLabel('Password',{exact:true}).fill('ChangedPassword1');
 	await page.getByRole('button',{name:'Sign in'}).click();
 	await page.waitForURL(url=>url.pathname==='/dashboard');
@@ -763,7 +763,7 @@ test('startup releases page interaction if session initialization is delayed',as
 	await page.goto('/login');
 	const startup=page.getByRole('status',{name:'Loading Aurevia Exchange'});
 	if(await startup.count())await expect(startup).toBeHidden({timeout:5000});
-	const email=page.getByLabel('Email or administrator username');
+	const email=page.getByLabel('Email address');
 	await email.fill('qa@example.invalid');
 	await expect(email).toHaveValue('qa@example.invalid');
 	await expect(page.locator('.scene-content > div[inert]')).toHaveCount(0);
@@ -1015,7 +1015,7 @@ test('duplicate signup offers sign-in with the typed email prefilled',async({pag
 	await expect(page.locator('p.auth-error')).toHaveText(/Sign in or reset your password/);
 	await page.locator('p').filter({hasText:'You can'}).getByRole('link',{name:'Sign in'}).click();
 	await page.waitForURL(/\/login$/);
-	await expect(page.getByLabel('Email or administrator username')).toHaveValue(email);
+	await expect(page.getByLabel('Email address')).toHaveValue(email);
 });
 
 test('account deletion cascades through user-owned records',async()=>{
@@ -1050,7 +1050,7 @@ test('session replacement is explicit and refresh-safe',async({page,browser})=>{
 	const password=fixture('USER_PASSWORD');
 	await page.goto('/login');
 	await waitForStartup(page);
-	await page.getByLabel('Email or administrator username').fill(email);
+	await page.getByLabel('Email address').fill(email);
 	await page.getByLabel('Password',{exact:true}).fill(password);
 	await page.getByRole('checkbox',{name:/Replace the active Aurevia session/}).check();
 	await page.getByRole('button',{name:'Sign in'}).click();
@@ -1063,7 +1063,7 @@ test('session replacement is explicit and refresh-safe',async({page,browser})=>{
 		await otherDevice.addInitScript(()=>localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()})));
 		await otherDevice.goto('/login');
 		await waitForStartup(otherDevice);
-		await otherDevice.getByLabel('Email or administrator username').fill(email);
+		await otherDevice.getByLabel('Email address').fill(email);
 		await otherDevice.getByLabel('Password',{exact:true}).fill(password);
 		await otherDevice.getByRole('checkbox',{name:/Replace the active Aurevia session/}).check();
 		await otherDevice.getByRole('button',{name:'Sign in'}).click();

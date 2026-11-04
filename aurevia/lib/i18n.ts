@@ -758,7 +758,7 @@ const base = {
   signIn: "Sign in",
   welcomeBack: "Welcome back",
   secureAccess: "SECURE ACCOUNT ACCESS",
-  emailOrUsername: "Email or administrator username",
+  emailOrUsername: "Email address",
   password: "Password",
   hidePassword: "Hide password",
   showPassword: "Show password",

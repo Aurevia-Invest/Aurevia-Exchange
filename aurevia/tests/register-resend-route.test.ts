@@ -442,6 +442,9 @@ describe('registration verification resend',()=>{
 				providerHttpStatus:401,
 				providerCode:'INVALID_SIGNATURE',
 				providerMessage:'signature rejected for [redacted-number]',
+				signedTimestamp:null,
+				providerDate:null,
+				responseReceivedAt:null,
 				failureTimestamp:'2026-11-03T17:00:00.000Z',
 			}),
 		);

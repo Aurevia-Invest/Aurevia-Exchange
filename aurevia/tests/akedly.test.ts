@@ -219,17 +219,20 @@ describe('Akedly V2 server integration',()=>{
 		info.mockRestore();
 	});
 
-	it('retains the HTTP status and redacts contact data from a rejected provider message',async()=>{
+	it('retains safe timing diagnostics and redacts contact data from provider rejection',async()=>{
 		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
 			status:'error',
 			error:{code:'invalid_signature',message:'private provider response for person@example.invalid'},
-		}),{status:401,headers:{'content-type':'application/json'}})));
+		}),{status:401,headers:{'content-type':'application/json',date:'Wed, 04 Nov 2026 00:00:00 GMT'}})));
 
 		const failure=await createAkedlyAttempt({email:'person@example.invalid'}).catch(error=>error);
 		expect(failure).toMatchObject({
 			message:'AKEDLY_ATTEMPT_REJECTED',
 			httpStatus:401,
 			providerCode:'INVALID_SIGNATURE',
+			signedTimestamp:expect.any(Number),
+			providerDate:'2026-11-04T00:00:00.000Z',
+			responseReceivedAt:expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
 		});
 		expect(JSON.stringify(failure)).not.toContain('person@example.invalid');
 		expect(failure).toMatchObject({

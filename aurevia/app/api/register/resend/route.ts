@@ -65,6 +65,9 @@ function akedlyFailureDiagnostic(error:unknown,requestId:string,registrationRequ
 		providerAttemptId:error instanceof AkedlyProviderError?error.providerAttemptId||null:null,
 		providerHttpStatus:error instanceof AkedlyProviderError?error.httpStatus||null:null,
 		providerMessage:error instanceof AkedlyProviderError?error.providerMessage||null:null,
+		signedTimestamp:error instanceof AkedlyProviderError?error.signedTimestamp||null:null,
+		providerDate:error instanceof AkedlyProviderError?error.providerDate||null:null,
+		responseReceivedAt:error instanceof AkedlyProviderError?error.responseReceivedAt||null:null,
 		...(error instanceof AkedlyProviderError&&error.httpStatus?{httpStatus:error.httpStatus}:{}),
 		...(error instanceof AkedlyProviderError&&error.providerCode?{providerCode:error.providerCode}:{}),
 	};

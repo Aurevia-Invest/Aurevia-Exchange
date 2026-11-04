@@ -12,6 +12,9 @@ type AkedlyProviderErrorDetails={
 	providerAttemptId?:string;
 	providerMessage?:string;
 	failureTimestamp?:string;
+	signedTimestamp?:number;
+	providerDate?:string;
+	responseReceivedAt?:string;
 };
 
 export class AkedlyProviderError extends Error{
@@ -22,6 +25,9 @@ export class AkedlyProviderError extends Error{
 	readonly providerAttemptId?:string;
 	readonly providerMessage?:string;
 	readonly failureTimestamp:string;
+	readonly signedTimestamp?:number;
+	readonly providerDate?:string;
+	readonly responseReceivedAt?:string;
 
 	constructor(category:string,httpStatus?:number,providerCode?:string,retryAfterSeconds?:number,details:AkedlyProviderErrorDetails={}){
 		super(category);
@@ -33,6 +39,9 @@ export class AkedlyProviderError extends Error{
 		this.providerAttemptId=details.providerAttemptId;
 		this.providerMessage=details.providerMessage;
 		this.failureTimestamp=details.failureTimestamp||new Date().toISOString();
+		this.signedTimestamp=details.signedTimestamp;
+		this.providerDate=details.providerDate;
+		this.responseReceivedAt=details.responseReceivedAt;
 	}
 }
 
@@ -125,10 +134,17 @@ export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyA
 		);
 	}
 	const result=await response.json().catch(()=>null) as unknown;
+	const responseReceivedAt=new Date().toISOString();
+	const providerDateHeader=response.headers.get('date');
+	const providerDateTime=providerDateHeader?Date.parse(providerDateHeader):NaN;
+	const providerDate=Number.isFinite(providerDateTime)?new Date(providerDateTime).toISOString():undefined;
 	const providerAttempt=providerAttemptId(result);
 	const providerMessage=providerErrorMessage(result,contact,config);
 	const providerDetails={
 		providerEndpoint:CREATE_ATTEMPT_ENDPOINT,
+		signedTimestamp:timestamp,
+		responseReceivedAt,
+		...(providerDate?{providerDate}:{}),
 		...(providerAttempt?{providerAttemptId:providerAttempt}:{}),
 		...(providerMessage?{providerMessage}:{}),
 	};

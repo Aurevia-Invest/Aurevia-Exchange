@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {AccountMode,NotificationType,OrderSide,OrderStatus,OrderType,Prisma} from '@prisma/client';
 import {createNotification} from '@/lib/notifications';
 import {db} from '@/lib/db';
-import {balance,ensureUserLedger,reservedWithdrawalAmount} from '@/lib/ledger';
+import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,reservedWithdrawalAmount,roundUsdAmount} from '@/lib/ledger';
 import {assertFreshQuote,assertSellableQuantity,averageEntryPrice,realizedSpotPnl} from '@/lib/trading-policy';
 import {ALPACA_PAPER_PROVIDER,assertPaperBuyCollateral,paperOrderCollateral} from '@/lib/bitcoin-funding';
 import {AlpacaTradingApiError,createIndividualTradingApiProviderFromEnvironment} from '@/lib/providers/alpaca-crypto-provider';
@@ -72,6 +72,17 @@ async function applyConfirmedFill(
 	const providerExecutionId=`${response.providerOrderId}:${filled.toFixed(10)}`;
 	const duplicate=await tx.execution.findUnique({where:{providerExecutionId},select:{id:true}});
 	if(duplicate)throw new AlpacaPaperOrderError('ALPACA_PAPER_FILL_ALREADY_APPLIED',409);
+	const notional=roundUsdAmount(fillQuantity.mul(fillPrice));
+	if(notional.lte(0))throw new AlpacaPaperOrderError('ALPACA_PAPER_FILL_BELOW_LEDGER_PRECISION',409);
+	const userAccount=await ensureUserLedger(tx,current.userId,AccountMode.REAL,'USD');
+	const clearingAccount=await ensureSystemAccount(tx,'SYSTEM:REAL:PAPER_TRADING_CLEARING','REAL simulated trading clearing','USD',AccountMode.REAL);
+	await postDoubleEntry(tx,{
+		reference:`REAL:SIMULATED_TRADE:${current.side}:${current.id}:${providerExecutionId}`,
+		description:`Simulated ${current.side.toLowerCase()} ${current.instrument.symbol}`,
+		debitAccountId:current.side===OrderSide.BUY?userAccount.id:clearingAccount.id,
+		creditAccountId:current.side===OrderSide.BUY?clearingAccount.id:userAccount.id,
+		amount:notional,
+	});
 	if(current.side===OrderSide.BUY){
 		const position=await tx.position.findFirst({where:{
 			userId:current.userId,instrumentId:current.instrumentId,accountMode:AccountMode.REAL,
@@ -109,6 +120,30 @@ async function applyConfirmedFill(
 	}});
 }
 
+async function canPostBuyFill(
+	tx:Prisma.TransactionClient,
+	current:Prisma.OrderGetPayload<{include:{executions:true;instrument:true}}>,
+	fillQuantity:Prisma.Decimal,
+	fillNotional:Prisma.Decimal,
+){
+	const userAccount=await ensureUserLedger(tx,current.userId,AccountMode.REAL,'USD');
+	const [walletBalance,pendingWithdrawals,orders]=await Promise.all([
+		balance(tx,userAccount.id),
+		reservedWithdrawalAmount(tx,current.userId,AccountMode.REAL,'USD'),
+		tx.order.findMany({
+			where:{userId:current.userId,accountMode:AccountMode.REAL,providerName:ALPACA_PAPER_PROVIDER},
+			select:{instrumentId:true,side:true,quantity:true,filledQuantity:true,averageFillPrice:true,providerReservedAmount:true,status:true,createdAt:true,instrument:{select:{takerFee:true}}},
+			orderBy:{createdAt:'asc'},
+		}),
+	]);
+	const collateral=paperOrderCollateral(orders.map(order=>({...order,takerFee:order.instrument.takerFee})));
+	const releasedReservation=current.providerReservedAmount
+		?current.providerReservedAmount.mul(fillQuantity).div(current.quantity)
+		:new Prisma.Decimal(0);
+	const remainingReservations=Prisma.Decimal.max(collateral.committed.minus(releasedReservation),new Prisma.Decimal(0));
+	return walletBalance.minus(pendingWithdrawals).minus(remainingReservations).gte(fillNotional);
+}
+
 async function persistProviderOrder(orderId:string,response:ProviderOrder,accountId:string,actorId:string){
 	return db.$transaction(async tx=>{
 		const current=await tx.order.findUnique({where:{id:orderId},include:{executions:true,instrument:true}});
@@ -122,8 +157,32 @@ async function persistProviderOrder(orderId:string,response:ProviderOrder,accoun
 			current.averageFillPrice&&!new Prisma.Decimal(response.averageFillPrice??0).equals(current.averageFillPrice)){
 			throw new AlpacaPaperOrderError('ALPACA_PAPER_FILL_SNAPSHOT_CONFLICT',409);
 		}
-		if(validated.filled.gt(current.filledQuantity))await applyConfirmedFill(tx,current,response,validated.filled,validated.updatedAt);
 		const nextStatus=localStatus(response);
+		if(validated.filled.gt(current.filledQuantity)){
+			const fillQuantity=validated.filled.minus(current.filledQuantity);
+			const cumulativeAverage=new Prisma.Decimal(response.averageFillPrice!);
+			const previousNotional=current.filledQuantity.mul(current.averageFillPrice??0);
+			const fillPrice=validated.filled.mul(cumulativeAverage).minus(previousNotional).div(fillQuantity);
+			if(!fillPrice.isFinite()||!fillPrice.gt(0))throw new AlpacaPaperOrderError('ALPACA_PAPER_INVALID_FILL_SNAPSHOT',502);
+			const fillNotional=roundUsdAmount(fillQuantity.mul(fillPrice));
+			if(fillNotional.lte(0))throw new AlpacaPaperOrderError('ALPACA_PAPER_FILL_BELOW_LEDGER_PRECISION',409);
+			if(current.side===OrderSide.BUY&&!await canPostBuyFill(tx,current,fillQuantity,fillNotional)){
+				const updated=await tx.order.update({where:{id:current.id},data:{
+					providerAccountId:accountId,providerOrderId:response.providerOrderId,providerStatus:validated.providerStatus,
+					providerAcceptedAt:validated.acceptedAt,providerUpdatedAt:validated.updatedAt,status:nextStatus,
+					reconciliationStatus:'RECONCILIATION_REQUIRED',reconciledAt:new Date(),
+				},include:{executions:true,instrument:true}});
+				if(current.reconciliationStatus!=='RECONCILIATION_REQUIRED'){
+					await tx.auditLog.create({data:{actorId,action:'REAL_PAPER_FILL_REQUIRES_RECONCILIATION',entity:'ORDER',entityId:current.id,metadata:{
+						accountMode:AccountMode.REAL,simulated:true,provider:ALPACA_PAPER_PROVIDER,reason:'INSUFFICIENT_AVAILABLE_WALLET_BALANCE',
+						confirmedQuantity:validated.filled.toString(),postedQuantity:current.filledQuantity.toString(),fillNotional:fillNotional.toString(),
+					}}});
+					await createNotification(tx,{userId:current.userId,type:NotificationType.TRADE,title:'REAL order requires review',message:`A confirmed simulated fill for ${current.instrument.symbol} could not be posted because available wallet funds are insufficient. Funds remain reserved; contact support for review.`,dedupeKey:`paper-order:${current.id}:fill-reconciliation-required:${validated.filled.toString()}`,relatedEntity:'ORDER',relatedId:current.id,actionUrl:'/orders'});
+				}
+				return updated;
+			}
+			await applyConfirmedFill(tx,current,response,validated.filled,validated.updatedAt);
+		}
 		const changed=current.providerOrderId!==response.providerOrderId||
 			current.providerStatus!==validated.providerStatus||
 			current.status!==nextStatus||
@@ -153,7 +212,7 @@ async function persistProviderOrder(orderId:string,response:ProviderOrder,accoun
 			filledQuantity:validated.filled.toString(),
 			averageFillPrice:response.averageFillPrice??null,
 		}}});
-		if(changed)await createNotification(tx,{userId:current.userId,type:NotificationType.TRADE,title:`REAL · Alpaca Paper order ${validated.providerStatus.replaceAll('_',' ')}`,message:`Your ${current.side.toLowerCase()} ${current.instrument.symbol} order updated in the shared Alpaca Paper account. Paper activity does not change your Aurevia REAL balance or wallet funds.`,dedupeKey:`paper-order:${current.id}:${validated.providerStatus}:${validated.filled.toString()}`,relatedEntity:'ORDER',relatedId:current.id,actionUrl:'/orders'});
+		if(changed)await createNotification(tx,{userId:current.userId,type:NotificationType.TRADE,title:`REAL simulated order ${nextStatus.replaceAll('_',' ').toLowerCase()}`,message:validated.filled.gt(current.filledQuantity)?`REAL account: your ${current.side.toLowerCase()} ${current.instrument.symbol} order has a confirmed simulated fill. Your Aurevia wallet and position were updated.`:`REAL account: your ${current.side.toLowerCase()} ${current.instrument.symbol} order status is ${nextStatus.replaceAll('_',' ').toLowerCase()}.`,dedupeKey:`paper-order:${current.id}:${validated.providerStatus}:${validated.filled.toString()}`,relatedEntity:'ORDER',relatedId:current.id,actionUrl:'/orders'});
 		return updated;
 	},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
 }
@@ -263,7 +322,7 @@ export async function submitAlpacaPaperOrder(userId:string,input:PlaceOrderInput
 			internalWalletReservation:providerReservedAmount?.toString()??null,currency:'USD',
 			internalLedgerChanged:false,internalPositionChanged:false,
 		}}});
-		await createNotification(tx,{userId,type:NotificationType.TRADE,title:'REAL · Alpaca Paper order submitted',message:`Your ${input.side.toLowerCase()} ${instrument.symbol} order is being submitted to the shared Alpaca Paper account. It does not change your Aurevia REAL balance or positions.`,dedupeKey:`paper-order:${order.id}:submission-started`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/orders'});
+		await createNotification(tx,{userId,type:NotificationType.TRADE,title:'REAL simulated order submitted',message:`REAL account: your ${input.side.toLowerCase()} ${instrument.symbol} order is awaiting confirmation. Execution is simulated; your Aurevia wallet and position update only after a fill is confirmed.`,dedupeKey:`paper-order:${order.id}:submission-started`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/orders'});
 		return {order,created:true};
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
 	}catch(error){

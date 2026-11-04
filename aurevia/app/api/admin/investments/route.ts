@@ -26,7 +26,7 @@ const opportunityFields=z.object({
  maturesAt:z.coerce.date().optional().nullable(),
  riskLevel:z.nativeEnum(InvestmentRisk),
  status:z.nativeEnum(InvestmentOpportunityStatus).default(InvestmentOpportunityStatus.DRAFT),
- demoEligible:z.boolean().default(true),
+ demoEligible:z.boolean().default(false),
  realEligible:z.boolean().default(true),
  requiresApproval:z.boolean().default(true),
  targetPrice:z.number().positive().optional().nullable(),
@@ -72,6 +72,7 @@ export async function POST(request:Request){
   const body=await request.json() as {action?:string};
   if(body.action==='initiate'){
    const input=initiationSchema.parse(body);
+   if(input.accountMode!==AccountMode.REAL)return NextResponse.json({error:'Investment initiation is restricted to REAL accounts.'},{status:400});
    const requestedAmount=roundUsdAmount(input.amount);
    if(requestedAmount.lte(0))throw new Error('INVALID_AMOUNT');
    const idempotencyKey=request.headers.get('Idempotency-Key')||'';
@@ -80,6 +81,14 @@ export async function POST(request:Request){
    const durationDays=Math.ceil((input.maturesAt.getTime()-input.startsAt.getTime())/86_400_000);
    if(durationDays<1||durationDays>3650)throw new Error('INVALID_INVESTMENT_DURATION');
    const result=await db.$transaction(async tx=>{
+    const [user,opportunity]=await Promise.all([
+     tx.user.findUnique({where:{id:input.userId},select:{id:true,status:true,role:true,accountMode:true,accountRestricted:true,approvedTier:true,name:true,country:true,phone:true,phoneVerified:true,kycStatus:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}}),
+     tx.investmentOpportunity.findUnique({where:{id:input.opportunityId}}),
+    ]);
+    if(!user||user.status!=='ACTIVE'||user.role!=='USER')throw new Error('INVESTMENT_USER_UNAVAILABLE');
+    if(user.accountMode!==AccountMode.REAL)throw new Error('INVESTMENT_REAL_MODE_REQUIRED');
+    if(user.accountRestricted)throw new Error('INVESTMENT_USER_RESTRICTED');
+    if(!opportunity||opportunity.status!==InvestmentOpportunityStatus.AVAILABLE||!opportunity.realEligible)throw new Error('INVESTMENT_UNAVAILABLE');
     const prior=await tx.investmentRequest.findUnique({where:{idempotencyKey},include:{opportunity:{select:{targetReturnPercent:true}}}});
     if(prior){
      const expectedTarget=input.targetReturnPercent===null?prior.opportunity.targetReturnPercent:new Prisma.Decimal(input.targetReturnPercent);
@@ -88,14 +97,6 @@ export async function POST(request:Request){
      if(!matches)throw new Error('IDEMPOTENCY_KEY_REUSED');
      return {investment:prior,replay:true};
     }
-    const [user,opportunity]=await Promise.all([
-     tx.user.findUnique({where:{id:input.userId},select:{id:true,status:true,role:true,accountRestricted:true,approvedTier:true,name:true,country:true,phone:true,phoneVerified:true,kycStatus:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}}),
-     tx.investmentOpportunity.findUnique({where:{id:input.opportunityId}}),
-    ]);
-    if(!user||user.status!=='ACTIVE'||user.role!=='USER')throw new Error('INVESTMENT_USER_UNAVAILABLE');
-    if(user.accountRestricted)throw new Error('INVESTMENT_USER_RESTRICTED');
-    if(!opportunity||opportunity.status!==InvestmentOpportunityStatus.AVAILABLE)throw new Error('INVESTMENT_UNAVAILABLE');
-    if(input.accountMode===AccountMode.DEMO&&!opportunity.demoEligible||input.accountMode===AccountMode.REAL&&!opportunity.realEligible)throw new Error('INVESTMENT_MODE_UNAVAILABLE');
     if(requestedAmount.lt(opportunity.minimumAmount)||(opportunity.maximumAmount&&requestedAmount.gt(opportunity.maximumAmount)))throw new Error('INVESTMENT_AMOUNT_OUT_OF_RANGE');
     if(opportunity.startsAt&&input.startsAt<opportunity.startsAt)throw new Error('INVESTMENT_NOT_STARTED');
     const amount=requestedAmount;
@@ -104,22 +105,22 @@ export async function POST(request:Request){
     const tierBoostPercent=await configuredTierBoost(tx,Number(getAccountTier({accountMode:input.accountMode,kycStatus:user.kycStatus,verificationDocuments:user.kycDocuments.length,verificationSubmitted:!!user.kyc?.submittedAt,phoneVerified:user.phoneVerified,profileComplete:profileRequirements.profileComplete,approvedTier:user.approvedTier}).label.at(-1)));
     const now=new Date();
     const status=input.startsAt<=now?InvestmentStatus.ACTIVE:InvestmentStatus.APPROVED;
-    const investment=await tx.investmentRequest.create({data:{userId:user.id,opportunityId:opportunity.id,accountMode:input.accountMode,amount,status,idempotencyKey,targetReturnPercent,tierBoostPercent,durationDays,approvedAt:now,activatedAt:input.startsAt,maturesAt:input.maturesAt}});
-    const userAccount=await ensureUserLedger(tx,user.id,input.accountMode,'USD');
+    const investment=await tx.investmentRequest.create({data:{userId:user.id,opportunityId:opportunity.id,accountMode:AccountMode.REAL,amount,status,idempotencyKey,targetReturnPercent,tierBoostPercent,durationDays,approvedAt:now,activatedAt:input.startsAt,maturesAt:input.maturesAt}});
+    const userAccount=await ensureUserLedger(tx,user.id,AccountMode.REAL,'USD');
     const available=await balance(tx,userAccount.id);
-    const reserved=await reservedWithdrawalAmount(tx,user.id,input.accountMode,'USD');
+    const reserved=await reservedWithdrawalAmount(tx,user.id,AccountMode.REAL,'USD');
     if(available.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_SIMULATED_BALANCE');
-    const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${input.accountMode}:USD`,`${input.accountMode} simulated investment escrow`,'USD',input.accountMode);
+    const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${AccountMode.REAL}:USD`,`${AccountMode.REAL} simulated investment escrow`,'USD',AccountMode.REAL);
     await postDoubleEntry(tx,{reference:`INVESTMENT:${investment.id}:RESERVE`,description:`Reserve simulated funds for ${opportunity.title}`,debitAccountId:userAccount.id,creditAccountId:escrow.id,amount});
-    await tx.auditLog.create({data:{actorId:admin.id,action:'INVESTMENT_ADMIN_INITIATED',entity:'INVESTMENT',entityId:investment.id,metadata:{userId:user.id,opportunityId:opportunity.id,accountMode:input.accountMode,amount:amount.toString(),targetReturnPercent:targetReturnPercent?.toString()??null,tierBoostPercent:tierBoostPercent.toString(),durationDays,startsAt:input.startsAt.toISOString(),maturesAt:input.maturesAt.toISOString(),idempotencyKey,simulated:true}}});
-    await createNotification(tx,{userId:user.id,type:NotificationType.SYSTEM,title:`${input.accountMode} investment started`,message:`An administrator initiated the ${input.accountMode} ${opportunity.title} investment. ${status===InvestmentStatus.ACTIVE?'It is active now.':`It is scheduled to start ${input.startsAt.toISOString()}.`} The principal was reserved in the internal ledger; no external investment was made.`,dedupeKey:`investment:${investment.id}:admin-initiated`,relatedEntity:'INVESTMENT',relatedId:investment.id,actionUrl:'/investments'});
+    await tx.auditLog.create({data:{actorId:admin.id,action:'INVESTMENT_ADMIN_INITIATED',entity:'INVESTMENT',entityId:investment.id,metadata:{userId:user.id,opportunityId:opportunity.id,accountMode:AccountMode.REAL,amount:amount.toString(),targetReturnPercent:targetReturnPercent?.toString()??null,tierBoostPercent:tierBoostPercent.toString(),durationDays,startsAt:input.startsAt.toISOString(),maturesAt:input.maturesAt.toISOString(),idempotencyKey,simulated:true}}});
+    await createNotification(tx,{userId:user.id,type:NotificationType.SYSTEM,title:`${AccountMode.REAL} investment started`,message:`An administrator initiated the ${AccountMode.REAL} ${opportunity.title} investment. ${status===InvestmentStatus.ACTIVE?'It is active now.':`It is scheduled to start ${input.startsAt.toISOString()}.`} The principal was reserved in the internal ledger; no external investment was made.`,dedupeKey:`investment:${investment.id}:admin-initiated`,relatedEntity:'INVESTMENT',relatedId:investment.id,actionUrl:'/investments'});
     return {investment,replay:false};
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
    return NextResponse.json(jsonSafe(result.investment),{status:result.replay?200:201,headers:{'Cache-Control':'private, no-store'}});
   }
   const input=opportunitySchema.parse(body);
   const opportunity=await db.$transaction(async tx=>{
-   const created=await tx.investmentOpportunity.create({data:{...input,createdById:admin.id}});
+   const created=await tx.investmentOpportunity.create({data:{...input,demoEligible:false,createdById:admin.id}});
     await tx.auditLog.create({data:{actorId:admin.id,action:'INVESTMENT_OPPORTUNITY_CREATED',entity:'INVESTMENT_OPPORTUNITY',entityId:created.id,metadata:{newState:{title:created.title,category:created.category,assetSymbol:created.assetSymbol,minimumAmount:created.minimumAmount.toString(),maximumAmount:created.maximumAmount?.toString()??null,targetReturnPercent:created.targetReturnPercent?.toString()??null,durationDays:created.durationDays,startsAt:created.startsAt?.toISOString()??null,maturesAt:created.maturesAt?.toISOString()??null,riskLevel:created.riskLevel,status:created.status,demoEligible:created.demoEligible,realEligible:created.realEligible,requiresApproval:created.requiresApproval,targetPrice:created.targetPrice?.toString()??null,stopPrice:created.stopPrice?.toString()??null}}}});
    return created;
   });
@@ -128,6 +129,7 @@ export async function POST(request:Request){
   if(error instanceof ZodError)return NextResponse.json({error:'Check the investment terms, amounts, dates, and eligibility.'},{status:400});
   if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
   if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
+  if(error instanceof Error&&error.message==='INVESTMENT_REAL_MODE_REQUIRED')return NextResponse.json({error:'Investment initiation is restricted to users whose current account mode is REAL.'},{status:403});
   if(error instanceof Error&&['IDEMPOTENCY_KEY_REUSED','INVESTMENT_UNAVAILABLE','INVESTMENT_MODE_UNAVAILABLE','INVESTMENT_USER_UNAVAILABLE','INVESTMENT_USER_RESTRICTED','INVESTMENT_NOT_STARTED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
   if(error instanceof Error&&['INVESTMENT_AMOUNT_OUT_OF_RANGE','INSUFFICIENT_SIMULATED_BALANCE','INVALID_INVESTMENT_DATES','INVALID_INVESTMENT_DURATION','INVALID_AMOUNT'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:400});
   if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This investment initiation was already received.'},{status:409});
@@ -151,6 +153,7 @@ export async function PATCH(request:Request){
     const maturesAt=input.maturesAt===undefined?current.maturesAt:input.maturesAt;
     if(startsAt&&maturesAt&&maturesAt<=startsAt)throw new Error('INVALID_INVESTMENT_DATES');
     const {action:_,id,...data}=input;
+    data.demoEligible=false;
     const updated=await tx.investmentOpportunity.update({where:{id},data});
     await tx.auditLog.create({data:{actorId:admin.id,action:'INVESTMENT_OPPORTUNITY_UPDATED',entity:'INVESTMENT_OPPORTUNITY',entityId:id,metadata:{oldState:{title:current.title,category:current.category,assetSymbol:current.assetSymbol,minimumAmount:current.minimumAmount.toString(),maximumAmount:current.maximumAmount?.toString()??null,targetReturnPercent:current.targetReturnPercent?.toString()??null,durationDays:current.durationDays,startsAt:current.startsAt?.toISOString()??null,maturesAt:current.maturesAt?.toISOString()??null,riskLevel:current.riskLevel,status:current.status,demoEligible:current.demoEligible,realEligible:current.realEligible,requiresApproval:current.requiresApproval,targetPrice:current.targetPrice?.toString()??null,stopPrice:current.stopPrice?.toString()??null},newState:{title:updated.title,category:updated.category,assetSymbol:updated.assetSymbol,minimumAmount:updated.minimumAmount.toString(),maximumAmount:updated.maximumAmount?.toString()??null,targetReturnPercent:updated.targetReturnPercent?.toString()??null,durationDays:updated.durationDays,startsAt:updated.startsAt?.toISOString()??null,maturesAt:updated.maturesAt?.toISOString()??null,riskLevel:updated.riskLevel,status:updated.status,demoEligible:updated.demoEligible,realEligible:updated.realEligible,requiresApproval:updated.requiresApproval,targetPrice:updated.targetPrice?.toString()??null,stopPrice:updated.stopPrice?.toString()??null}}}});
     return updated;

@@ -38,7 +38,7 @@ describe('REAL BTC withdrawal validation',()=>{
 });
 
 describe('REAL wallet paper-buy collateral',()=>{
-	it('reserves remaining open-buy cost and the remaining cost basis of paper holdings without profits',()=>{
+	it('reserves remaining open-buy cost without reserving wallet-debited position cost',()=>{
 		const createdAt=new Date('2026-01-01T00:00:00Z');
 		const takerFee=new Prisma.Decimal('0.01');
 		const result=paperOrderCollateral([
@@ -48,7 +48,7 @@ describe('REAL wallet paper-buy collateral',()=>{
 		]);
 		expect(result.heldCostBasis.toFixed(2)).toBe('151.50');
 		expect(result.reservedBuys.toFixed(2)).toBe('50.50');
-		expect(result.committed.toFixed(2)).toBe('202.00');
+		expect(result.committed.toFixed(2)).toBe('50.50');
 	});
 
 	it('rejects buys that exceed the internal wallet after withdrawals and prior paper reservations',()=>{

@@ -21,8 +21,6 @@ type Order = {
   filledQuantity: number;
   price?: number;
   stopPrice?: number;
-  providerName?: string|null;
-  providerStatus?: string|null;
   instrument: { symbol: string };
 };
 type Pos = {
@@ -32,7 +30,7 @@ type Pos = {
   quantity: number;
   entryPrice: number;
   margin: number;
-  providerName:string|null;
+  requiresSellOrder:boolean;
   instrument: { symbol: string; price: number;updatedAt:string };
 };
 type PositionResponse=Omit<Pos,"quantity"|"entryPrice"|"margin"|"instrument">&{
@@ -58,7 +56,7 @@ async function loadTradingMarkets(mode:"DEMO"|"REAL"):Promise<I[]>{
   if(mode==="DEMO")return instruments.map(item=>({...item,price:Number(item.price),updatedAt:item.lastUpdatedAt||item.updatedAt}));
 
   const quoteResponse=await fetch(`/api/live-markets?symbols=${LIVE_TRADE_ASSET_IDS.join(",")}`,{cache:"no-store"});
-  if(!quoteResponse.ok)throw new Error("Live provider quotes are unavailable.");
+  if(!quoteResponse.ok)throw new Error("Market quotes are unavailable.");
   const {quotes}=await quoteResponse.json() as LiveQuotesResponse;
   const availableQuotes=quotes.filter((quote):quote is MarketQuote=>{
     if(!("price"in quote)||!Number.isFinite(quote.price)||quote.isStale||!isExternalMarketDataSource(quote.source))return false;
@@ -112,7 +110,6 @@ export default function Trade() {
   const [liveCandles,setLiveCandles]=useState<Array<{time:number;open:number;high:number;low:number;close:number;volume:number|null}>>([]);
   const [chartLoading,setChartLoading]=useState(false);
   const [chartError,setChartError]=useState("");
-  const [streamStatus,setStreamStatus]=useState<"connecting"|"connected"|"offline">("offline");
   useEffect(() => {
     if(sessionStatus!=='authenticated')return;
     let active = true;
@@ -159,13 +156,13 @@ export default function Trade() {
         if (!active) return;
         setItems(market);
         setSelected(market[0]?.id||"");
-        if(walletData.accountMode==="REAL"&&!market.length)setMsg("Fresh provider quotes are unavailable. Refresh to retry; REAL orders do not use internal reference prices.");
+        if(walletData.accountMode==="REAL"&&!market.length)setMsg("Current market quotes are unavailable. Refresh to try again.");
       } catch {
         if (active){
           if(activeMode==="REAL"){
             setItems([]);
             setSelected("");
-            setMsg("Provider quotes could not load. Refresh to retry; REAL orders do not use internal reference prices.");
+            setMsg("Market quotes could not load. Refresh to try again.");
           }else setMsg("Trading data could not load. Refresh to retry.");
         }
       }
@@ -179,13 +176,13 @@ export default function Trade() {
         setItems(market);
         setSelected(current=>market.some(item=>item.id===current)?current:market[0]?.id||"");
         if(activeMode==="DEMO")updateStore(market);
-        if(activeMode==="REAL"&&!market.length)setMsg("Provider quotes are unavailable. Refresh to retry; REAL orders do not use internal reference prices.");
-        else setMsg(current=>current.startsWith("Provider quotes")||current.startsWith("Fresh provider quotes")?"":current);
+        if(activeMode==="REAL"&&!market.length)setMsg("Current market quotes are unavailable. Refresh to try again.");
+        else setMsg(current=>current.startsWith("Current market quotes")||current.startsWith("Market quotes")?"":current);
       }catch{
         if(active&&activeMode==="REAL"){
           setItems([]);
           setSelected("");
-          setMsg("Provider quotes could not refresh. Try again; REAL orders do not use internal reference prices.");
+          setMsg("Market quotes could not refresh. Try again.");
         }
       }
     };
@@ -197,12 +194,9 @@ export default function Trade() {
   }, [updateStore,sessionStatus,session?.user?.accountMode]);
   useEffect(()=>{
     if(accountMode!=="REAL"&&accountMode!=="DEMO"){
-      setStreamStatus("offline");
       return;
     }
     const socket:Socket=io({path:"/socket.io",transports:["websocket"],autoConnect:true,reconnection:true,reconnectionDelay:700});
-    const onConnect=()=>setStreamStatus("connected");
-    const onDisconnect=()=>setStreamStatus("offline");
     const onMarketUpdate=(updates:MarketUpdate[])=>{
       setItems(current=>current.map(item=>{
         const update=updates.find(entry=>
@@ -220,11 +214,8 @@ export default function Trade() {
       }));
       if(accountMode==="DEMO")updateStore(updates.filter(update=>update.dataMode==="SIMULATED").map(({symbol,price,change})=>({symbol,price,change})));
     };
-    socket.on("connect",onConnect);
-    socket.on("disconnect",onDisconnect);
     socket.on("market:update",onMarketUpdate);
-    setStreamStatus(socket.connected?"connected":"connecting");
-    return()=>{socket.off("connect",onConnect);socket.off("disconnect",onDisconnect);socket.off("market:update",onMarketUpdate);socket.disconnect();};
+    return()=>{socket.off("market:update",onMarketUpdate);socket.disconnect();};
   },[accountMode,updateStore]);
   useEffect(() => {
     if(!selected||!['DEMO','REAL'].includes(accountMode))return;
@@ -256,7 +247,7 @@ export default function Trade() {
     if(accountMode!=="REAL"||!cur?.assetId){
       setLiveCandles([]);
       setChartLoading(false);
-      setChartError(accountMode==="REAL"?"No fresh provider quote is available for this instrument.":"");
+      setChartError(accountMode==="REAL"?"A current market quote is unavailable for this instrument.":"");
       return;
     }
     let active=true;
@@ -265,13 +256,13 @@ export default function Trade() {
     fetch(`/api/live-markets/${encodeURIComponent(cur.assetId)}?timeframe=${chartTimeframe}`,{cache:"no-store"})
       .then(async response=>{
         const result=await response.json();
-        if(!response.ok)throw new Error(typeof result.error==="string"?result.error:"Provider chart data is unavailable.");
+        if(!response.ok)throw new Error(typeof result.error==="string"?result.error:"Market chart data is unavailable.");
         const history=result as {candles:typeof liveCandles;source?:string};
-        if(!history.source||!isExternalMarketDataSource(history.source))throw new Error("Provider chart data is unavailable; internal reference prices are not used in REAL mode.");
+        if(!history.source||!isExternalMarketDataSource(history.source))throw new Error("Market chart data is unavailable.");
         return history;
       })
       .then(result=>{if(active)setLiveCandles(result.candles);})
-      .catch(error=>{if(active){setLiveCandles([]);setChartError(error instanceof Error?error.message:"Provider chart data is unavailable.");}})
+      .catch(error=>{if(active){setLiveCandles([]);setChartError(error instanceof Error?error.message:"Market chart data is unavailable.");}})
       .finally(()=>{if(active)setChartLoading(false);});
     return()=>{active=false;};
   },[accountMode,cur?.assetId,chartTimeframe]);
@@ -285,7 +276,7 @@ export default function Trade() {
     event.preventDefault();
     if (placing) return;
     if(!cur||(accountMode==="REAL"&&!cur.liveQuote)){
-      setMsg("A fresh provider quote is required before submitting this order.");
+      setMsg("A current market quote is required before submitting this order.");
       return;
     }
     setPlacing(true);
@@ -308,12 +299,18 @@ export default function Trade() {
       });
       const result = await response.json();
       setMsg(response.ok
-        ? result.status==='FILLED'?'Order filled.':result.status==='PARTIALLY_FILLED'?'Order partially filled.':`Order ${String(result.status||'submitted').replaceAll('_',' ').toLowerCase()}.`
+        ? `Order ${String(result.status||'submitted').replaceAll('_',' ').toLowerCase()}.`
         : result.error || "Order failed");
       if (response.ok) {
         setOrders((current) => [result, ...current]);
-        const positionResponse = await fetch("/api/positions");
-        setPositions(await positionResponse.json());
+        const [positionResponse,portfolioResponse] = await Promise.all([fetch("/api/positions"),fetch("/api/portfolio")]);
+        if(positionResponse.ok)setPositions((await positionResponse.json()).map((position:PositionResponse)=>({...position,quantity:Number(position.quantity),entryPrice:Number(position.entryPrice),margin:Number(position.margin),instrument:{...position.instrument,price:Number(position.instrument.price)}})));
+        if(portfolioResponse.ok){
+          const wallet=await portfolioResponse.json() as {cashBalance:NumericValue;paperReservedBalance:NumericValue;paperAvailableBalance:NumericValue};
+          setAvailableBalance(Number(wallet.cashBalance));
+          setPaperReservedBalance(Number(wallet.paperReservedBalance));
+          setPaperAvailableBalance(Number(wallet.paperAvailableBalance));
+        }
       }
     } catch {
       setMsg("Unable to submit the order. Check your connection and try again.");
@@ -338,10 +335,10 @@ export default function Trade() {
   async function close(id: string) {
     const position=positions.find((item)=>item.id===id);
     if(!position)return;
-    if(position.providerName==='alpaca-paper'){
+    if(position.requiresSellOrder){
       const quote=items.find((item)=>item.id===position.instrumentId);
       if(!quote?.liveQuote){
-        setMsg("A fresh provider quote is required before submitting a paper sell order.");
+        setMsg("A current market quote is required before submitting this sell order.");
         return;
       }
       const response=await fetch('/api/orders',{
@@ -353,7 +350,7 @@ export default function Trade() {
         }),
       });
       const result=await response.json();
-      setMsg(response.ok?`Paper sell order ${String(result.status||'submitted').replaceAll('_',' ').toLowerCase()}.`:result.error||'Unable to submit sell order.');
+      setMsg(response.ok?`Sell order ${String(result.status||'submitted').replaceAll('_',' ').toLowerCase()}.`:result.error||'Unable to submit sell order.');
       if(response.ok){
         const [orderResponse,positionResponse]=await Promise.all([fetch('/api/orders'),fetch('/api/positions')]);
         if(orderResponse.ok)setOrders(await orderResponse.json());
@@ -374,7 +371,7 @@ export default function Trade() {
     <>
       <Nav />
       <main className="trade-terminal">
-        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>{accountMode==='LOADING'?'Loading your active paper account.':accountMode==='REAL'?'Orders go to the shared Alpaca Paper account. Confirmed fills are attributed to your Aurevia user; wallet cash remains separate.':'DEMO orders use Aurevia’s internal practice feed.'}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':accountMode==='REAL'?'REAL · ALPACA PAPER':'DEMO ACCOUNT'}</span></header>
+        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>{accountMode==='LOADING'?'Loading your account.':accountMode==='REAL'?'REAL-account orders are simulated, not live market transactions. Confirmed fills update your Aurevia wallet and positions.':'DEMO orders use Aurevia’s internal practice feed.'}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':accountMode==='REAL'?'REAL ACCOUNT':'DEMO ACCOUNT'}</span></header>
         {(accountMode==='REAL'||accountMode==='DEMO')?<>
         <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
           <section className="card min-h-[650px] p-5">
@@ -393,7 +390,7 @@ export default function Trade() {
                   })}
                 </button>
               ))}
-              {!items.length&&<p className="muted text-sm">{accountMode==="REAL"?"No supported instruments have fresh provider quotes. Refresh to check again.":"No trading instruments are available."}</p>}
+              {!items.length&&<p className="muted text-sm">{accountMode==="REAL"?"No instruments currently have a valid market quote. Refresh to check again.":"No trading instruments are available."}</p>}
             </div>
             <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_220px]">
               <div className="trade-chart-panel">
@@ -403,7 +400,7 @@ export default function Trade() {
                     <p className="trade-last-price">{cur?.price.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:cur.price<10?4:2})||"—"}</p>
                     {accountMode==="REAL"&&cur?.liveQuote&&<span className="muted text-xs">Bid {cur.bid?.toLocaleString(undefined,{maximumFractionDigits:6})??"—"} · Ask {cur.ask?.toLocaleString(undefined,{maximumFractionDigits:6})??"—"}</span>}
                   </div>
-                  <span className="status-pill">{accountMode==="REAL"?`${cur?.source||"PROVIDER UNAVAILABLE"} · WS ${streamStatus}`:translate('simulatedPrice')}</span>
+                  <span className="status-pill">{accountMode==="REAL"?(cur?.liveQuote?"Market quote":"Quote unavailable"):translate('simulatedPrice')}</span>
                 </div>
                 {accountMode==="DEMO"&&<div className="sr-only">{translate('currentSimulatedPriceChart')}</div>}
                 <div className="hidden">
@@ -420,8 +417,8 @@ export default function Trade() {
                     </div>
                     {cur?.liveQuote?
                       <LivePriceChart candles={liveCandles} quote={cur.liveQuote} timeframe={chartTimeframe} loading={chartLoading} error={chartError}/>
-                      :<p className="live-chart-message" role="status">{chartError||"Waiting for a fresh provider quote."}</p>}
-                    <p className="trade-chart-note">{cur?.liveQuote?`Provider data · quote ${new Date(cur.liveQuote.updatedAt).toLocaleTimeString()}`:"Internal reference prices are not used for REAL orders."}</p>
+                      :<p className="live-chart-message" role="status">{chartError||"Waiting for a current market quote."}</p>}
+                    <p className="trade-chart-note">{cur?.liveQuote?`Quote updated ${new Date(cur.liveQuote.updatedAt).toLocaleTimeString()}`:"Current market prices are required for REAL account orders."}</p>
                   </div>
                   :<>
                     <PriceChart price={cur?.price ?? 0} instrumentId={cur?.id} running/>
@@ -438,8 +435,7 @@ export default function Trade() {
                     <div className="flex justify-between text-profit"><span>Best bid</span><b>{(book.bid===undefined?cur?.bid:book.bid)?.toLocaleString(undefined,{maximumFractionDigits:6})??"Unavailable"}</b></div>
                     <div className="flex justify-between"><span>Spread</span><b>{book.spread!==undefined&&book.spread!==null?book.spread.toLocaleString(undefined,{maximumFractionDigits:6}):cur?.bid!==null&&cur?.bid!==undefined&&cur?.ask!==null&&cur?.ask!==undefined?(cur.ask-cur.bid).toLocaleString(undefined,{maximumFractionDigits:6}):"Unavailable"}</b></div>
                     <div className="flex justify-between"><span>Daily change</span><b>{book.changePercent!==undefined?`${book.change?.toLocaleString(undefined,{maximumFractionDigits:6})??"—"} (${book.changePercent.toFixed(2)}%)`:cur?.liveQuote?`${cur.liveQuote.change.toLocaleString(undefined,{maximumFractionDigits:6})} (${cur.liveQuote.changePercent.toFixed(2)}%)`:"Unavailable"}</b></div>
-                    <div className="flex justify-between"><span>Market status</span><b>{cur?.assetType==='CRYPTO'?"24/7":book.marketStatus&&book.marketStatus!=='UNKNOWN'?book.marketStatus:"Not reported by provider"}</b></div>
-                    <div className="flex justify-between"><span>Provider</span><b>{book.source??cur?.source??"Unavailable"}</b></div>
+                    <div className="flex justify-between"><span>Market status</span><b>{cur?.assetType==='CRYPTO'?"24/7":book.marketStatus&&book.marketStatus!=='UNKNOWN'?book.marketStatus:"Unavailable"}</b></div>
                     <div className="flex justify-between"><span>Updated</span><b>{marketQuoteTime?new Date(marketQuoteTime).toLocaleTimeString():"Waiting for quote"}</b></div>
                     {book.error&&<p className="text-loss" role="status">{book.error}</p>}
                   </div>
@@ -472,7 +468,7 @@ export default function Trade() {
             </div>
           </section>
           <section className="card p-5">
-            <div className="account-panel-title"><div><h2>{translate('orderTicket')}</h2><p className="account-panel-subtitle">{accountMode==='REAL'?'Alpaca Paper order · confirmed provider status':'DEMO order · practice execution'}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='REAL'?'ALPACA PAPER':'DEMO'}</span></div>
+            <div className="account-panel-title"><div><h2>{translate('orderTicket')}</h2><p className="account-panel-subtitle">{accountMode==='REAL'?'Orders update after confirmation':'DEMO practice order'}</p></div></div>
             <form onSubmit={place} className="space-y-3">
               <fieldset className="space-y-3">
               <div className="grid grid-cols-2 gap-2" role="group" aria-label={translate('orderSide')}>
@@ -492,8 +488,8 @@ export default function Trade() {
               <label className="account-label">{translate('orderType')}<select className="input" required value={type} onChange={(event) => setType(event.target.value as "MARKET"|"LIMIT"|"STOP")}><option value="MARKET">Market</option><option value="LIMIT">Limit</option><option value="STOP" disabled={accountMode==="REAL"&&cur?.assetType==="CRYPTO"}>Stop</option></select></label>
               <label className="account-label">{translate('quantity')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={qty} onChange={(event) => setQty(event.target.value)} placeholder="0.00"/></label>
               {type !== "MARKET" && <label className="account-label">{type === "STOP" ? translate('stopPrice') : translate('limitPrice')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={price} onChange={(event) => setPrice(event.target.value)} placeholder="0.00"/></label>}
-              <div className="trade-estimate" aria-live="polite"><div><span>Available Aurevia wallet · {accountMode}</span><b>{availableBalance===null?"Loading…":formatUsd(availableBalance)}</b></div>{accountMode==='REAL'&&<><div><span>Reserved from Aurevia wallet for Paper orders</span><b>{formatUsd(paperReservedBalance)}</b></div><div><span>Available Aurevia allocation for Paper orders</span><b>{formatUsd(paperAvailableBalance)}</b></div></>}<div><span>{accountMode==='REAL'?'Estimated buy notional':'Estimated required cash'}</span><b>{cur?formatUsd(estimatedRequiredCash):"—"}</b></div>{accountMode==='DEMO'&&<div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":formatUsd(estimatedFee)}</b></div>}</div>
-              <p className="trade-estimate-note">{accountMode==='REAL'?'Displayed quotes are estimates; Alpaca Paper determines actual fills and prices. Paper reservations do not debit the Aurevia wallet, and provider cash is not withdrawable.':'Quotes, order matching, positions, and P/L are for practice and isolated to your DEMO account.'}</p>
+              <div className="trade-estimate" aria-live="polite"><div><span>Available Aurevia wallet · {accountMode}</span><b>{availableBalance===null?"Loading…":formatUsd(availableBalance)}</b></div>{accountMode==='REAL'&&<><div><span>Reserved for open orders</span><b>{formatUsd(paperReservedBalance)}</b></div><div><span>Available to trade</span><b>{formatUsd(paperAvailableBalance)}</b></div></>}<div><span>{accountMode==='REAL'?'Estimated buy notional':'Estimated required cash'}</span><b>{cur?formatUsd(estimatedRequiredCash):"—"}</b></div>{accountMode==='DEMO'&&<div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":formatUsd(estimatedFee)}</b></div>}</div>
+              <p className="trade-estimate-note">{accountMode==='REAL'?'Quotes are estimates. Your wallet and positions update only after a fill is confirmed.':'Quotes, order matching, positions, and P/L are for practice and isolated to your DEMO account.'}</p>
               <button type="submit" disabled={placing||!selected||!cur||(accountMode==="REAL"&&!cur.liveQuote)} className="btn w-full bg-gold text-black disabled:opacity-50">{placing?translate('submittingOrder'):translate('placeOrder',{side})}</button>
               </fieldset>
               {msg&&<p className="text-sm muted" role="status">{msg}</p>}
@@ -509,7 +505,7 @@ export default function Trade() {
                       className="flex justify-between border-b border-white/10 py-2 text-xs"
                     >
                       <span>
-                        {o.instrument.symbol} {o.side} {o.type}{o.providerName==='alpaca-paper'?' · ALPACA PAPER':''}
+                        {o.instrument.symbol} {o.side} {o.type}
                       </span>
                       <button type="button" onClick={() => cancel(o.id)} className="gold">
                         {translate('cancel')}
@@ -523,7 +519,7 @@ export default function Trade() {
           </section>
         </div>
         <section className="card mt-4 p-5">
-          <div className="account-panel-title"><div><h2>{translate('openPositions')}</h2><p className="account-panel-subtitle">{translate('unrealizedPnl')} · {accountMode==='REAL'?'REAL-side holdings from confirmed fills; paper valuation unavailable':'DEMO positions'}</p></div><span className="status-pill">{positions.length} open</span></div>
+          <div className="account-panel-title"><div><h2>{translate('openPositions')}</h2><p className="account-panel-subtitle">{translate('unrealizedPnl')} · {accountMode==='REAL'?'P/L requires a current market quote':'DEMO positions'}</p></div><span className="status-pill">{positions.length} open</span></div>
           {positions.length ? (
             <div className="mt-3 space-y-2">
               {positions.map((p) => (
@@ -537,8 +533,8 @@ export default function Trade() {
                   <span className={pnl(p)===null?"muted":pnl(p)! >= 0 ? "text-profit" : "text-loss"}>
                     {pnl(p)===null?"P/L unavailable":`${pnl(p)! >= 0 ? "+" : ""}$${pnl(p)!.toFixed(2)}`}
                   </span>
-                  <button type="button" disabled={p.providerName==='alpaca-paper'&&!items.some(item=>item.id===p.instrumentId&&item.liveQuote)} className="btn bg-loss disabled:opacity-50" onClick={() => void close(p.id)}>
-                    {p.providerName==='alpaca-paper'?'Market sell':translate('close')}
+                  <button type="button" disabled={accountMode==='REAL'&&!items.some(item=>item.id===p.instrumentId&&item.liveQuote)} className="btn bg-loss disabled:opacity-50" onClick={() => void close(p.id)}>
+                    {accountMode==='REAL'?'Market sell':translate('close')}
                   </button>
                 </div>
               ))}
@@ -548,7 +544,7 @@ export default function Trade() {
           )}
         </section>
         <section className="account-panel card mt-4 p-5"><div className="account-panel-title"><div><h2>{translate('orderHistory')}</h2><p className="account-panel-subtitle">{translate('recentSubmittedOrders')}</p></div><RefreshCw size={17} className="gold" aria-hidden="true"/></div>
-          {orders.length?<div className="account-table-wrap"><table className="account-table"><thead><tr><th>Instrument</th><th>Side</th><th>Type</th><th>Quantity</th><th>Limit / stop</th><th>Status</th></tr></thead><tbody>{orders.slice(0,20).map(order=><tr key={order.id}><td>{order.instrument.symbol}</td><td>{order.side}</td><td>{order.type}</td><td>{Number(order.quantity).toLocaleString()}</td><td>{order.type==='LIMIT'?Number(order.price||0).toLocaleString(undefined,{maximumFractionDigits:6}):order.type==='STOP'?Number(order.stopPrice||0).toLocaleString(undefined,{maximumFractionDigits:6}):translate('market')}</td><td><span className="status-pill">{order.providerName==='alpaca-paper'?'ALPACA PAPER · ':''}{order.providerStatus||order.status.replaceAll('_',' ')}</span></td></tr>)}</tbody></table></div>:<div className="account-empty">{translate('noOrdersRecorded')}</div>}
+          {orders.length?<div className="account-table-wrap"><table className="account-table"><thead><tr><th>Instrument</th><th>Side</th><th>Type</th><th>Quantity</th><th>Limit / stop</th><th>Status</th></tr></thead><tbody>{orders.slice(0,20).map(order=><tr key={order.id}><td>{order.instrument.symbol}</td><td>{order.side}</td><td>{order.type}</td><td>{Number(order.quantity).toLocaleString()}</td><td>{order.type==='LIMIT'?Number(order.price||0).toLocaleString(undefined,{maximumFractionDigits:6}):order.type==='STOP'?Number(order.stopPrice||0).toLocaleString(undefined,{maximumFractionDigits:6}):translate('market')}</td><td><span className="status-pill">{order.status.replaceAll('_',' ')}</span></td></tr>)}</tbody></table></div>:<div className="account-empty">{translate('noOrdersRecorded')}</div>}
         </section>
         </>:<div className="account-empty" role="status">{translate('restoringAccountSession')}</div>}
       </main>

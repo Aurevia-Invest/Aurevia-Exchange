@@ -15,7 +15,7 @@ export default function AboutMe(){
 					<div className="account-metric"><dt>Required remaining availability</dt><dd className="mt-1 font-semibold">$300 USD</dd></div>
 				</dl>
 				<div className="mt-4 space-y-3 text-sm leading-6 muted">
-					<p>At least $300 must remain after the requested withdrawal, pending withdrawal reservations, and paper-trading collateral. The wallet shows your eligible balance before submission.</p>
+					<p>At least $300 must remain after the requested withdrawal, pending withdrawal reservations, and open order reservations. The wallet shows your eligible balance before submission.</p>
 					<p>A 10% commission is deducted from the gross request; the estimated net payout appears before confirmation. The commission is recorded only after an administrator confirms the external payout was processed. Approval alone does not release funds or charge the fee.</p>
 					<p>No separate BTC or other advance payment is required to request or receive a withdrawal. Rejected, cancelled, or failed requests incur no commission. Withdrawals remain subject to account eligibility and administrator review.</p>
 				</div>

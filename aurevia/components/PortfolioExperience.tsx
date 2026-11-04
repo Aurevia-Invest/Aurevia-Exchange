@@ -16,14 +16,14 @@ import {formatUsd} from '@/lib/currency-format';
 import {filterPerformanceSnapshots,type PortfolioTimeframe} from '@/lib/portfolio-timeframes';
 
 type Position={id:string;side:string;quantity:string;entryPrice:string;currentPrice:string|null;marketValue:string|null;unrealizedPnl:string|null;valuationStatus:'CURRENT'|'STALE'|'UNAVAILABLE';valuationAsOf:string|null;valuationSource:string|null;openedAt:string;instrument:{symbol:string;name:string;price:string}};
-type PaperPosition={id:string;symbol:string;name:string;side:string;quantity:string;averageEntryPrice:string;realizedPnl:string;currentPrice:string|null;marketValue:string|null;unrealizedPnl:string|null;openedAt:string;valuationStatus:'CURRENT'|'STALE'|'UNAVAILABLE';valuationAsOf:string|null;valuationSource:string|null};
+type PaperPosition={id:string;symbol:string;name:string;side:string;quantity:string;averageEntryPrice:string;realizedPnl:string;currentPrice:string|null;marketValue:string|null;unrealizedPnl:string|null;openedAt:string;valuationStatus:'CURRENT'|'STALE'|'UNAVAILABLE';valuationAsOf:string|null;valuationSource:string|null;walletBacked:boolean};
 type Snapshot={snapshotBucket:string;totalValue:string};
 type Holding={id:string;name:string;category:string;invested:string;value:string|null;gainLoss:string|null;status:string;valuationSource?:string|null};
 type Allocation={category:string;value:string;percentage:string};
 type Investment={id:string;status:string;amount:string;tierBoostPercent:string;targetReturnPercent:string|null;simulatedPayout:string|null;requestedAt:string;settlementReference:string|null;opportunity:{title:string;category:string;assetSymbol:string|null;riskLevel:string;durationDays:number}};
 type FundingActivity={id:string;type:string;method:string;amount:string;currency:string;status:string;createdAt:string};
 type AvailableOpportunity={id:string;title:string;category:string;assetSymbol:string|null;minimumAmount:string;targetReturnPercent:string|null;durationDays:number;riskLevel:string};
-type Portfolio={accountMode:'DEMO'|'REAL';cashBalance:string;availableCashBalance:string;positionValue:string|null;positionValuationStatus:'CURRENT'|'PARTIAL'|'STALE'|'UNAVAILABLE'|'NOT_APPLICABLE';investmentValue:string;totalValue:string|null;totalInvested:string;totalCurrentValue:string|null;realizedPnl:string|null;unrealizedPnl:string|null;totalPnl:string|null;returnPercent:string|null;dailyPnl:string|null;dailyPercent:string|null;positions:Position[];paperPositions:PaperPosition[];paperPositionValue:string|null;paperUnrealizedPnl:string|null;paperValuation:{status:'CURRENT'|'PARTIAL'|'STALE'|'UNAVAILABLE'|'NOT_APPLICABLE';valuedCount:number;openCount:number};paperReservedBalance:string;paperAvailableBalance:string;investments:Investment[];holdings:Holding[];allocations:Allocation[];recentFunding:FundingActivity[];availableOpportunities:AvailableOpportunity[];topGainers:Position[];topLosers:Position[];performance:Snapshot[];marketDataMode:string;externalValuationAvailable:boolean};
+type Portfolio={accountMode:'DEMO'|'REAL';cashBalance:string;availableCashBalance:string;positionValue:string|null;positionValuationStatus:'CURRENT'|'PARTIAL'|'STALE'|'UNAVAILABLE'|'NOT_APPLICABLE';investmentValue:string;totalValue:string|null;totalInvested:string;totalCurrentValue:string|null;realizedPnl:string|null;unrealizedPnl:string|null;totalPnl:string|null;returnPercent:string|null;dailyPnl:string|null;dailyPercent:string|null;positions:Position[];paperPositions:PaperPosition[];paperPositionValue:string|null;paperUnrealizedPnl:string|null;paperValuation:{status:'CURRENT'|'PARTIAL'|'STALE'|'UNAVAILABLE'|'NOT_APPLICABLE';valuedCount:number;openCount:number};unreconciledPaperPositionCount:number;paperReservedBalance:string;paperAvailableBalance:string;investments:Investment[];holdings:Holding[];allocations:Allocation[];recentFunding:FundingActivity[];availableOpportunities:AvailableOpportunity[];topGainers:Position[];topLosers:Position[];performance:Snapshot[];marketDataMode:string;externalValuationAvailable:boolean};
 type ChartPoint=Snapshot&{periodChange:number};
 type ChartTooltipProps={active?:boolean;payload?:Array<{payload:ChartPoint}>;label?:string};
 
@@ -127,11 +127,11 @@ export default function PortfolioExperience(){
 			<div><span className="account-kicker">{translate('accountOverview')}</span><h1>My Portfolio</h1><p>Account-specific balances, positions, investments and recorded performance.</p></div>
 			<div className="portfolio-heading-actions">
 				<span className={`status-pill ${data?.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{data?translate('portfolioAccount',{mode:data.accountMode}):translate('portfolioLoadingAccount')}</span>
-				{data&&<span className="portfolio-mark-status" role="status" aria-label={data.accountMode==='DEMO'?'Market data source: DEMO prices':'Market data source: provider marks'}><i aria-hidden="true"/>{data.accountMode==='DEMO'?'DEMO':'PROVIDER'} {data.accountMode==='DEMO'?'PRICES':'MARKS'}</span>}
 				<button className="icon-action" type="button" aria-label={translate('portfolioRefresh')} onClick={()=>void load(true)}><RefreshCw size={15}/></button>
 			</div>
 		</header>
-		{data?.accountMode==='REAL'&&<div className="account-callout mb-4"><span>REAL wallet balances are Aurevia’s internal ledger. Alpaca Paper holdings are valued separately using fresh external provider quotes and are not wallet cash or withdrawable. BTC credits require manual verification; investment return targets are estimates, not settled funds.</span></div>}
+		{data?.accountMode==='REAL'&&<div className="account-callout mb-4"><span>REAL account orders use simulated execution, not live market transactions. Confirmed fills update your Aurevia wallet and portfolio. BTC credits require manual verification; investment return targets are estimates, not settled funds.</span></div>}
+		{(data?.unreconciledPaperPositionCount??0)>0&&<div className="account-callout mb-4" role="status">Some earlier positions need wallet reconciliation and are excluded from account value and profit/loss. No balance or historical record has been changed.</div>}
 		{notice&&<p className="mb-3 text-sm text-profit" role="status">{notice}</p>}
 		{error&&<div className="account-callout mb-4" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load(true)}>{translate('portfolioRetry')}</button></div>}
 		{loading&&!data?<AureviaLoading variant="inline" label={translate('portfolioLoading')} className="account-empty"/>:data&&<>
@@ -145,7 +145,7 @@ export default function PortfolioExperience(){
 					<span>Account change since first snapshot today</span>
 					<b className={data.dailyPnl===null?'portfolio-neutral-value':Number(data.dailyPnl)>=0?'text-profit':'text-loss'}>{signed(data.dailyPnl)}</b>
 					<small>{percentage(data.dailyPercent)}</small>
-					<small>Based on saved snapshots; Alpaca Paper marks are separate.</small>
+					<small>Based on saved account snapshots.</small>
 				</article>
 			</section>
 			<nav className="portfolio-actions" aria-label="Portfolio actions">
@@ -157,46 +157,24 @@ export default function PortfolioExperience(){
 			</nav>
 			{data.accountMode==='DEMO'&&<div className="account-callout mt-4" role="status">This is a virtual practice account. Its balance and trading records are separate from REAL account records.</div>}
 			<section className="portfolio-summary">
-				<div className="portfolio-total"><span>Aurevia account value</span><strong>{money(data.totalValue)}</strong><small>{data.accountMode==='DEMO'?'Virtual cash and open DEMO positions':'REAL ledger cash, provider-marked open positions and recorded investment principal; Paper holdings are separate'}</small></div>
-				<div className="portfolio-metric"><span>Available internal cash</span><b>{money(data.availableCashBalance)}</b><small>After pending withdrawals and Paper reserves</small></div>
+				<div className="portfolio-total"><span>Aurevia account value</span><strong>{money(data.totalValue)}</strong><small>{data.accountMode==='DEMO'?'Virtual cash and open DEMO positions':'Wallet cash, open positions and recorded investment principal'}</small></div>
+				<div className="portfolio-metric"><span>Available wallet cash</span><b>{money(data.availableCashBalance)}</b><small>After pending withdrawals and open-order reservations</small></div>
 				<div className="portfolio-metric"><span>Open position value</span><b>{money(data.positionValue)}</b></div>
 				{data.accountMode==='REAL'&&<div className="portfolio-metric"><span>Allocated investment principal</span><b>{money(data.investmentValue)}</b></div>}
 			</section>
 			<PortfolioAssistant/>
 			<TradingJournalAssistant/>
-			{data.accountMode==='REAL'&&data.positionValuationStatus!=='CURRENT'&&data.positionValuationStatus!=='NOT_APPLICABLE'&&<div className="account-callout mt-4" role="status">Fresh provider marks are unavailable for some open positions. Unverified positions are excluded from REAL account value and P/L; no internal DEMO prices are used as REAL marks.</div>}
-			{data.accountMode==='REAL'&&<section className="account-panel card mt-4 p-5">
-				<div className="account-panel-title"><div><h2>Alpaca Paper holdings</h2><p className="account-panel-subtitle">Your confirmed fills only · shown separately from the Aurevia wallet</p></div><span className="status-pill mode-real">{data.paperPositions.length} open</span></div>
-				<div className="portfolio-paper-summary">
-					<article><span>Net marked position value</span><b>{money(data.paperPositionValue)}</b></article>
-					<article><span>Unrealized Paper P/L</span><b className={data.paperUnrealizedPnl===null?'':Number(data.paperUnrealizedPnl)>=0?'text-profit':'text-loss'}>{signed(data.paperUnrealizedPnl)}</b></article>
-					<article><span>Paper-order reserves</span><b>{money(data.paperReservedBalance)}</b></article>
-					<article><span>Available buying power</span><b>{money(data.paperAvailableBalance)}</b></article>
-				</div>
-				{data.paperPositions.length?<div className="portfolio-paper-list" aria-label="Alpaca Paper open holdings">{data.paperPositions.map(position=><article key={position.id} className="portfolio-paper-position">
-					<div><strong>{position.symbol}</strong><small>{position.name} · {position.side} · {Number(position.quantity).toLocaleString()} units</small></div>
-					<div><span>Average fill</span><b>{money(position.averageEntryPrice)}</b></div>
-					<div><span>Current Paper mark</span><b>{position.valuationStatus==='CURRENT'?money(position.currentPrice):'—'}</b></div>
-					<div><span>Marked position value</span><b>{position.valuationStatus==='CURRENT'?money(position.marketValue):'—'}</b></div>
-					<div><span>Unrealized P/L</span><b className={position.unrealizedPnl===null?'':Number(position.unrealizedPnl)>=0?'text-profit':'text-loss'}>{signed(position.unrealizedPnl)}</b></div>
-					<div className={`portfolio-paper-quote portfolio-paper-quote--${position.valuationStatus.toLowerCase()}`}>{position.valuationStatus==='CURRENT'&&position.valuationAsOf?`${position.valuationSource||'Provider'} mark · ${new Date(position.valuationAsOf).toLocaleString()}`:position.valuationStatus==='STALE'&&position.valuationAsOf?`Last provider quote is stale · ${new Date(position.valuationAsOf).toLocaleString()}`:'No recent provider quote available'}</div>
-				</article>)}</div>:<p className="account-empty mt-3">Confirmed Alpaca Paper fills will appear here. Provider-wide positions are not copied into your account.</p>}
-				<p className="portfolio-paper-disclosure" role="status">{data.paperValuation.valuedCount} of {data.paperValuation.openCount} open positions have a current provider mark. Paper holdings use fresh Alpaca or Finnhub quotes where supported; they remain separate from Aurevia balances and cannot be withdrawn. Stale or unavailable marks are left unvalued.</p>
-			</section>}
+			{data.accountMode==='REAL'&&data.positionValuationStatus!=='CURRENT'&&data.positionValuationStatus!=='NOT_APPLICABLE'&&<div className="account-callout mt-4" role="status">Current market prices are unavailable for some open positions. Unvalued positions are excluded from account value and profit/loss until a reliable price is available.</div>}
 			<DisplayCurrencyPanel values={[
 				{label:'Recorded total value',amount:data.totalValue},
 				{label:'Available internal cash',amount:data.availableCashBalance},
 				{label:'Open position value',amount:data.positionValue},
 				...(data.accountMode==='REAL'?[{label:'Allocated investment principal',amount:data.investmentValue}]:[]),
-				...(data.accountMode==='REAL'&&data.paperPositions.length?[
-					{label:'Separate Paper estimated mark value',amount:data.paperPositionValue},
-					{label:'Separate Paper unrealized P/L',amount:data.paperUnrealizedPnl},
-				]:[]),
 			]}/>
 			{data.accountMode==='DEMO'&&<section className="demo-reset-control"><div><b>{translate('portfolioResetTitle')}</b><p>{translate('resetPortfolioDescription')}</p></div>{!resetOpen?<button type="button" className="button-secondary" onClick={()=>setResetOpen(true)}>{translate('resetDemo')}</button>:<form onSubmit={event=>void resetDemo(event)}><label className="account-label">{translate('typeResetConfirmation')}<input className="input" autoComplete="off" value={resetConfirmation} onChange={event=>setResetConfirmation(event.target.value)}/></label><div className="flex flex-wrap gap-2"><button className="btn bg-loss" disabled={resetBusy||resetConfirmation!=='RESET DEMO ACCOUNT'}>{resetBusy?translate('portfolioResetting'):translate('portfolioConfirmReset')}</button><button className="btn bg-white/5" type="button" onClick={()=>{setResetOpen(false);setResetConfirmation('');}}>{translate('cancel')}</button></div></form>}</section>}
 			<div className="portfolio-content-grid portfolio-premium-grid">
 				<section className="account-panel card p-5">
-					<div className="account-panel-title"><div><h2>Portfolio performance</h2><p className="account-panel-subtitle">Saved account snapshots · no backfilled or estimated history</p></div><span className="muted text-xs">{data.marketDataMode} marks</span></div>
+					<div className="account-panel-title"><div><h2>Portfolio performance</h2><p className="account-panel-subtitle">Saved account snapshots · no backfilled or estimated history</p></div><span className="muted text-xs">{data.accountMode==='DEMO'?'Practice prices':data.positionValuationStatus==='CURRENT'?'Current market prices':'Market prices'}</span></div>
 					<div className="orders-filters portfolio-timeframes" role="group" aria-label="Performance timeframe">
 						{timeframes.map(item=><button type="button" key={item.value} className={timeframe===item.value?'is-active':''} aria-pressed={timeframe===item.value} onClick={()=>setTimeframe(item.value)}>{item.label}</button>)}
 					</div>
@@ -219,7 +197,7 @@ export default function PortfolioExperience(){
 				</section>
 			</div>
 			<section className="account-panel card p-5 mt-4">
-				<div className="account-panel-title"><div><h2>Holdings</h2><p className="account-panel-subtitle">{data.accountMode==='DEMO'?'DEMO values use the internal practice feed.':'REAL open positions use fresh provider marks; unavailable marks are excluded.'}</p></div><span className="muted text-sm">{data.holdings.length} records</span></div>
+				<div className="account-panel-title"><div><h2>Holdings</h2><p className="account-panel-subtitle">{data.accountMode==='DEMO'?'DEMO values use the internal practice feed.':'REAL open positions use current market prices; unavailable marks are excluded.'}</p></div><span className="muted text-sm">{data.holdings.length} records</span></div>
 				{data.holdings.length===0?<p className="account-empty">No holdings are recorded for this account yet.</p>:<>
 					<div className="investment-opportunity-filters">
 						<label className="account-label">Search holdings<input className="input" type="search" value={holdingSearch} onChange={event=>setHoldingSearch(event.target.value)} placeholder="Name, category or status"/></label>
@@ -229,7 +207,7 @@ export default function PortfolioExperience(){
 						<div className="portfolio-holdings-head" aria-hidden="true"><span>Asset</span><span>% of portfolio</span><span>Cost basis</span><span>Current value</span><span>Unrealized P/L</span></div>
 						<div className="portfolio-holdings">{visibleHoldings.map(holding=><details className="portfolio-holding" key={holding.id}>
 							<summary><span className="portfolio-holding-asset"><AssetIcon category={holding.category} name={holding.name}/><span><b>{holding.name}</b><small>{holding.category} · {holding.status.replaceAll('_',' ').toLowerCase()}</small></span></span><span>{Number(data.totalValue)>0&&holding.value!==null?`${(Number(holding.value)/Number(data.totalValue)*100).toFixed(1)}%`:'—'}</span><span>{money(holding.invested)}</span><span>{money(holding.value)}</span><strong className={holding.gainLoss===null?'':Number(holding.gainLoss)>=0?'text-profit':'text-loss'}>{signed(holding.gainLoss)}</strong></summary>
-							<dl><div><dt>Recorded asset</dt><dd>{holding.name}</dd></div><div><dt>Category</dt><dd>{holding.category}</dd></div><div><dt>Portfolio share</dt><dd>{Number(data.totalValue)>0&&holding.value!==null?`${(Number(holding.value)/Number(data.totalValue)*100).toFixed(2)}%`:'—'}</dd></div><div><dt>Position status</dt><dd>{holding.status.replaceAll('_',' ')}</dd></div><div><dt>Valuation source</dt><dd>{holding.valuationSource|| (data.accountMode==='DEMO'?'DEMO practice price':'Unavailable')}</dd></div></dl>
+							<dl><div><dt>Recorded asset</dt><dd>{holding.name}</dd></div><div><dt>Category</dt><dd>{holding.category}</dd></div><div><dt>Portfolio share</dt><dd>{Number(data.totalValue)>0&&holding.value!==null?`${(Number(holding.value)/Number(data.totalValue)*100).toFixed(2)}%`:'—'}</dd></div><div><dt>Position status</dt><dd>{holding.status.replaceAll('_',' ')}</dd></div><div><dt>Valuation</dt><dd>{holding.value===null?'Unavailable':data.accountMode==='DEMO'?'Practice price':'Market price'}</dd></div></dl>
 						</details>)}</div>
 					</>}
 				</>}

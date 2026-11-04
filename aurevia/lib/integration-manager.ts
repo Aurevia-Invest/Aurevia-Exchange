@@ -54,7 +54,7 @@ async function checkFinnhub(){
 async function checkAlpaca(){
 	const health=await getAlpacaPaperAccountHealth();
 	if(health.status==='AVAILABLE')return item('alpaca','Alpaca paper trading','CONNECTED','Paper account authentication succeeded. Live trading remains disabled.','Authorized REAL-mode paper orders');
-	if(health.status==='NOT_CONFIGURED')return item('alpaca','Alpaca paper trading','MISSING_CREDENTIALS','ALPACA_API_KEY and ALPACA_SECRET_KEY are not configured.','Optional REAL-mode paper orders');
+	if(health.status==='NOT_CONFIGURED')return item('alpaca','Alpaca paper trading','MISSING_CREDENTIALS','Set ALPACA_API_KEY and ALPACA_SECRET_KEY (or ALPACA_API_SECRET); use ALPACA_TRADING_BASE_URL (or ALPACA_BASE_URL) with the paper endpoint.','Optional REAL-mode paper orders');
 	if(health.status==='AUTHENTICATION_FAILED')return item('alpaca','Alpaca paper trading','CONNECTION_FAILED','Alpaca rejected the configured credentials.','Authorized REAL-mode paper orders');
 	if(health.status==='UNAVAILABLE')return item('alpaca','Alpaca paper trading','PROVIDER_UNAVAILABLE','The paper account endpoint did not return an active account.','Authorized REAL-mode paper orders');
 	return item('alpaca','Alpaca paper trading','CONFIGURATION_REQUIRED','Paper endpoint, provider selection, or paper-order settings require configuration.','Authorized REAL-mode paper orders');

@@ -5,8 +5,10 @@ import {beforeEach,describe,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({
 	providerFactory:vi.fn(),
 	ensureUserLedger:vi.fn(),
+	ensureSystemAccount:vi.fn(),
 	balance:vi.fn(),
 	reservedWithdrawalAmount:vi.fn(),
+	postDoubleEntry:vi.fn(),
 	marketQuote:vi.fn(),
 	positionCreate:vi.fn(),
 	executionCreate:vi.fn(),
@@ -28,11 +30,17 @@ vi.mock('@/lib/live-market',async importOriginal=>{
 	const original=await importOriginal<typeof import('@/lib/live-market')>();
 	return {...original,getMarketQuote:mocks.marketQuote};
 });
-vi.mock('@/lib/ledger',()=>({
-	ensureUserLedger:mocks.ensureUserLedger,
-	balance:mocks.balance,
-	reservedWithdrawalAmount:mocks.reservedWithdrawalAmount,
-}));
+vi.mock('@/lib/ledger',async importOriginal=>{
+	const original=await importOriginal<typeof import('@/lib/ledger')>();
+	return {
+		...original,
+		ensureUserLedger:mocks.ensureUserLedger,
+		ensureSystemAccount:mocks.ensureSystemAccount,
+		balance:mocks.balance,
+		reservedWithdrawalAmount:mocks.reservedWithdrawalAmount,
+		postDoubleEntry:mocks.postDoubleEntry,
+	};
+});
 vi.mock('@/lib/providers/alpaca-crypto-provider',async importOriginal=>{
 	const original=await importOriginal<typeof import('@/lib/providers/alpaca-crypto-provider')>();
 	return {...original,createIndividualTradingApiProviderFromEnvironment:mocks.providerFactory};
@@ -134,6 +142,8 @@ beforeEach(()=>{
 		return data;
 	});
 	mocks.ensureUserLedger.mockResolvedValue({id:'real-usd-ledger',currency:'USD'});
+	mocks.ensureSystemAccount.mockResolvedValue({id:'real-trading-clearing',currency:'USD'});
+	mocks.postDoubleEntry.mockResolvedValue(undefined);
 	mocks.balance.mockResolvedValue(new Prisma.Decimal(1000));
 	mocks.reservedWithdrawalAmount.mockResolvedValue(new Prisma.Decimal(0));
 	mocks.marketQuote.mockResolvedValue({price:100,updatedAt:now.toISOString(),isStale:false});
@@ -216,14 +226,21 @@ beforeEach(()=>{
 });
 
 describe('Alpaca Paper order isolation and status handling',()=>{
-	it('records provider-confirmed fills as user-scoped holdings without changing the Aurevia ledger',async()=>{
+	it('records confirmed simulated fills in the Aurevia ledger and user-scoped holdings',async()=>{
 		const order=await submitAlpacaPaperOrder('user-1',request,idempotencyKey);
 
 		expect(order).toMatchObject({accountMode:AccountMode.REAL,providerName:'alpaca-paper',providerAccountId:'paper-account-1',providerOrderId:'alpaca-order-1',status:OrderStatus.FILLED,providerStatus:'filled',filledQuantity:new Prisma.Decimal(2)});
 		expect(order.providerReservedAmount?.toString()).toBe('200');
 		expect(order.providerClientOrderId).toBe(providerClientOrderId);
 		expect(provider.submitOrder).toHaveBeenCalledTimes(1);
-		expect(db.ledgerEntry.create).not.toHaveBeenCalled();
+		expect(mocks.postDoubleEntry).toHaveBeenCalledOnce();
+		expect(mocks.postDoubleEntry).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({
+			reference:expect.stringMatching(/^REAL:SIMULATED_TRADE:BUY:local-order-1:/),
+			description:'Simulated buy AAPL',
+			debitAccountId:'real-usd-ledger',
+			creditAccountId:'real-trading-clearing',
+			amount:new Prisma.Decimal('202.50'),
+		}));
 		expect(mocks.positionCreate).toHaveBeenCalledOnce();
 		expect(mocks.executionCreate).toHaveBeenCalledOnce();
 		expect(storedPosition).toMatchObject({quantity:new Prisma.Decimal(2),entryPrice:new Prisma.Decimal('101.25'),status:'OPEN'});
@@ -256,6 +273,21 @@ describe('Alpaca Paper order isolation and status handling',()=>{
 		await expect(submitAlpacaPaperOrder('user-1',request,idempotencyKey)).rejects.toMatchObject({code:'INSUFFICIENT_REAL_WALLET_COLLATERAL'});
 		expect(provider.submitOrder).not.toHaveBeenCalled();
 		expect(storedOrder).toBeNull();
+	});
+
+	it('does not debit the Aurevia wallet when a confirmed fill exceeds available funds',async()=>{
+		mocks.balance.mockResolvedValue(new Prisma.Decimal(201));
+
+		const order=await submitAlpacaPaperOrder('user-1',request,idempotencyKey);
+
+		expect(order).toMatchObject({status:OrderStatus.FILLED,reconciliationStatus:'RECONCILIATION_REQUIRED'});
+		expect(order.filledQuantity.toString()).toBe('0');
+		expect(mocks.postDoubleEntry).not.toHaveBeenCalled();
+		expect(mocks.positionCreate).not.toHaveBeenCalled();
+		expect(createNotification).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({
+			title:'REAL order requires review',
+			message:expect.stringContaining('available wallet funds are insufficient'),
+		}));
 	});
 
 	it('reserves market-order collateral from the fresh provider quote, not the internal instrument mark',async()=>{
@@ -298,5 +330,6 @@ describe('Alpaca Paper order isolation and status handling',()=>{
 		expect(storedPosition?.entryPrice.toString()).toBe('102.5');
 		expect(mocks.executionCreate).toHaveBeenCalledTimes(2);
 		expect(providerExecutionIds.size).toBe(2);
+		expect(mocks.postDoubleEntry).toHaveBeenCalledTimes(2);
 	});
 });

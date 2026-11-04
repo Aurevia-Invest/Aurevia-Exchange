@@ -56,7 +56,16 @@ export default function TransactionDetailPage(){
 	const {data:session}=useSession();
 	const [data,setData]=useState<Detail|null>(null);
 	const [error,setError]=useState('');
-	useEffect(()=>{let active=true;setData(null);setError('');fetch(`/api/funding/${encodeURIComponent(id)}`).then(async response=>{const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to load transaction.');if(active)setData(result)}).catch(exception=>{if(active)setError(exception instanceof Error?exception.message:'Unable to load transaction.')});return()=>{active=false}},[id,session?.user?.accountMode]);
+	useEffect(()=>{
+		let active=true;
+		const load=async()=>{try{const response=await fetch(`/api/funding/${encodeURIComponent(id)}`,{cache:'no-store'});const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to load transaction.');if(active)setData(result);if(active)setError('')}catch(exception){if(active)setError(exception instanceof Error?exception.message:'Unable to load transaction.')}};
+		setData(null);setError('');void load();
+		const refresh=()=>{if(document.visibilityState==='visible')void load()};
+		const timer=window.setInterval(refresh,5_000);
+		window.addEventListener('focus',refresh);
+		document.addEventListener('visibilitychange',refresh);
+		return()=>{active=false;window.clearInterval(timer);window.removeEventListener('focus',refresh);document.removeEventListener('visibilitychange',refresh)};
+	},[id,session?.user?.accountMode]);
 	const transaction=data?.transaction;
 	const status=transaction?receiptStatus(transaction.status):null;
 	const displayValues=transaction?.currency?.toUpperCase()==='USD'?[{label:'Amount requested',amount:String(transaction.amount)},...(transaction.feeAmount!==null&&transaction.feeAmount!==undefined?[{label:`Deposit fee (${transaction.feePercent??10}%)`,amount:String(transaction.feeAmount)}]:[]),...(transaction.creditedAmount!==null&&transaction.creditedAmount!==undefined?[{label:'Amount credited',amount:String(transaction.creditedAmount)}]:[])]:[];

@@ -8,6 +8,7 @@ const mocks=vi.hoisted(()=>({
 	accountFindUnique:vi.fn(),
 	positionFindMany:vi.fn(),
 	positionAggregate:vi.fn(),
+	positionGroupBy:vi.fn(),
 	investmentFindMany:vi.fn(),
 	fundingAggregate:vi.fn(),
 	fundingFindMany:vi.fn(),
@@ -19,13 +20,14 @@ const mocks=vi.hoisted(()=>({
 	balance:vi.fn(),
 	reservedWithdrawalAmount:vi.fn(),
 	paperOrderCollateral:vi.fn(),
+	walletBackedPaperInstrumentIds:vi.fn(),
 }));
 
 vi.mock('@/lib/auth',()=>({requireUser:mocks.requireUser}));
 vi.mock('@/lib/db',()=>({db:{
 	user:{findUnique:mocks.userFindUnique},
 	ledgerAccount:{findUnique:mocks.accountFindUnique},
-	position:{findMany:mocks.positionFindMany,aggregate:mocks.positionAggregate},
+	position:{findMany:mocks.positionFindMany,aggregate:mocks.positionAggregate,groupBy:mocks.positionGroupBy},
 	investmentRequest:{findMany:mocks.investmentFindMany},
 	fundingRequest:{aggregate:mocks.fundingAggregate,findMany:mocks.fundingFindMany},
 	investmentOpportunity:{findMany:mocks.opportunityFindMany},
@@ -38,6 +40,7 @@ vi.mock('@/lib/market-data-service',()=>({
 	getMarketQuoteWithFallback:mocks.marketQuote,
 	getAlpacaMarketDataOptions:vi.fn(()=>undefined),
 }));
+vi.mock('@/lib/paper-ledger-reconciliation',()=>({getWalletBackedPaperInstrumentIds:mocks.walletBackedPaperInstrumentIds}));
 
 import {GET} from '@/app/api/portfolio/route';
 
@@ -70,6 +73,7 @@ describe('portfolio route provider valuation',()=>{
 		mocks.accountFindUnique.mockResolvedValue({id:'real-usd',startingBalance:new Prisma.Decimal(0)});
 		mocks.positionFindMany.mockResolvedValue([]);
 		mocks.positionAggregate.mockResolvedValue({_sum:{realizedPnl:null}});
+		mocks.positionGroupBy.mockResolvedValue([]);
 		mocks.investmentFindMany.mockResolvedValue([]);
 		mocks.fundingAggregate.mockResolvedValue({_sum:{amount:null,creditedAmount:null}});
 		mocks.fundingFindMany.mockResolvedValue([]);
@@ -80,10 +84,11 @@ describe('portfolio route provider valuation',()=>{
 		mocks.balance.mockResolvedValue(new Prisma.Decimal(250));
 		mocks.reservedWithdrawalAmount.mockResolvedValue(new Prisma.Decimal(0));
 		mocks.paperOrderCollateral.mockReturnValue({committed:new Prisma.Decimal(0)});
+		mocks.walletBackedPaperInstrumentIds.mockResolvedValue(new Set(['instrument-1']));
 		mocks.marketQuote.mockResolvedValue({price:110,updatedAt:new Date().toISOString(),source:'Alpaca',isStale:false});
 	});
 
-	it('values confirmed Paper holdings from a fresh provider quote without mixing them into Aurevia cash',async()=>{
+	it('includes ledger-backed positions in portfolio value without changing wallet cash',async()=>{
 		mocks.positionFindMany.mockResolvedValue([paperPosition(new Date(Date.now()-120_000))]);
 
 		const response=await GET();
@@ -101,8 +106,22 @@ describe('portfolio route provider valuation',()=>{
 		expect(result.paperValuation).toMatchObject({status:'CURRENT',valuedCount:1,openCount:1});
 		expect(result.cashBalance).toBe('250');
 		expect(result.availableCashBalance).toBe('250');
+		expect(result.totalValue).toBe('470');
+		expect(result.paperPositions[0].valuationSource).toBe('Market quote');
+	});
+
+	it('excludes an unreconciled legacy position from account value without changing its records',async()=>{
+		mocks.positionFindMany.mockResolvedValue([paperPosition(new Date())]);
+		mocks.walletBackedPaperInstrumentIds.mockResolvedValue(new Set());
+
+		const response=await GET();
+		const result=await response.json();
+
+		expect(result.cashBalance).toBe('250');
 		expect(result.totalValue).toBe('250');
-		expect(result.paperPositions[0].valuationSource).toBe('Alpaca');
+		expect(result.unreconciledPaperPositionCount).toBe(1);
+		expect(result.paperPositions[0]).toMatchObject({walletBacked:false,marketValue:null,valuationStatus:'UNAVAILABLE'});
+		expect(mocks.snapshotUpsert).toHaveBeenCalledOnce();
 	});
 
 	it('does not present a stale provider mark as a current value',async()=>{
@@ -160,7 +179,7 @@ describe('portfolio route provider valuation',()=>{
 		const result=await response.json();
 
 		expect(response.status).toBe(200);
-		expect(result.positions[0]).toMatchObject({currentPrice:'110',marketValue:'220',unrealizedPnl:'20',valuationStatus:'CURRENT',valuationSource:'Alpaca'});
+		expect(result.positions[0]).toMatchObject({currentPrice:'110',marketValue:'220',unrealizedPnl:'20',valuationStatus:'CURRENT',valuationSource:'Market quote'});
 		expect(result.positionValue).toBe('220');
 		expect(result.totalValue).toBe('470');
 		expect(result.unrealizedPnl).toBe('20');

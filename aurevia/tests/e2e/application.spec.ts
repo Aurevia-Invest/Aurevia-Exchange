@@ -1018,7 +1018,7 @@ test('duplicate signup offers sign-in with the typed email prefilled',async({pag
 	await expect(page.getByLabel('Email address')).toHaveValue(email);
 });
 
-test('account deletion cascades through user-owned records',async()=>{
+test('account closure anonymizes login identity and retains financial and regulatory records',async()=>{
 	const user=await db.user.create({data:{
 		email:`aurevia-e2e-delete-${randomUUID()}@example.invalid`,
 		passwordHash:'not-a-real-password-hash',
@@ -1027,12 +1027,17 @@ test('account deletion cascades through user-owned records',async()=>{
 		await db.notification.create({data:{userId:user.id,type:'SYSTEM',title:'Test notice',message:'Delete with user',dedupeKey:`delete-test:${user.id}`}});
 		await db.passwordResetToken.create({data:{userId:user.id,tokenHash:`delete-test:${user.id}`,expiresAt:new Date(Date.now()+60_000)}});
 		await db.kycDocument.create({data:{userId:user.id,kind:'IDENTITY_DOCUMENT',filename:'test.pdf',storageKey:`${user.id}/00000000-0000-4000-8000-000000000001.pdf`,mimeType:'application/pdf',size:1}});
-		await db.$transaction(tx=>deleteAccountData(tx,{userId:user.id,actorId:null,force:true}));
+		await db.ledgerAccount.create({data:{userId:user.id,accountMode:'DEMO',code:`USER:${user.id}:DEMO:USD`,name:'Disposable test wallet',currency:'USD'}});
+		await db.fundingRequest.create({data:{userId:user.id,type:'DEPOSIT',method:'E2E completed deposit',amount:10,currency:'USD',accountMode:'DEMO',status:'COMPLETED',idempotencyKey:`delete-test-funding:${user.id}`}});
+		await db.$transaction(tx=>deleteAccountData(tx,{userId:user.id,actorId:null,confirmationEmail:user.email,reason:'Disposable test account closure',idempotencyKey:randomUUID()}));
 
-		expect(await db.user.findUnique({where:{id:user.id}})).toBeNull();
+		expect(await db.user.findUnique({where:{id:user.id},select:{status:true,email:true,passwordHash:true}})).toMatchObject({status:'CLOSED'});
+		expect((await db.user.findUniqueOrThrow({where:{id:user.id},select:{email:true}})).email).toMatch(/^deleted\+.*@deleted\.invalid$/);
 		expect(await db.notification.count({where:{userId:user.id}})).toBe(0);
 		expect(await db.passwordResetToken.count({where:{userId:user.id}})).toBe(0);
-		expect(await db.kycDocument.count({where:{userId:user.id}})).toBe(0);
+		expect(await db.kycDocument.count({where:{userId:user.id}})).toBe(1);
+		expect(await db.ledgerAccount.count({where:{userId:user.id}})).toBe(1);
+		expect(await db.fundingRequest.count({where:{userId:user.id,status:'COMPLETED'}})).toBe(1);
 	}catch(error){
 		await db.user.deleteMany({where:{id:user.id}});
 		throw error;
@@ -1514,7 +1519,7 @@ test('administrative balance adjustments require authorization and confirmation 
 	finally{await adminContext.close();}
 });
 
-test('DEMO blocks investment allocations while REAL investment lifecycle remains available',async({browser,page})=>{
+test('DEMO accounts cannot access investments while REAL investment lifecycle remains available',async({browser,page})=>{
 	const adminContext=await browser.newContext();
 	const adminPage=await adminContext.newPage();
 	const priorBitcoinAddress=await db.systemSetting.findUnique({where:{key:SIMULATED_BTC_ADDRESS_SETTING},select:{value:true}});
@@ -1522,37 +1527,35 @@ test('DEMO blocks investment allocations while REAL investment lifecycle remains
 		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
 		const clearedBitcoinAddress=await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:''}});
 		expect(clearedBitcoinAddress.status()).toBe(200);
-		const opportunityResponse=await adminPage.request.post('/api/admin/investments',{data:{title:'E2E simulated opportunity',category:'Test allocation',description:'Disposable investment terms for isolated Playwright coverage.',assetSymbol:null,minimumAmount:100,maximumAmount:10000,targetReturnPercent:8,durationDays:30,startsAt:null,maturesAt:null,riskLevel:'MODERATE',status:'AVAILABLE',demoEligible:true,realEligible:true,requiresApproval:true,targetPrice:null,stopPrice:null}});
+		const opportunityResponse=await adminPage.request.post('/api/admin/investments',{data:{title:'E2E internal opportunity',category:'Test allocation',description:'Disposable investment terms for isolated Playwright coverage.',assetSymbol:null,minimumAmount:100,maximumAmount:10000,targetReturnPercent:8,durationDays:30,startsAt:null,maturesAt:null,riskLevel:'MODERATE',status:'AVAILABLE',demoEligible:false,realEligible:true,requiresApproval:true,targetPrice:null,stopPrice:null}});
 		expect(opportunityResponse.status()).toBe(201);
 		const opportunity=await opportunityResponse.json();
-
-		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
-		await selectAccountMode(page,'DEMO');
-		const initialDemoWallet=await page.request.get('/api/wallet').then(response=>response.json());
-		const initialDemoBalance=Number(initialDemoWallet.balance);
-		const blockedDemoRequest=await page.request.post('/api/investments',{headers:{'Idempotency-Key':randomUUID()},data:{opportunityId:opportunity.id,amount:1000}});
-		expect(blockedDemoRequest.status()).toBe(403);
-		let userInvestments=await page.request.get('/api/investments').then(response=>response.json());
-		expect(userInvestments).toMatchObject({accountMode:'DEMO',opportunities:[],requests:[]});
-		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialDemoBalance);
-		await page.goto('/investments');
-		await expect(page.getByLabel('Amount (USD)')).toHaveCount(0);
-
-		const unrelatedContext=await browser.newContext();
-		try{
-			const unrelatedPage=await unrelatedContext.newPage();
-			await loginAs(unrelatedPage,fixture('LEGACY_USER_EMAIL'),fixture('LEGACY_USER_PASSWORD'));
-			const isolated=await unrelatedPage.request.get('/api/investments').then(response=>response.json());
-			expect(isolated.requests).toHaveLength(0);
-			expect((await unrelatedPage.request.get('/api/admin/investments')).status()).toBe(403);
-		}finally{await unrelatedContext.close();}
-
 		async function review(requestId:string,action:string,extra:Record<string,unknown>={}){
 			const response=await adminPage.request.patch('/api/admin/investments',{data:{requestId,action,...extra}});
 			const result=await response.json();
 			expect(response.ok(),`${action}: ${result.error||response.status()}`).toBeTruthy();
 			return result;
 		}
+
+		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
+		await selectAccountMode(page,'DEMO');
+		const initialDemoWallet=await page.request.get('/api/wallet').then(response=>response.json());
+		const initialDemoBalance=Number(initialDemoWallet.balance);
+		expect((await page.request.get('/api/investments')).status()).toBe(403);
+		const forbiddenDemoSubmission=await page.request.post('/api/investments',{headers:{'Idempotency-Key':randomUUID()},data:{opportunityId:opportunity.id,amount:100}});
+		expect(forbiddenDemoSubmission.status()).toBe(403);
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialDemoBalance);
+		await page.goto('/investments');
+		await expect(page).toHaveURL(/\/dashboard/);
+		await expect(page.getByRole('link',{name:/Investments/i})).toHaveCount(0);
+
+		const unrelatedContext=await browser.newContext();
+		try{
+			const unrelatedPage=await unrelatedContext.newPage();
+			await loginAs(unrelatedPage,fixture('LEGACY_USER_EMAIL'),fixture('LEGACY_USER_PASSWORD'));
+			expect((await unrelatedPage.request.get('/api/investments')).status()).toBe(403);
+			expect((await unrelatedPage.request.get('/api/admin/investments')).status()).toBe(403);
+		}finally{await unrelatedContext.close();}
 
 		await selectAccountMode(page,'REAL');
 		const initialRealBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
@@ -1589,7 +1592,7 @@ test('DEMO blocks investment allocations while REAL investment lifecycle remains
 		await review(realRequest.id,'activate');
 		await review(realRequest.id,'complete');
 		await review(realRequest.id,'settle',{simulatedPayout:55000});
-		userInvestments=await page.request.get('/api/investments').then(response=>response.json());
+		const userInvestments=await page.request.get('/api/investments').then(response=>response.json());
 		const settledRealRequest=userInvestments.requests.find((item:{id:string})=>item.id===realRequest.id);
 		expect(settledRealRequest).toMatchObject({status:'SETTLED',settlementReference:`SIMULATED-SETTLEMENT:REAL:${realRequest.id}`,simulatedPayout:'540'});
 		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBeCloseTo(initialRealBalance+1040,2);
@@ -1608,16 +1611,11 @@ test('DEMO blocks investment allocations while REAL investment lifecycle remains
 
 		await selectAccountMode(page,'DEMO');
 			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialDemoBalance);
+			expect((await page.request.get('/api/investments')).status()).toBe(403);
 			await logout(page);
 		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 		const persistedDemoWallet=await page.request.get('/api/wallet').then(response=>response.json());
 		expect(Number(persistedDemoWallet.balance)).toBe(initialDemoBalance);
-		await page.goto('/portfolio');
-		await page.getByRole('button',{name:'Reset Demo Account'}).click();
-		await page.getByLabel('Type RESET DEMO ACCOUNT to confirm').fill('RESET DEMO ACCOUNT');
-		await page.getByRole('button',{name:'Confirm DEMO reset'}).click();
-		await expect(page.getByText(/DEMO portfolio reset to \$5,000\.00/)).toBeVisible();
-		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 		await selectAccountMode(page,'REAL');
 			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(finalRealBalance);
 		await expectNoHorizontalOverflow(page);
@@ -1635,22 +1633,24 @@ test('admin investment initiation reserves once, honors withdrawal reservations,
 		const adminPage=await adminContext.newPage();
 		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
 		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
-		await selectAccountMode(page,'DEMO');
+		await selectAccountMode(page,'REAL');
 		const userId=await page.request.get('/api/profile').then(response=>response.json().then(profile=>profile.id));
+		const credit=await adminPage.request.post('/api/admin/balances',{data:{userId,accountMode:'REAL',currency:'USD',amount:'2000.00',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Isolated investment lifecycle test funding',idempotencyKey:randomUUID()}});
+		expect(credit.status()).toBe(201);
 		const initialBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
-		const opportunityResponse=await adminPage.request.post('/api/admin/investments',{data:{title:'E2E admin allocation',category:'Scheduled test',description:'Administrator-initiated simulated investment for ledger reconciliation.',assetSymbol:null,minimumAmount:100,maximumAmount:100000,targetReturnPercent:8,durationDays:30,startsAt:null,maturesAt:null,riskLevel:'MODERATE',status:'AVAILABLE',demoEligible:true,realEligible:true,requiresApproval:true,targetPrice:null,stopPrice:null}});
+		const opportunityResponse=await adminPage.request.post('/api/admin/investments',{data:{title:'E2E admin allocation',category:'Scheduled test',description:'Administrator-initiated simulated investment for ledger reconciliation.',assetSymbol:null,minimumAmount:100,maximumAmount:100000,targetReturnPercent:8,durationDays:30,startsAt:null,maturesAt:null,riskLevel:'MODERATE',status:'AVAILABLE',demoEligible:false,realEligible:true,requiresApproval:true,targetPrice:null,stopPrice:null}});
 		expect(opportunityResponse.status()).toBe(201);
 		const opportunity=await opportunityResponse.json();
 		const startsAt=new Date(Date.now()+3_600_000);
 		const maturesAt=new Date(startsAt.getTime()+30*86_400_000);
 		const idempotencyKey=randomUUID();
-		const payload={action:'initiate',userId,opportunityId:opportunity.id,accountMode:'DEMO',amount:500,targetReturnPercent:null,startsAt:startsAt.toISOString(),maturesAt:maturesAt.toISOString()};
+		const payload={action:'initiate',userId,opportunityId:opportunity.id,accountMode:'REAL',amount:500,targetReturnPercent:null,startsAt:startsAt.toISOString(),maturesAt:maturesAt.toISOString()};
 		const initiated=await adminPage.request.post('/api/admin/investments',{headers:{'Idempotency-Key':idempotencyKey},data:payload});
 		expect(initiated.status()).toBe(201);
 		const investment=await initiated.json();
 		expect(investment).toMatchObject({userId,opportunityId:opportunity.id,status:'APPROVED',amount:'500',targetReturnPercent:'8'});
 		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialBalance-500);
-		const secondOpportunityResponse=await adminPage.request.post('/api/admin/investments',{data:{title:'E2E second allocation',category:'Scheduled test',description:'A second independent opportunity for concurrent allocation coverage.',assetSymbol:null,minimumAmount:100,maximumAmount:100000,targetReturnPercent:null,durationDays:30,startsAt:null,maturesAt:null,riskLevel:'LOW',status:'AVAILABLE',demoEligible:true,realEligible:false,requiresApproval:true,targetPrice:null,stopPrice:null}});
+		const secondOpportunityResponse=await adminPage.request.post('/api/admin/investments',{data:{title:'E2E second allocation',category:'Scheduled test',description:'A second independent opportunity for concurrent allocation coverage.',assetSymbol:null,minimumAmount:100,maximumAmount:100000,targetReturnPercent:null,durationDays:30,startsAt:null,maturesAt:null,riskLevel:'LOW',status:'AVAILABLE',demoEligible:false,realEligible:true,requiresApproval:true,targetPrice:null,stopPrice:null}});
 		expect(secondOpportunityResponse.status()).toBe(201);
 		const secondOpportunity=await secondOpportunityResponse.json();
 		const secondRequestResponse=await adminPage.request.post('/api/admin/investments',{headers:{'Idempotency-Key':randomUUID()},data:{...payload,opportunityId:secondOpportunity.id,amount:250,targetReturnPercent:null}});
@@ -1668,7 +1668,7 @@ test('admin investment initiation reserves once, honors withdrawal reservations,
 		const mismatchedReplay=await adminPage.request.post('/api/admin/investments',{headers:{'Idempotency-Key':idempotencyKey},data:{...payload,amount:501}});
 		expect(mismatchedReplay.status()).toBe(409);
 
-		await db.fundingRequest.create({data:{userId,type:FundingType.WITHDRAWAL,method:'E2E reserved withdrawal',amount:9000,currency:'USD',accountMode:'DEMO',status:FundingStatus.PENDING_REVIEW,idempotencyKey:`e2e:${randomUUID()}`}});
+		await db.fundingRequest.create({data:{userId,type:FundingType.WITHDRAWAL,method:'E2E reserved withdrawal',amount:9000,currency:'USD',accountMode:'REAL',status:FundingStatus.PENDING_REVIEW,idempotencyKey:`e2e:${randomUUID()}`}});
 		const blocked=await adminPage.request.post('/api/admin/investments',{headers:{'Idempotency-Key':randomUUID()},data:{...payload,amount:91000}});
 		expect(blocked.status()).toBe(400);
 		expect((await blocked.json()).error).toBe('insufficient simulated balance');
@@ -1678,8 +1678,8 @@ test('admin investment initiation reserves once, honors withdrawal reservations,
 		await settleMaturedSimulatedInvestments(new Date(startsAt.getTime()+1000));
 		expect((await db.investmentRequest.findUniqueOrThrow({where:{id:investment.id}})).status).toBe('ACTIVE');
 		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialBalance-750);
-		const activationNotification=await db.notification.findFirst({where:{userId,relatedEntity:'INVESTMENT',relatedId:investment.id,title:'DEMO investment started'},select:{accountMode:true}});
-		expect(activationNotification).toMatchObject({accountMode:'DEMO'});
+		const activationNotification=await db.notification.findFirst({where:{userId,relatedEntity:'INVESTMENT',relatedId:investment.id,title:'REAL investment started'},select:{accountMode:true}});
+		expect(activationNotification).toMatchObject({accountMode:'REAL'});
 	}finally{await adminContext.close();}
 });
 
@@ -2626,6 +2626,10 @@ test('approved internal deposit receipts show gross amount, deducted fee, net cr
 		const transaction=wallet.transactions.find((item:{id:string})=>item.id===request.id);
 		expect(transaction).toMatchObject({status:'APPROVED',amount:'100',creditedAmount:'90',feeAmount:'10',reviewedBy:{email:fixture('ADMIN_EMAIL')}});
 		expect(transaction.reviewedAt).toBeTruthy();
+		await page.goto('/wallet/transactions');
+		const transactionRow=page.locator('.transaction-history-row').filter({hasText:request.id});
+		await expect(transactionRow).toContainText('Approved');
+		await expect(transactionRow).not.toContainText('Pending');
 		await page.goto('/wallet');
 		await page.locator('.wallet-ledger-records > summary').click();
 		const receiptDetails=page.locator('.wallet-receipt-list > details').filter({hasText:request.id}).first();
@@ -2641,7 +2645,7 @@ test('approved internal deposit receipts show gross amount, deducted fee, net cr
 	}finally{await adminContext.close();}
 });
 
-test('DEMO investment submissions cannot create settlement payouts',async({page})=>{
+test('DEMO investment submissions are denied without moving funds',async({page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await selectAccountMode(page,'DEMO');
 	const userId=await page.request.get('/api/profile').then(response=>response.json().then(profile=>profile.id));
@@ -2883,35 +2887,36 @@ test('Deleted Items enforces admin access and supports audited soft delete, bulk
 test('admin investment initiation is idempotent and reconciles against reserved ledger funds',async({browser,page})=>{
 	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
 	const demoUser=await createIsolatedDemoUser('admin-investment');
-	const opportunityResponse=await page.request.post('/api/admin/investments',{data:{title:'E2E admin initiated plan',category:'Internal simulation',description:'Disposable plan for administrator-initiated investment coverage.',assetSymbol:null,minimumAmount:50,maximumAmount:1_000_000_000,targetReturnPercent:8,durationDays:30,startsAt:null,maturesAt:null,riskLevel:'MODERATE',status:'AVAILABLE',demoEligible:true,realEligible:true,requiresApproval:true,targetPrice:null,stopPrice:null}});
+	const opportunityResponse=await page.request.post('/api/admin/investments',{data:{title:'E2E admin initiated plan',category:'Internal simulation',description:'Disposable plan for administrator-initiated investment coverage.',assetSymbol:null,minimumAmount:50,maximumAmount:1_000_000_000,targetReturnPercent:8,durationDays:30,startsAt:null,maturesAt:null,riskLevel:'MODERATE',status:'AVAILABLE',demoEligible:false,realEligible:true,requiresApproval:true,targetPrice:null,stopPrice:null}});
 	expect(opportunityResponse.status()).toBe(201);
 	const opportunity=await opportunityResponse.json();
 	const userContext=await browser.newContext();
 	try{
 		const userPage=await userContext.newPage();
 		await loginAs(userPage,demoUser.email,demoUser.password);
-		await selectAccountMode(userPage,'DEMO');
+		await selectAccountMode(userPage,'REAL');
 		const userId=await userPage.request.get('/api/profile').then(response=>response.json().then(profile=>profile.id));
+		const credit=await page.request.post('/api/admin/balances',{data:{userId,accountMode:'REAL',currency:'USD',amount:'2000.00',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Isolated investment route test funding',idempotencyKey:randomUUID()}});
+		expect(credit.status()).toBe(201);
 		const before=Number((await userPage.request.get('/api/wallet').then(response=>response.json())).balance);
+		expect(before).toBe(2000);
 		const initialEligible=await userPage.request.get('/api/investments').then(response=>response.json());
-		expect(initialEligible).toMatchObject({accountMode:'DEMO',availableBalance:'0',opportunities:[],requests:[]});
-		await db.fundingRequest.create({data:{userId,type:'WITHDRAWAL',method:'E2E reserved withdrawal',amount:500,currency:'USD',accountMode:'DEMO',status:'PENDING_REVIEW'}});
-		const userOverdraw=await userPage.request.post('/api/investments',{headers:{'Idempotency-Key':randomUUID()},data:{opportunityId:opportunity.id,amount:100}});
-		expect(userOverdraw.status()).toBe(403);
-		expect((await userOverdraw.json()).error).toContain('unavailable in DEMO');
+		expect(initialEligible).toMatchObject({accountMode:'REAL',availableBalance:'2000',opportunities:[],requests:[]});
+		await db.fundingRequest.create({data:{userId,type:'WITHDRAWAL',method:'E2E reserved withdrawal',amount:500,currency:'USD',accountMode:'REAL',status:'PENDING_REVIEW'}});
 		const expectedAvailable=Prisma.Decimal.max(0,new Prisma.Decimal(before).minus(500)).toString();
-		expect((await userPage.request.get('/api/investments').then(response=>response.json())).availableBalance).toBe('0');
+		expect((await userPage.request.get('/api/investments').then(response=>response.json())).availableBalance).toBe(expectedAvailable);
 		const eligibleUsers=await page.request.get(`/api/admin/investments/users?search=${encodeURIComponent(demoUser.email)}`).then(response=>response.json());
-		expect(eligibleUsers.items.find((item:{id:string})=>item.id===userId).availableBalances.DEMO).toBe(expectedAvailable);
-		expect((await userPage.request.get('/api/investments').then(response=>response.json())).opportunities).toEqual([]);
+		expect(eligibleUsers.items.find((item:{id:string})=>item.id===userId).availableBalances.REAL).toBe(expectedAvailable);
 		const idempotencyKey=randomUUID();
 		const startsAt=new Date(Date.now()-1000);
 		const maturesAt=new Date(startsAt.getTime()+30*86_400_000);
-		const payload={action:'initiate',userId,opportunityId:opportunity.id,accountMode:'DEMO',amount:250,targetReturnPercent:8,startsAt:startsAt.toISOString(),maturesAt:maturesAt.toISOString()};
+		const payload={action:'initiate',userId,opportunityId:opportunity.id,accountMode:'REAL',amount:250,targetReturnPercent:8,startsAt:startsAt.toISOString(),maturesAt:maturesAt.toISOString()};
+		const demoInitiation=await page.request.post('/api/admin/investments',{headers:{'Idempotency-Key':randomUUID()},data:{...payload,accountMode:'DEMO'}});
+		expect(demoInitiation.status()).toBe(400);
 		const initiated=await page.request.post('/api/admin/investments',{headers:{'Idempotency-Key':idempotencyKey},data:payload});
 		expect(initiated.status()).toBe(201);
 		const investment=await initiated.json();
-		expect(investment).toMatchObject({userId,accountMode:'DEMO',amount:'250',status:'ACTIVE',targetReturnPercent:'8'});
+		expect(investment).toMatchObject({userId,accountMode:'REAL',amount:'250',status:'ACTIVE',targetReturnPercent:'8'});
 		const replay=await page.request.post('/api/admin/investments',{headers:{'Idempotency-Key':idempotencyKey},data:payload});
 		expect(replay.status()).toBe(200);
 		expect((await replay.json()).id).toBe(investment.id);
@@ -2919,7 +2924,7 @@ test('admin investment initiation is idempotent and reconciles against reserved 
 		expect(mismatchedReplay.status()).toBe(409);
 		expect(await db.ledgerTransaction.count({where:{reference:`INVESTMENT:${investment.id}:RESERVE`}})).toBe(1);
 		expect(Number((await userPage.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(before-250);
-		expect((await userPage.request.get('/api/investments').then(response=>response.json())).requests).toEqual([]);
+		expect((await userPage.request.get('/api/investments').then(response=>response.json())).requests).toContainEqual(expect.objectContaining({id:investment.id,accountMode:'REAL'}));
 
 		const scheduledStart=new Date(Date.now()+60_000);
 		const scheduledEnd=new Date(scheduledStart.getTime()+7*86_400_000);

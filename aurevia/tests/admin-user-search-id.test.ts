@@ -46,6 +46,14 @@ describe('admin Aurevia Exchange ID search',()=>{
 		}));
 	});
 
+	it('filters active and inactive users without including retained closed accounts',async()=>{
+		await GET(new Request('https://aurevia.test/api/admin/users?status=INACTIVE'));
+
+		expect(mocks.userFindMany).toHaveBeenCalledWith(expect.objectContaining({
+			where:expect.objectContaining({status:{in:['FROZEN','SUSPENDED']}}),
+		}));
+	});
+
 	it('uses the same existing tier progression in the admin account list',async()=>{
 		mocks.userFindMany.mockResolvedValue([{
 			id:'user-1',

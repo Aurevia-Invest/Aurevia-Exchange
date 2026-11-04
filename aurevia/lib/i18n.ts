@@ -321,7 +321,7 @@ const base = {
   positionValue: "Position value",
   reservedInvestments: "Reserved investments",
   portfolioResetTitle: "Reset Demo Account",
-  resetPortfolioDescription: "Restores DEMO cash to exactly $5,000, closes open practice positions, cancels open orders and any legacy unsettled DEMO investments. Completed legacy investments must be settled first. Historical ledger and audit records are retained.",
+  resetPortfolioDescription: "Restores DEMO cash to its original virtual allocation, closes open practice positions, cancels open orders and refunds unsettled DEMO investments. Historical ledger and audit records are retained.",
   resetDemo: "Reset Demo Account",
   confirmDemoReset: "Confirm DEMO reset",
   typeResetConfirmation: "Type RESET DEMO ACCOUNT to confirm",

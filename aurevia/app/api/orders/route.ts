@@ -11,12 +11,33 @@ import {cancelAlpacaPaperOrder,submitAlpacaPaperOrder,ALPACA_PAPER_PROVIDER,Alpa
 import {rateLimit} from '@/lib/rate-limit';
 
 const schema=z.object({instrumentId:z.string().min(1),accountMode:z.nativeEnum(AccountMode).optional(),side:z.enum(['BUY','SELL']),type:z.enum(['MARKET','LIMIT','STOP']),quantity:z.number().positive().max(1_000_000_000),price:z.number().positive().optional(),stopPrice:z.number().positive().optional(),expectedPrice:z.number().positive(),observedAt:z.string().datetime()});
+const privateOrderFields=['providerName','providerAccountId','providerOrderId','providerClientOrderId','providerStatus','providerAcceptedAt','providerUpdatedAt','providerReservedAmount','reconciliationStatus','reconciledAt','idempotencyKey'];
+const privateExecutionFields=['providerExecutionId','providerOrderId','providerClientOrderId'];
+
+function customerOrder<T extends object>(order:T):T{
+	const result={...order};
+	if(Reflect.get(result,'reconciliationStatus')==='RECONCILIATION_REQUIRED'){
+		Reflect.set(result,'status','REQUIRES_REVIEW');
+		Reflect.set(result,'reviewRequired',true);
+	}
+	for(const field of privateOrderFields)Reflect.deleteProperty(result,field);
+	const executions=Reflect.get(result,'executions');
+	if(Array.isArray(executions))Reflect.set(result,'executions',executions.map(execution=>{
+		if(!execution||typeof execution!=='object')return execution;
+		const customerExecution={...execution};
+		for(const field of privateExecutionFields)Reflect.deleteProperty(customerExecution,field);
+		return customerExecution;
+	}));
+	return result;
+}
+
 export async function GET(){
 	try{
 		const user=await requireUser();
 		const currentUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
 		if(!currentUser||currentUser.status!=='ACTIVE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
-		return NextResponse.json(jsonSafe(await db.order.findMany({where:{userId:user.id,accountMode:currentUser.accountMode},include:{instrument:true,executions:true},orderBy:{createdAt:'desc'},take:100})),{headers:{'Cache-Control':'private, no-store'}});
+		const orders=await db.order.findMany({where:{userId:user.id,accountMode:currentUser.accountMode},include:{instrument:true,executions:true},orderBy:{createdAt:'desc'},take:100});
+		return NextResponse.json(jsonSafe(orders.map(customerOrder)),{headers:{'Cache-Control':'private, no-store'}});
 	}catch{return NextResponse.json({error:'Unauthorized'},{status:401})}
 }
 
@@ -33,11 +54,12 @@ export async function POST(request:Request){
 		const order=currentUser.accountMode===AccountMode.REAL
 			?await submitAlpacaPaperOrder(user.id,input,idempotencyKey)
 			:await placeOrder(user.id,currentUser.accountMode,input,idempotencyKey);
-		return NextResponse.json(jsonSafe(order),{status:201});
+		if(!order)throw new Error('ORDER_SUBMISSION_RETURNED_NO_ORDER');
+		return NextResponse.json(jsonSafe(customerOrder(order)),{status:201});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:error.issues[0]?.message||'Invalid order.'},{status:400});
 		if(error instanceof AlpacaPaperOrderError)return NextResponse.json({error:paperOrderMessage(error.code)},{status:error.httpStatus});
-		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Paper order requests are temporarily limited.'},{status:429});
+		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Order requests are temporarily limited. Try again shortly.'},{status:429});
 		if(error instanceof Error&&error.message==='DEMO_POSITION_LIMIT')return NextResponse.json({error:'Order exceeds the configured DEMO maximum position size.'},{status:409});
 		if(error instanceof Error&&error.message==='INSUFFICIENT_SIMULATED_BALANCE')return NextResponse.json({error:'Insufficient available account cash for this order, including fees and execution costs.'},{status:409});
 		if(error instanceof Error&&error.message==='INSUFFICIENT_POSITION')return NextResponse.json({error:'The sell quantity exceeds your available DEMO position.'},{status:409});
@@ -52,24 +74,18 @@ export async function POST(request:Request){
 }
 
 function paperOrderMessage(code:string){
-	if(code==='ALPACA_PAPER_NOT_CONFIGURED')return 'Alpaca Paper order submission is not configured.';
-	if(code==='ALPACA_PAPER_ORDERS_DISABLED')return 'Alpaca Paper orders are disabled. Ask an administrator to enable the paper-only setting.';
-	if(code==='ALPACA_PAPER_ACCOUNT_UNAVAILABLE')return 'The shared Alpaca Paper account is not active for trading.';
-	if(code==='ALPACA_PAPER_ASSET_NOT_TRADABLE'||code==='ALPACA_TRADING_API_ERROR:404')return 'This instrument is not available for trading in Alpaca Paper.';
-	if(code==='ALPACA_PAPER_AUTHENTICATION_FAILED'||code==='PRECHECK_FAILED:401'||code==='PRECHECK_FAILED:403')return 'Alpaca Paper authentication failed. Ask an administrator to check the server configuration.';
-	if(code==='ALPACA_PAPER_ORDER_REJECTED:401'||code==='ALPACA_PAPER_ORDER_REJECTED:403')return 'Alpaca Paper authentication failed. Ask an administrator to check the server configuration.';
-	if(code.startsWith('ALPACA_PAPER_ORDER_REJECTED:'))return `Alpaca Paper rejected the order (${code.split(':').at(-1)}).`;
-	if(code==='ALPACA_PAPER_ORDER_STATUS_UNAVAILABLE')return 'The order outcome could not be verified. It will not be resubmitted; ask an administrator to reconcile it.';
-	if(code==='ALPACA_PAPER_ORDER_NOT_FOUND_AT_PROVIDER')return 'Alpaca Paper has not confirmed this order. It remains pending administrator review.';
-	if(code==='ALPACA_PAPER_CLIENT_ORDER_ID_MISMATCH')return 'The provider response did not match this order request. It requires administrator review.';
-	if(code==='INSUFFICIENT_REAL_WALLET_COLLATERAL')return 'Your available Aurevia REAL balance is not sufficient after existing paper-trading reservations.';
+	if(code==='ALPACA_PAPER_NOT_CONFIGURED'||code==='ALPACA_PAPER_ORDERS_DISABLED'||code==='ALPACA_PAPER_ACCOUNT_UNAVAILABLE'||code==='ALPACA_PAPER_AUTHENTICATION_FAILED'||code.startsWith('PRECHECK_FAILED:')||code==='PRECHECK_UNAVAILABLE')return 'This order could not be submitted right now. Try again later.';
+	if(code==='ALPACA_PAPER_ASSET_NOT_TRADABLE'||code==='ALPACA_TRADING_API_ERROR:404')return 'This instrument is currently unavailable for trading.';
+	if(code.startsWith('ALPACA_PAPER_ORDER_REJECTED:'))return 'The order was rejected. Check the order details and try again.';
+	if(code==='ALPACA_PAPER_ORDER_STATUS_UNAVAILABLE')return 'The order status is being verified. It will not be resubmitted until confirmed.';
+	if(code==='ALPACA_PAPER_ORDER_NOT_FOUND_AT_PROVIDER')return 'Order confirmation is pending. Your wallet and holdings have not been updated.';
+	if(code==='ALPACA_PAPER_CLIENT_ORDER_ID_MISMATCH')return 'Unable to verify this order. Your wallet was not updated; contact support.';
+	if(code==='INSUFFICIENT_REAL_WALLET_COLLATERAL')return 'Your available Aurevia wallet balance is not sufficient after open-order reservations.';
 	if(code==='STALE_MARKET_QUOTE')return 'The quote is stale. Refresh market data before submitting this order.';
-	if(code==='ALPACA_PAPER_MARKET_QUOTE_UNAVAILABLE')return 'A fresh provider quote is unavailable. No paper order was sent.';
-	if(code.startsWith('PRECHECK_FAILED:'))return 'Alpaca Paper could not validate this order. Ask an administrator to review provider connectivity.';
-	if(code==='PRECHECK_UNAVAILABLE')return 'Alpaca Paper could not be reached before submission. No provider order was sent.';
-	if(code==='ALPACA_PAPER_FILL_SNAPSHOT_CONFLICT'||code==='ALPACA_PAPER_POSITION_RECONCILIATION_REQUIRED')return 'The provider execution requires administrator reconciliation. No wallet balance was changed.';
-	if(code==='INSUFFICIENT_POSITION')return 'You may only sell quantities filled by your own REAL-side Alpaca Paper orders.';
-	return code.replaceAll('_',' ').toLowerCase();
+	if(code==='ALPACA_PAPER_MARKET_QUOTE_UNAVAILABLE')return 'A current market quote is unavailable. Try again shortly.';
+	if(code==='ALPACA_PAPER_FILL_SNAPSHOT_CONFLICT'||code==='ALPACA_PAPER_POSITION_RECONCILIATION_REQUIRED')return 'A confirmed order requires review before your wallet is updated. Contact support.';
+	if(code==='INSUFFICIENT_POSITION')return 'The sell quantity exceeds your available position.';
+	return 'Unable to process this order. Try again or contact support.';
 }
 
 export async function DELETE(request:Request){
@@ -83,7 +99,7 @@ export async function DELETE(request:Request){
 			const existing=await db.order.findFirst({where:{id:body.orderId,userId:user.id,accountMode:AccountMode.REAL},select:{providerName:true}});
 			if(existing?.providerName===ALPACA_PAPER_PROVIDER){
 				const cancelled=await cancelAlpacaPaperOrder(body.orderId,user.id);
-				return NextResponse.json(jsonSafe(cancelled),{headers:{'Cache-Control':'private, no-store'}});
+				return NextResponse.json(jsonSafe(customerOrder(cancelled)),{headers:{'Cache-Control':'private, no-store'}});
 			}
 		}
 		const cancelled=await db.$transaction(async tx=>{
@@ -92,7 +108,7 @@ export async function DELETE(request:Request){
 			const changed=await tx.order.updateMany({where:{id:order.id,status:'OPEN'},data:{status:'CANCELLED'}});
 			if(!changed.count)return false;
 			await tx.auditLog.create({data:{actorId:user.id,action:`${currentUser.accountMode}_SIMULATED_ORDER_CANCELLED`,entity:'ORDER',entityId:order.id,metadata:{oldState:'OPEN',newState:'CANCELLED',accountMode:currentUser.accountMode,simulated:true,instrument:order.instrument.symbol}}});
-			await createNotification(tx,{userId:user.id,type:NotificationType.TRADE,title:`${currentUser.accountMode} order cancelled`,message:`Your order for ${order.instrument.symbol} was cancelled. No external order was placed.`,dedupeKey:`order:${order.id}:cancelled`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/trade'});
+			await createNotification(tx,{userId:user.id,type:NotificationType.TRADE,title:`${currentUser.accountMode} order cancelled`,message:currentUser.accountMode===AccountMode.REAL?`Your simulated order for ${order.instrument.symbol} was cancelled. Any confirmed fills remain recorded in your Aurevia wallet and holdings.`:`Your order for ${order.instrument.symbol} was cancelled.`,dedupeKey:`order:${order.id}:cancelled`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/trade'});
 			return true;
 		});
 		if(!cancelled)return NextResponse.json({error:'Order not open or not found'},{status:404});

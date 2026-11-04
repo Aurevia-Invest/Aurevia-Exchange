@@ -2,7 +2,10 @@ import {expect,test as base,Page} from '@playwright/test';
 import {randomInt} from 'node:crypto';
 
 type RuntimeCapture={consoleErrors:string[];pageErrors:string[];failedRequests:string[];failedResponses:Array<{url:string;status:number}>};
-const marketProviderConfigured=!process.env.AUREVIA_E2E_DATABASE_URL&&Boolean(process.env.FINNHUB_API_KEY||process.env.ALPACA_API_KEY&&process.env.ALPACA_SECRET_KEY);
+const marketProviderConfigured=!process.env.AUREVIA_E2E_DATABASE_URL&&Boolean(
+	process.env.FINNHUB_API_KEY||
+	process.env.ALPACA_API_KEY&&(process.env.ALPACA_SECRET_KEY||process.env.ALPACA_API_SECRET),
+);
 const appOrigin=process.env.AUREVIA_E2E_APP_URL||'http://127.0.0.1:4310';
 const credentialCallback='**/api/auth/callback/credentials**';
 

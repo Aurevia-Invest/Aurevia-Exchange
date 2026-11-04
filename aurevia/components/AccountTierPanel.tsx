@@ -120,7 +120,7 @@ export default function AccountTierPanel(){
 				<section className="tier-panel">
 					<div className="tier-panel-heading"><div><span>AVAILABLE ACCESS</span><h2>Account permissions</h2></div><LockKeyhole size={18}/></div>
 					<ul className="tier-permissions"><li><Check size={14}/>Dashboard and basic account access</li><li><Check size={14}/>Profile and account settings</li><li className={data.permissions.tierBenefits?'is-enabled':''}>{data.permissions.tierBenefits?<Check size={14}/>:<LockKeyhole size={14}/>}Configured Tier 2 account benefits</li><li className={data.permissions.identityVerification?'is-enabled':''}>{data.permissions.identityVerification?<Check size={14}/>:<LockKeyhole size={14}/>}Identity verification submission</li><li className={data.permissions.verifiedAccount?'is-enabled':''}>{data.permissions.verifiedAccount?<Check size={14}/>:<LockKeyhole size={14}/>}Verified-account status</li><li className={data.permissions.realMoneyServices?'is-enabled':''}>{data.permissions.realMoneyServices?<Check size={14}/>:<LockKeyhole size={14}/>}REAL trading and deposits before KYC</li><li><LockKeyhole size={14}/>Withdrawals after approved KYC</li></ul>
-					<p className="tier-disclosure"><MailCheck size={14}/> Tier status never bypasses KYC, account restrictions, provider configuration, or financial controls.</p>
+					<p className="tier-disclosure"><MailCheck size={14}/> Tier status never bypasses KYC, account restrictions, service availability, or financial controls.</p>
 				</section>
 			</div>
 

@@ -59,7 +59,7 @@ describe('portfolio metrics',()=>{
 		}).toFixed(2)).toBe('0.00');
 	});
 
-	it('withholds paper-order cost basis and open buy reservations from REAL withdrawals',async()=>{
+	it('withholds only outstanding buy reservations from REAL withdrawals',async()=>{
 		const tx={
 			fundingRequest:{aggregate:async()=>({_sum:{amount:new Prisma.Decimal('100')}})},
 			order:{findMany:async()=>[
@@ -76,6 +76,6 @@ describe('portfolio metrics',()=>{
 			]},
 		} as unknown as Parameters<typeof getRealWithdrawableBalance>[0];
 
-		expect((await getRealWithdrawableBalance(tx,'user-1',new Prisma.Decimal('1000'))).toFixed(2)).toBe('700.00');
+		expect((await getRealWithdrawableBalance(tx,'user-1',new Prisma.Decimal('1000'))).toFixed(2)).toBe('800.00');
 	});
 });

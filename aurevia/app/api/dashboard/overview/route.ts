@@ -11,6 +11,11 @@ import {jsonSafe} from '@/lib/serializers';
 import {MARKET_ASSETS} from '@/lib/live-market';
 import {getInternalInstrumentSymbols} from '@/lib/internal-market-data';
 import {simulatedInvestmentSettlement} from '@/lib/investment-policy';
+import {ALPACA_PAPER_PROVIDER} from '@/lib/bitcoin-funding';
+import {getWalletBackedPaperInstrumentIds} from '@/lib/paper-ledger-reconciliation';
+import {getMarketAssetForTradingSymbol,isExternalMarketDataSource} from '@/lib/live-market';
+import {getMarketQuoteWithFallback,getAlpacaMarketDataOptions} from '@/lib/market-data-service';
+import {getServerConfiguration} from '@/lib/config/env';
 
 export const dynamic='force-dynamic';
 
@@ -82,18 +87,52 @@ export async function GET(){
 
 		const activeAccount=accounts[0];
 		const activeBalance=activeAccount?await balance(db,activeAccount.id):new Prisma.Decimal(0);
-		const positionValue=positions.reduce((sum,position)=>sum.plus(position.instrument.price.mul(position.quantity)),new Prisma.Decimal(0));
-		const unrealizedPnl=positions.reduce((sum,position)=>{
-			const direction=position.side==='BUY'?1:-1;
-			return sum.plus(position.entryPrice.mul(-direction).plus(position.instrument.price.mul(direction)).mul(position.quantity));
-		},new Prisma.Decimal(0));
+		const walletBackedPaperInstrumentIds=mode===AccountMode.REAL&&positions.some(position=>position.providerName===ALPACA_PAPER_PROVIDER)
+			?await getWalletBackedPaperInstrumentIds(db,profile.id)
+			:new Set<string>();
+		const valuationPositions=mode===AccountMode.REAL
+			?positions.filter(position=>position.providerName!==ALPACA_PAPER_PROVIDER||walletBackedPaperInstrumentIds.has(position.instrumentId))
+			:positions;
+		const unreconciledPaperPositionCount=positions.filter(position=>position.providerName===ALPACA_PAPER_PROVIDER&&!walletBackedPaperInstrumentIds.has(position.instrumentId)).length;
+		const marketMarks=new Map<string,Prisma.Decimal>();
+		if(mode===AccountMode.REAL&&valuationPositions.length){
+			const configuration=getServerConfiguration();
+			const alpacaData=getAlpacaMarketDataOptions(configuration.execution);
+			const instruments=[...new Map(valuationPositions.map(position=>[position.instrumentId,position.instrument])).entries()];
+			const quotes=await Promise.all(instruments.map(async([instrumentId,instrument])=>{
+				const asset=getMarketAssetForTradingSymbol(instrument.symbol);
+				if(!asset)return null;
+				try{
+					const quote=await getMarketQuoteWithFallback(asset,configuration.marketData.finnhubApiKey,alpacaData);
+					if(!isExternalMarketDataSource(quote.source)||quote.isStale)return null;
+					return {instrumentId,price:new Prisma.Decimal(quote.price)};
+				}catch{return null;}
+			}));
+			for(const quote of quotes)if(quote)marketMarks.set(quote.instrumentId,quote.price);
+		}
+		const currentMarksAvailable=mode===AccountMode.DEMO||valuationPositions.every(position=>marketMarks.has(position.instrumentId));
+		const positionValue=mode===AccountMode.DEMO
+			?positions.reduce((sum,position)=>sum.plus(position.instrument.price.mul(position.quantity)),new Prisma.Decimal(0))
+			:currentMarksAvailable?valuationPositions.reduce((sum,position)=>sum.plus(position.quantity.mul(marketMarks.get(position.instrumentId)??0)),new Prisma.Decimal(0)):null;
+		const unrealizedPnl=mode===AccountMode.DEMO
+			?positions.reduce((sum,position)=>{
+				const direction=position.side==='BUY'?1:-1;
+				return sum.plus(position.entryPrice.mul(-direction).plus(position.instrument.price.mul(direction)).mul(position.quantity));
+			},new Prisma.Decimal(0))
+			:currentMarksAvailable?valuationPositions.reduce((sum,position)=>{
+				const currentPrice=marketMarks.get(position.instrumentId)??new Prisma.Decimal(0);
+				const direction=position.side==='BUY'?1:-1;
+				return sum.plus(position.entryPrice.mul(-direction).plus(currentPrice.mul(direction)).mul(position.quantity));
+			},new Prisma.Decimal(0)):null;
 		const investmentValue=investments.reduce((sum,investment)=>sum.plus(investment.amount),new Prisma.Decimal(0));
-		const totalValue=activeBalance.plus(positionValue).plus(investmentValue);
+		const totalValue=positionValue===null?null:activeBalance.plus(positionValue).plus(investmentValue);
 		const allocationValues=new Map<string,Prisma.Decimal>();
 		if(activeBalance.gt(0))allocationValues.set('Cash',activeBalance);
-		for(const position of positions){
+		for(const position of valuationPositions){
+			const price=mode===AccountMode.DEMO?position.instrument.price:marketMarks.get(position.instrumentId);
+			if(!price)continue;
 			const category=instrumentAssetCategory(position.instrument);
-			allocationValues.set(category,(allocationValues.get(category)??new Prisma.Decimal(0)).plus(position.instrument.price.mul(position.quantity)));
+			allocationValues.set(category,(allocationValues.get(category)??new Prisma.Decimal(0)).plus(price.mul(position.quantity)));
 		}
 		for(const investment of investments){
 			const category=investment.opportunity.category;
@@ -125,13 +164,14 @@ export async function GET(){
 				unrealizedPnl,
 				allocations,
 			},
+			unreconciledPaperPositionCount,
 			positions:positions.slice(0,8).map(position=>({
 				id:position.id,
 				side:position.side,
 				quantity:position.quantity,
 				entryPrice:position.entryPrice,
-				currentPrice:position.instrument.price,
-				marketValue:position.instrument.price.mul(position.quantity),
+				currentPrice:mode===AccountMode.DEMO?position.instrument.price:walletBackedPaperInstrumentIds.has(position.instrumentId)||position.providerName!==ALPACA_PAPER_PROVIDER?marketMarks.get(position.instrumentId)??null:null,
+				marketValue:mode===AccountMode.DEMO?position.instrument.price.mul(position.quantity):walletBackedPaperInstrumentIds.has(position.instrumentId)||position.providerName!==ALPACA_PAPER_PROVIDER?marketMarks.get(position.instrumentId)?.mul(position.quantity)??null:null,
 				openedAt:position.openedAt,
 				instrument:{symbol:position.instrument.symbol,name:position.instrument.name},
 			})),
@@ -152,8 +192,8 @@ export async function GET(){
 			internalMarketInstruments,
 			limitations:{
 				balances:'Separate USD ledger balances for DEMO and REAL; never combined.',
-				portfolio:mode===AccountMode.DEMO?'DEMO cash and simulated positions valued at internal instrument prices.': 'Cash, open positions valued at internal instrument prices, and active-mode investment principal.',
-				realExecution:'REAL trading records may use the configured paper provider; this dashboard does not represent external custody or settled external assets.',
+				portfolio:mode===AccountMode.DEMO?'DEMO cash and practice positions valued at internal reference prices.':'Cash, currently valued positions, and active investment principal.',
+				realExecution:'REAL-account orders are simulated, not live market transactions. Confirmed fills update the Aurevia wallet and positions.',
 			},
 		}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){

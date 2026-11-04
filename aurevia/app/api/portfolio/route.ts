@@ -11,6 +11,7 @@ import {jsonSafe} from '@/lib/serializers';
 import {getMarketAssetForTradingSymbol,isExternalMarketDataSource} from '@/lib/live-market';
 import {getMarketQuoteWithFallback,getAlpacaMarketDataOptions} from '@/lib/market-data-service';
 import {getServerConfiguration} from '@/lib/config/env';
+import {getWalletBackedPaperInstrumentIds} from '@/lib/paper-ledger-reconciliation';
 
 export const dynamic='force-dynamic';
 
@@ -23,10 +24,11 @@ export async function GET(){
    const activeUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
    if(!activeUser||activeUser.status!=='ACTIVE')return NextResponse.json({error:'Unauthorized'},{status:401});
    const mode=activeUser.accountMode;
-  const [account,positions,realizedAggregate,investments,settledInvestments,depositAggregate,recentFunding,availableOpportunities,paperOrders,pendingWithdrawals]=await Promise.all([
+  const [account,positions,realizedAggregate,paperRealizedByInstrument,investments,settledInvestments,depositAggregate,recentFunding,availableOpportunities,paperOrders,pendingWithdrawals]=await Promise.all([
    db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${mode}:USD`},select:{id:true,startingBalance:true}}),
    db.position.findMany({where:{userId:user.id,accountMode:mode,status:'OPEN'},include:{instrument:true},orderBy:{openedAt:'asc'}}),
-   db.position.aggregate({where:{userId:user.id,accountMode:mode,providerName:null},_sum:{realizedPnl:true}}),
+   db.position.aggregate({where:{userId:user.id,accountMode:mode,...(mode===AccountMode.REAL?{OR:[{providerName:null},{providerName:{not:ALPACA_PAPER_PROVIDER}}]}:{})},_sum:{realizedPnl:true}}),
+   mode===AccountMode.REAL?db.position.groupBy({by:['instrumentId'],where:{userId:user.id,accountMode:mode,providerName:ALPACA_PAPER_PROVIDER},_sum:{realizedPnl:true}}):Promise.resolve([]),
    mode===AccountMode.REAL?db.investmentRequest.findMany({where:{userId:user.id,accountMode:mode},include:{opportunity:{select:{title:true,category:true,assetSymbol:true,riskLevel:true,durationDays:true}}},orderBy:{requestedAt:'desc'}}):Promise.resolve([]),
    mode===AccountMode.REAL?db.investmentRequest.findMany({where:{userId:user.id,accountMode:mode,status:InvestmentStatus.SETTLED},select:{amount:true,simulatedPayout:true}}):Promise.resolve([]),
    mode===AccountMode.REAL?db.fundingRequest.aggregate({
@@ -41,6 +43,9 @@ export async function GET(){
    mode===AccountMode.REAL?reservedWithdrawalAmount(db,user.id,AccountMode.REAL,'USD'):Promise.resolve(zero()),
   ]);
   const cashBalance=account?await balance(db,account.id):zero();
+  const walletBackedPaperInstrumentIds=mode===AccountMode.REAL&&positions.some(position=>position.providerName===ALPACA_PAPER_PROVIDER)
+   ?await getWalletBackedPaperInstrumentIds(db,user.id)
+   :new Set<string>();
   const paperCollateral=paperOrderCollateral(paperOrders.map(order=>({...order,takerFee:order.instrument.takerFee})));
   const paperAvailableBalance=Prisma.Decimal.max(zero(),cashBalance.minus(pendingWithdrawals).minus(paperCollateral.committed));
   const availableCashBalance=paperAvailableBalance;
@@ -78,16 +83,19 @@ export async function GET(){
     unrealizedPnl:valuation.unrealizedPnl,
     valuationStatus:status,
     valuationAsOf:Number.isFinite(mark.quotedAt.getTime())?mark.quotedAt:null,
-    valuationSource:mark.source,
+    valuationSource:'Market quote',
    };
   };
   const paperPositions=positions.filter(position=>position.providerName===ALPACA_PAPER_PROVIDER).map(position=>{
-   const valuation=positionValuation(position);
+   const walletBacked=walletBackedPaperInstrumentIds.has(position.instrumentId);
+   const valuation=walletBacked
+    ?positionValuation(position)
+    :{currentPrice:null,marketValue:null,unrealizedPnl:null,valuationStatus:'UNAVAILABLE' as const,valuationAsOf:null,valuationSource:null};
    return {
-    id:position.id,symbol:position.instrument.symbol,name:position.instrument.name,side:position.side,
+    id:position.id,symbol:position.instrument.symbol,name:position.instrument.name,category:instrumentAssetCategory(position.instrument),side:position.side,
     quantity:position.quantity,averageEntryPrice:position.entryPrice,realizedPnl:position.realizedPnl,
     currentPrice:valuation.currentPrice,marketValue:valuation.marketValue,unrealizedPnl:valuation.unrealizedPnl,
-    openedAt:position.openedAt,valuationStatus:valuation.valuationStatus,valuationAsOf:valuation.valuationAsOf,valuationSource:valuation.valuationSource,
+    openedAt:position.openedAt,valuationStatus:valuation.valuationStatus,valuationAsOf:valuation.valuationAsOf,valuationSource:valuation.valuationSource,walletBacked,
    };
   });
   const currentlyValuedPaperPositions=paperPositions.filter(position=>position.valuationStatus==='CURRENT');
@@ -99,16 +107,18 @@ export async function GET(){
    const valuation=positionValuation(position);
    return {...position,...valuation};
   });
-  const allPositions=[...valuedPositions,...paperPositions];
+  const backedPaperPositions=paperPositions.filter(position=>position.walletBacked);
+  const allPositions=[...valuedPositions,...backedPaperPositions];
   const currentPositionCount=allPositions.filter(position=>position.valuationStatus==='CURRENT').length;
   const positionValuationStatus=allPositions.length===0?'NOT_APPLICABLE':currentPositionCount===allPositions.length?'CURRENT':currentPositionCount>0?'PARTIAL':allPositions.some(position=>position.valuationStatus==='STALE')?'STALE':'UNAVAILABLE';
-  const missingInternalMark=mode===AccountMode.REAL&&valuedPositions.some(position=>position.valuationStatus!=='CURRENT');
-  const positionValue=missingInternalMark?null:valuedPositions.reduce((sum,position)=>sum.plus(position.marketValue??0),zero());
-  const unrealizedPnl=missingInternalMark?null:valuedPositions.reduce((sum,position)=>sum.plus(position.unrealizedPnl??0),zero());
+  const missingPositionMark=mode===AccountMode.REAL&&allPositions.some(position=>position.valuationStatus!=='CURRENT');
+  const positionValue=missingPositionMark?null:allPositions.reduce((sum,position)=>sum.plus(position.marketValue??0),zero());
+  const unrealizedPnl=missingPositionMark?null:allPositions.reduce((sum,position)=>sum.plus(position.unrealizedPnl??0),zero());
   const investedRequests=investments.filter(item=>activeInvestmentStatuses.has(item.status));
   const investmentValue=investedRequests.reduce((sum,item)=>sum.plus(item.amount),zero());
   const settledInvestmentPnl=settledInvestments.reduce((sum,item)=>sum.plus(recordedInvestmentPnl(item.amount,item.simulatedPayout)),zero());
-  const realizedPnl=new Prisma.Decimal(realizedAggregate._sum.realizedPnl??0).plus(settledInvestmentPnl);
+  const backedPaperRealizedPnl=paperRealizedByInstrument.filter(position=>walletBackedPaperInstrumentIds.has(position.instrumentId)).reduce((sum,position)=>sum.plus(position._sum.realizedPnl??0),zero());
+  const realizedPnl=new Prisma.Decimal(realizedAggregate._sum.realizedPnl??0).plus(backedPaperRealizedPnl).plus(settledInvestmentPnl);
   const totalPnl=unrealizedPnl===null?null:realizedPnl.plus(unrealizedPnl);
   const totalValue=positionValue===null?null:cashBalance.plus(positionValue).plus(investmentValue);
   const netDemoFunding=zero();
@@ -143,6 +153,15 @@ export async function GET(){
     gainLoss:position.unrealizedPnl,
     status:position.valuationStatus==='CURRENT'?position.status:`VALUATION_${position.valuationStatus}`,
    })),
+   ...paperPositions.map(position=>({
+    id:`POSITION:${position.id}`,
+    name:position.name,
+    category:position.category,
+    invested:position.walletBacked?position.averageEntryPrice.mul(position.quantity):zero(),
+    value:position.marketValue,
+    gainLoss:position.unrealizedPnl,
+    status:position.walletBacked?(position.valuationStatus==='CURRENT'?'OPEN':`VALUATION_${position.valuationStatus}`):'REVIEW_REQUIRED',
+   })),
    ...investedRequests.map(item=>({
     id:`INVESTMENT:${item.id}`,
     name:item.opportunity.title,
@@ -157,8 +176,10 @@ export async function GET(){
   for(const holding of holdings)if(holding.value!==null)allocationValues.set(holding.category,(allocationValues.get(holding.category)??zero()).plus(holding.value));
   const allocations=calculateAllocationPercentages([...allocationValues].map(([category,value])=>({category,value})));
   const rankedPositions=valuedPositions.filter(position=>position.unrealizedPnl!==null).toSorted((left,right)=>Number(right.unrealizedPnl)-Number(left.unrealizedPnl));
-  const totalInvested=valuedPositions.reduce((sum,item)=>sum.plus(item.entryPrice.mul(item.quantity)),zero()).plus(investedRequests.reduce((sum,item)=>sum.plus(item.amount),zero()));
-  const response={accountMode:mode,currency:'USD',cashBalance,availableCashBalance,positionValue,positionValuationStatus,investmentValue,totalValue,realizedPnl,unrealizedPnl,totalPnl,returnPercent,dailyPnl,dailyPercent,positions:valuedPositions,paperPositions,paperPositionValue:currentlyValuedPaperPositions.length?paperPositionValue:null,paperUnrealizedPnl:currentlyValuedPaperPositions.length?paperUnrealizedPnl:null,paperValuation:{status:paperValuationStatus,valuedCount:currentlyValuedPaperPositions.length,openCount:paperPositions.length},paperReservedBalance:paperCollateral.committed,paperAvailableBalance,investments,holdings,totalInvested,totalCurrentValue:totalValue,allocations,recentFunding,availableOpportunities,topGainers:rankedPositions.slice(0,3),topLosers:rankedPositions.slice(-3).reverse(),performance:performance.toReversed(),marketDataMode:mode===AccountMode.DEMO?'SIMULATED':allPositions.length===0?'LEDGER_ONLY':positionValuationStatus==='CURRENT'?'LIVE_PROVIDER':positionValuationStatus==='PARTIAL'?'PARTIAL_PROVIDER':'PROVIDER_UNAVAILABLE',externalValuationAvailable:mode===AccountMode.REAL&&allPositions.length>0&&positionValuationStatus==='CURRENT'};
+  const totalInvested=valuedPositions.reduce((sum,item)=>sum.plus(item.entryPrice.mul(item.quantity)),zero())
+   .plus(backedPaperPositions.reduce((sum,item)=>sum.plus(item.averageEntryPrice.mul(item.quantity)),zero()))
+   .plus(investedRequests.reduce((sum,item)=>sum.plus(item.amount),zero()));
+  const response={accountMode:mode,currency:'USD',cashBalance,availableCashBalance,positionValue,positionValuationStatus,investmentValue,totalValue,realizedPnl,unrealizedPnl,totalPnl,returnPercent,dailyPnl,dailyPercent,positions:valuedPositions,paperPositions,paperPositionValue:currentlyValuedPaperPositions.length?paperPositionValue:null,paperUnrealizedPnl:currentlyValuedPaperPositions.length?paperUnrealizedPnl:null,paperValuation:{status:paperValuationStatus,valuedCount:currentlyValuedPaperPositions.length,openCount:paperPositions.length},unreconciledPaperPositionCount:paperPositions.filter(position=>!position.walletBacked).length,paperReservedBalance:paperCollateral.committed,paperAvailableBalance,investments,holdings,totalInvested,totalCurrentValue:totalValue,allocations,recentFunding,availableOpportunities,topGainers:rankedPositions.slice(0,3),topLosers:rankedPositions.slice(-3).reverse(),performance:performance.toReversed(),marketDataMode:mode===AccountMode.DEMO?'SIMULATED':allPositions.length===0?'LEDGER_ONLY':positionValuationStatus==='CURRENT'?'LIVE_PROVIDER':positionValuationStatus==='PARTIAL'?'PARTIAL_PROVIDER':'PROVIDER_UNAVAILABLE',externalValuationAvailable:mode===AccountMode.REAL&&allPositions.length>0&&positionValuationStatus==='CURRENT'};
   return NextResponse.json(jsonSafe(response),{headers:{'Cache-Control':'private, no-store'}});
  }catch(error){
   return NextResponse.json({error:error instanceof Error&&error.message==='UNAUTHORIZED'?'Unauthorized':'Portfolio data is temporarily unavailable.'},{status:error instanceof Error&&error.message==='UNAUTHORIZED'?401:503,headers:{'Cache-Control':'private, no-store'}});

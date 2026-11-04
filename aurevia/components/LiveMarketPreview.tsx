@@ -7,7 +7,7 @@ import type {MarketQuote} from '@/lib/live-market';
 
 type QuoteError={asset:{id:string;name:string;currency:string};error:string};
 type QuoteItem=MarketQuote|QuoteError;
-type QuoteResponse={quotes:QuoteItem[];source:string};
+type QuoteResponse={quotes:QuoteItem[]};
 const symbols=['SPX','NASDAQ','DJI','AAPL','MSFT','BTC'];
 
 function isQuote(item:QuoteItem):item is MarketQuote{return 'price'in item;}
@@ -18,7 +18,6 @@ function formatPrice(quote:MarketQuote){
 
 export default function LiveMarketPreview(){
  const [quotes,setQuotes]=useState<QuoteItem[]>([]);
- const [source,setSource]=useState('Unavailable');
  const [loading,setLoading]=useState(true);
  const [error,setError]=useState('');
 
@@ -29,7 +28,7 @@ export default function LiveMarketPreview(){
     const response=await fetch(`/api/live-markets?symbols=${symbols.join(',')}`,{cache:'no-store'});
     const result=await response.json() as QuoteResponse;
     if(!response.ok)throw new Error('Live market quotes are unavailable.');
-    if(active){setQuotes(result.quotes);setSource(result.source||'Unavailable');setError('');}
+    if(active){setQuotes(result.quotes);setError('');}
    }catch(exception){if(active)setError(exception instanceof Error?exception.message:'Live market quotes are unavailable.');}
    finally{if(active)setLoading(false);}
   }
@@ -39,12 +38,12 @@ export default function LiveMarketPreview(){
  },[]);
 
  return <section className="live-market-preview" aria-label="Live market quotes">
-    <header><div><span className="account-kicker">EXTERNAL MARKET DATA</span><h2>Live market overview</h2><p>{source} quotes · read-only · may be delayed</p></div><Link className="text-link" href="/markets">Open markets <ArrowUpRight size={14}/></Link></header>
+    <header><div><span className="account-kicker">MARKET OVERVIEW</span><h2>Current market prices</h2><p>Read-only quotes · may be delayed</p></div><Link className="text-link" href="/markets">Open markets <ArrowUpRight size={14}/></Link></header>
   {error&&<p className="live-market-preview-error" role="alert">{error} Retry is automatic.</p>}
-  {loading&&!quotes.length?<p className="account-empty" role="status">Loading provider quotes…</p>:<div className="live-market-preview-grid">{quotes.map(item=>{
+  {loading&&!quotes.length?<p className="account-empty" role="status">Loading market prices…</p>:<div className="live-market-preview-grid">{quotes.map(item=>{
    if(!isQuote(item))return <article className="live-market-preview-row is-unavailable" key={item.asset.id}><div><b>{item.asset.id}</b><span>{item.asset.name}</span></div><strong>Unavailable</strong><small>{item.error}</small></article>;
-   return <article className={`live-market-preview-row ${item.isStale?'is-stale':''}`} key={item.asset.id}><div><b>{item.asset.id}</b><span>{item.asset.name}</span></div><strong>{formatPrice(item)}</strong><span className={item.changePercent>=0?'text-profit':'text-loss'}>{item.changePercent>=0?'+':''}{item.changePercent.toFixed(2)}%</span><small>{item.isStale?`Stale · last provider update ${new Date(item.updatedAt).toLocaleTimeString()}`:`Updated ${new Date(item.updatedAt).toLocaleTimeString()}`}</small></article>;
+   return <article className={`live-market-preview-row ${item.isStale?'is-stale':''}`} key={item.asset.id}><div><b>{item.asset.id}</b><span>{item.asset.name}</span></div><strong>{formatPrice(item)}</strong><span className={item.changePercent>=0?'text-profit':'text-loss'}>{item.changePercent>=0?'+':''}{item.changePercent.toFixed(2)}%</span><small>{item.isStale?`Stale · last quote ${new Date(item.updatedAt).toLocaleTimeString()}`:`Updated ${new Date(item.updatedAt).toLocaleTimeString()}`}</small></article>;
   })}</div>}
-    <footer><span>Source: {source}</span><button type="button" className="text-link" onClick={()=>{setLoading(true);setError('');void fetch(`/api/live-markets?symbols=${symbols.join(',')}`,{cache:'no-store'}).then(async response=>{const result=await response.json() as QuoteResponse;if(!response.ok)throw new Error('Live market quotes are unavailable.');setQuotes(result.quotes);setSource(result.source||'Unavailable');}).catch(exception=>setError(exception instanceof Error?exception.message:'Live market quotes are unavailable.')).finally(()=>setLoading(false));}}><RefreshCw size={13}/> Refresh</button></footer>
+    <footer><span>Prices are informational</span><button type="button" className="text-link" onClick={()=>{setLoading(true);setError('');void fetch(`/api/live-markets?symbols=${symbols.join(',')}`,{cache:'no-store'}).then(async response=>{const result=await response.json() as QuoteResponse;if(!response.ok)throw new Error('Market prices are unavailable.');setQuotes(result.quotes);}).catch(exception=>setError(exception instanceof Error?exception.message:'Market prices are unavailable.')).finally(()=>setLoading(false));}}><RefreshCw size={13}/> Refresh</button></footer>
  </section>;
 }

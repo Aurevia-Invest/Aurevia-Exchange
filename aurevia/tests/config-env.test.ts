@@ -250,7 +250,54 @@ describe('canonical environment configuration',()=>{
   it('supports the legacy Alpaca API secret alias without exposing it publicly',()=>{
     const config=getServerConfiguration({ALPACA_API_SECRET:'legacy-paper-secret'});
     expect(config.execution.alpacaTradingApiSecret).toBe('legacy-paper-secret');
+    expect(config.execution.alpacaClientSecret).toBe('legacy-paper-secret');
     expect(JSON.stringify(getPublicConfiguration({ALPACA_API_SECRET:'legacy-paper-secret'}))).not.toContain('legacy-paper-secret');
+  });
+
+  it('accepts ALPACA_BASE_URL as an alias for the paper trading endpoint',()=>{
+    const config=getServerConfiguration({
+      ALPACA_PROVIDER:'alpaca',
+      ALPACA_BASE_URL:'https://paper-api.alpaca.markets/v2',
+      ALPACA_API_KEY:'test-paper-key',
+      ALPACA_API_SECRET:'test-paper-secret',
+    });
+
+    expect(config.execution).toMatchObject({
+      provider:'alpaca',
+      alpacaTradingBaseUrl:'https://paper-api.alpaca.markets',
+      alpacaTradingUrlConfigured:true,
+      alpacaTradingUrlValid:true,
+      alpacaTradingConfigured:true,
+      alpacaBaseUrl:'https://paper-api.alpaca.markets/v2',
+      alpacaClientSecret:'test-paper-secret',
+      realEnabled:false,
+      alpacaPaperOrdersEnabled:false,
+    });
+  });
+
+  it('prefers the established ALPACA_TRADING_BASE_URL and ALPACA_SECRET_KEY names',()=>{
+    const config=getServerConfiguration({
+      ALPACA_TRADING_BASE_URL:'https://paper-api.alpaca.markets',
+      ALPACA_BASE_URL:'https://api.alpaca.markets',
+      ALPACA_SECRET_KEY:'primary-secret',
+      ALPACA_API_SECRET:'legacy-secret',
+    });
+
+    expect(config.execution.alpacaTradingBaseUrl).toBe('https://paper-api.alpaca.markets');
+    expect(config.execution.alpacaTradingApiSecret).toBe('primary-secret');
+  });
+
+  it('does not silently replace an explicitly configured non-paper endpoint with the alias',()=>{
+    const config=getServerConfiguration({
+      ALPACA_TRADING_BASE_URL:'https://api.alpaca.markets',
+      ALPACA_BASE_URL:'https://paper-api.alpaca.markets',
+      ALPACA_API_KEY:'test-paper-key',
+      ALPACA_SECRET_KEY:'test-paper-secret',
+    });
+
+    expect(config.execution.alpacaTradingUrlConfigured).toBe(true);
+    expect(config.execution.alpacaTradingUrlValid).toBe(false);
+    expect(config.execution.alpacaTradingConfigured).toBe(false);
   });
 
   it('keeps paper order submission disabled unless explicitly enabled',()=>{

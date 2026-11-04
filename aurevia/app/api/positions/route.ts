@@ -17,12 +17,13 @@ export async function GET(request:Request){
   if(requestedMode&&requestedMode!==currentUser.accountMode)return NextResponse.json({error:'Position account mode does not match your active account.'},{status:409});
   const positions=await db.position.findMany({where:{userId:user.id,accountMode:currentUser.accountMode,status:'OPEN'},include:{instrument:true},orderBy:{openedAt:'desc'}});
   return NextResponse.json(jsonSafe(positions.map(position=>{
-   if(position.providerName==='alpaca-paper')return {...position,currentPrice:null,marketValue:null,unrealizedPnl:null};
+   const requiresSellOrder=position.providerName==='alpaca-paper';
+   if(requiresSellOrder)return {...position,providerName:undefined,requiresSellOrder,currentPrice:null,marketValue:null,unrealizedPnl:null};
    const currentPrice=position.instrument.price;
    const marketValue=currentPrice.mul(position.quantity);
    const direction=position.side==='BUY'?1:-1;
    const unrealizedPnl=position.entryPrice.mul(-direction).plus(currentPrice.mul(direction)).mul(position.quantity);
-   return {...position,currentPrice,marketValue,unrealizedPnl};
+   return {...position,providerName:undefined,requiresSellOrder,currentPrice,marketValue,unrealizedPnl};
   })),{headers:{'Cache-Control':'private, no-store'}});
  }catch(error){
   return NextResponse.json({error:error instanceof Error&&error.message==='UNAUTHORIZED'?'Unauthorized':'Unable to load positions.'},{status:error instanceof Error&&error.message==='UNAUTHORIZED'?401:503});
@@ -42,7 +43,7 @@ export async function POST(request:Request){
   if(error instanceof ZodError)return NextResponse.json({error:'Invalid position.'},{status:400});
   if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
   if(error instanceof Error&&error.message==='POSITION_NOT_FOUND')return NextResponse.json({error:'Open position not found.'},{status:404});
-  if(error instanceof Error&&error.message==='PROVIDER_POSITION_REQUIRES_PROVIDER_ORDER')return NextResponse.json({error:'Submit a REAL sell order to Alpaca Paper to close this position.'},{status:409});
+  if(error instanceof Error&&error.message==='PROVIDER_POSITION_REQUIRES_PROVIDER_ORDER')return NextResponse.json({error:'Submit a REAL sell order to close this position.'},{status:409});
   return NextResponse.json({error:error instanceof Error?error.message:'Close failed'},{status:400});
  }
 }

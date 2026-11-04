@@ -13,13 +13,13 @@ export async function GET(request:Request){
 		await requireAdmin();
 		const input=querySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
 		const users=await db.user.findMany({
-			where:{role:Role.USER,status:{not:UserStatus.CLOSED},...(input.search?{OR:[{id:{contains:input.search,mode:'insensitive'}},{email:{contains:input.search,mode:'insensitive'}},{name:{contains:input.search,mode:'insensitive'}}]}:{})},
+			where:{role:Role.USER,status:{not:UserStatus.CLOSED},accountMode:AccountMode.REAL,...(input.search?{OR:[{id:{contains:input.search,mode:'insensitive'}},{email:{contains:input.search,mode:'insensitive'}},{name:{contains:input.search,mode:'insensitive'}}]}:{})},
 			select:{id:true,name:true,email:true,status:true,accountMode:true,approvedTier:true,accountRestricted:true,depositEnabled:true,withdrawalEnabled:true},
 			orderBy:{createdAt:'desc'},take:50,
 		});
 		const userIds=users.map(user=>user.id);
-		const accounts=userIds.length?await db.ledgerAccount.findMany({where:{userId:{in:userIds},currency:'USD',accountMode:{in:[AccountMode.DEMO,AccountMode.REAL]}},select:{userId:true,accountMode:true,id:true}}):[];
-		const reservations=userIds.length?await db.fundingRequest.groupBy({by:['userId','accountMode'],where:{userId:{in:userIds},currency:'USD',type:FundingType.WITHDRAWAL,status:{in:[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,FundingStatus.APPROVED,FundingStatus.PROCESSING]}},_sum:{amount:true}}):[];
+		const accounts=userIds.length?await db.ledgerAccount.findMany({where:{userId:{in:userIds},currency:'USD',accountMode:AccountMode.REAL},select:{userId:true,accountMode:true,id:true}}):[];
+		const reservations=userIds.length?await db.fundingRequest.groupBy({by:['userId','accountMode'],where:{userId:{in:userIds},accountMode:AccountMode.REAL,currency:'USD',type:FundingType.WITHDRAWAL,status:{in:[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,FundingStatus.APPROVED,FundingStatus.PROCESSING]}},_sum:{amount:true}}):[];
 		const ledgerEntries=accounts.length?await db.ledgerEntry.groupBy({by:['accountId','type'],where:{accountId:{in:accounts.map(account=>account.id)}},_sum:{amount:true}}):[];
 		const balanceByAccount=new Map<string,Prisma.Decimal>();
 		for(const entry of ledgerEntries){
@@ -35,7 +35,7 @@ export async function GET(request:Request){
 				const total=balanceByAccount.get(accountByUserMode.get(key)??'')??new Prisma.Decimal(0);
 				return Prisma.Decimal.max(new Prisma.Decimal(0),roundUsdAmount(total).minus(reservationByAccount.get(key)??0));
 			};
-			return {...user,availableBalances:{DEMO:available(AccountMode.DEMO),REAL:available(AccountMode.REAL)}};
+			return {...user,availableBalances:{REAL:available(AccountMode.REAL)}};
 		});
 		return NextResponse.json(jsonSafe({items}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){

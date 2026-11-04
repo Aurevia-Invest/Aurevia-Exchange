@@ -79,7 +79,7 @@ export default function HomeMarketPreview(){
 
   return <div className="market-stage is-live" aria-label={translate('marketView')}>
     <div className="market-stage-top">
-      <div className="market-source"><span className="source-dot is-live"/>{translate('demoEnvironment')} <span>{translate('marketView')}</span></div>
+      <div className="market-source"><span className="source-dot"/>Market prices</div>
       <span className="market-time"><span className={`live-pill ${marketDataStatus==='LIVE'?'is-live':'is-reference'}`}>{sourceStatus}</span> {translate('marketView')} · {ageLabel}</span>
     </div>
     <div className="market-stage-instrument">
@@ -112,7 +112,7 @@ export default function HomeMarketPreview(){
         })}
         {!visibleMarkets.length&&<span className="muted">{'No instruments available'}</span>}
       </div>
-      <span className="market-feed-status"><span className={`source-dot ${marketDataStatus==='LIVE'?'is-live':''}`}/>{status==='ready'?marketDataStatus==='LIVE'?'Provider feed':marketDataStatus==='PARTIAL'?'Mixed or stale feed':'Internal reference feed':translate('feedStatus',{status:status.toUpperCase()})}</span>
+      <span className="market-feed-status"><span className={`source-dot ${marketDataStatus==='LIVE'?'is-live':''}`}/>{status==='ready'?marketDataStatus==='LIVE'?'Current market prices':marketDataStatus==='PARTIAL'?'Some prices may be stale':'Indicative prices':translate('feedStatus',{status:status.toUpperCase()})}</span>
     </div>
   </div>;
 }

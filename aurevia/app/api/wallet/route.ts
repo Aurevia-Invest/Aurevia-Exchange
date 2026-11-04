@@ -48,7 +48,7 @@ export async function GET(){
 		if(currentUser.accountMode===AccountMode.DEMO){
 			const account=await db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${AccountMode.DEMO}:USD`}});
 			const virtualBalance=account?await balance(db,account.id):new Prisma.Decimal(0);
-			return NextResponse.json(jsonSafe({accountMode:AccountMode.DEMO,aureviaExchangeId:currentUser.aureviaExchangeId,balance:virtualBalance,withdrawableBalance:null,balances:[{currency:'USD',balance:virtualBalance}],transactions:[],adminLedgerReceipts:[]}),{headers:{'Cache-Control':'private, no-store'}});
+			return NextResponse.json(jsonSafe({accountMode:AccountMode.DEMO,aureviaExchangeId:currentUser.aureviaExchangeId,balance:virtualBalance,withdrawableBalance:null,balances:[{currency:'USD',balance:virtualBalance}],transactions:[],adminLedgerReceipts:[],tradingTransactions:[]}),{headers:{'Cache-Control':'private, no-store'}});
 		}
 		const [accounts,transactions]=await Promise.all([
 			db.ledgerAccount.findMany({where:{userId:user.id,accountMode:currentUser.accountMode},orderBy:{currency:'asc'}}),
@@ -66,18 +66,33 @@ export async function GET(){
 			take:100,
 			include:{entries:{where:{accountId:{in:accountIds}},select:{type:true,amount:true,account:{select:{currency:true}}}}},
 		}):[];
+		const usdAccountIds=accounts.filter(account=>account.currency.toUpperCase()==='USD').map(account=>account.id);
+		const tradingTransactions=usdAccountIds.length?await db.ledgerTransaction.findMany({
+			where:{accountMode:AccountMode.REAL,reference:{startsWith:'REAL:SIMULATED_TRADE:'},entries:{some:{accountId:{in:usdAccountIds}}}},
+			orderBy:{createdAt:'desc'},
+			take:100,
+			include:{entries:{where:{accountId:{in:usdAccountIds}},select:{type:true,amount:true,account:{select:{currency:true}}}}},
+		}):[];
 		const adminLedgerReceipts=adminLedgerTransactions.flatMap(transaction=>{
 			const entry=transaction.entries[0];
 			return entry?[{id:transaction.id,reference:transaction.reference,description:transaction.description,type:entry.type,amount:entry.amount,currency:entry.account.currency,createdAt:transaction.createdAt}]:[];
 		});
-		const approvals=transactions.length?await db.auditLog.findMany({where:{entity:'FUNDING',entityId:{in:transactions.map(transaction=>transaction.id)},action:{in:['FUNDING_APPROVED','BTC_DEPOSIT_APPROVED']}},select:{entityId:true,createdAt:true,metadata:true,actor:{select:{name:true,email:true}}},orderBy:{createdAt:'desc'}}):[];
+		const safeTradingTransactions=tradingTransactions.flatMap(transaction=>{
+			const entry=transaction.entries[0];
+			return entry?[{id:transaction.id,description:transaction.description.replace(/^simulated\s+/i,'Trade '),type:entry.type,amount:entry.amount,currency:entry.account.currency,createdAt:transaction.createdAt}]:[];
+		});
+		const approvals=transactions.length?await db.auditLog.findMany({where:{entity:'FUNDING',entityId:{in:transactions.map(transaction=>transaction.id)},action:{in:['FUNDING_APPROVED','BTC_DEPOSIT_APPROVED','WITHDRAWAL_APPROVE']}},select:{entityId:true,createdAt:true,metadata:true,actor:{select:{name:true,email:true}}},orderBy:{createdAt:'desc'}}):[];
 		const approvalByRequest=new Map();
 		for(const approval of approvals)if(approval.entityId&&!approvalByRequest.has(approval.entityId)){
 			const metadata=approval.metadata&&typeof approval.metadata==='object'&&!Array.isArray(approval.metadata)?approval.metadata as Record<string,unknown>:{};
 			approvalByRequest.set(approval.entityId,{reviewedAt:approval.createdAt,reviewedBy:approval.actor,previousBalance:typeof metadata.previousBalance==='string'?metadata.previousBalance:null,resultingBalance:typeof metadata.resultingBalance==='string'?metadata.resultingBalance:null});
 		}
-		const safeTransactions=transactions.map(({receiptKey,withdrawalDestinationSnapshot,...transaction})=>({...transaction,withdrawalDestination:withdrawalDestinationSnapshot||transaction.withdrawalDestination,hasReceipt:!!receiptKey,...(approvalByRequest.get(transaction.id)||{})}));
-		return NextResponse.json(jsonSafe({accountMode:currentUser.accountMode,aureviaExchangeId:currentUser.aureviaExchangeId,balance:usdBalance,withdrawableBalance,balances,transactions:safeTransactions,adminLedgerReceipts}),{headers:{'Cache-Control':'private, no-store'}});
+		const safeTransactions=transactions.map(({receiptKey,withdrawalDestinationSnapshot,...transaction})=>{
+			const approval=approvalByRequest.get(transaction.id);
+			const approvedFromAudit=Boolean(approval)&&(transaction.status===FundingStatus.PENDING||transaction.status===FundingStatus.PENDING_REVIEW);
+			return {...transaction,...(approvedFromAudit?{status:FundingStatus.APPROVED,reviewedAt:transaction.reviewedAt||approval.reviewedAt}:{}),withdrawalDestination:withdrawalDestinationSnapshot||transaction.withdrawalDestination,hasReceipt:!!receiptKey,...(approval||{})};
+		});
+		return NextResponse.json(jsonSafe({accountMode:currentUser.accountMode,aureviaExchangeId:currentUser.aureviaExchangeId,balance:usdBalance,withdrawableBalance,balances,transactions:safeTransactions,adminLedgerReceipts,tradingTransactions:safeTradingTransactions}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';

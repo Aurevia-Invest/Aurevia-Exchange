@@ -27,10 +27,11 @@ type Overview={
 	demoStartingBalance:string|null;
 	balances:Partial<Record<'DEMO'|'REAL',string>>;
 	portfolioSummary:{
-		accountMode:'DEMO'|'REAL';cashBalance:string;positionValue:string;investmentValue:string;totalValue:string;unrealizedPnl:string;
+		accountMode:'DEMO'|'REAL';cashBalance:string;positionValue:string|null;investmentValue:string;totalValue:string|null;unrealizedPnl:string|null;
 		allocations:Array<{category:string;value:string;percentage:string}>;
 	};
-	positions:Array<{id:string;side:string;quantity:string;entryPrice:string;currentPrice:string;marketValue:string;openedAt:string;instrument:{symbol:string;name:string}}>;
+	unreconciledPaperPositionCount:number;
+	positions:Array<{id:string;side:string;quantity:string;entryPrice:string;currentPrice:string|null;marketValue:string|null;openedAt:string;instrument:{symbol:string;name:string}}>;
 	openOrders:Array<{id:string;side:string;type:string;status:string;quantity:string;filledQuantity:string;price:string|null;createdAt:string;instrument:{symbol:string;name:string}}>;
 	opportunities:Array<{id:string;title:string;category:string;description:string;assetSymbol:string|null;minimumAmount:string;maximumAmount:string|null;targetReturnPercent:string|null;durationDays:number;riskLevel:string;requiresApproval:boolean}>;
 	activeInvestments:Array<{id:string;title:string;accountMode:'DEMO'|'REAL';amount:string;status:string;activatedAt:string|null;maturesAt:string|null;durationDays:number;displayTargetPayout:string}>;
@@ -40,9 +41,11 @@ type Overview={
 };
 
 type QuoteError={asset:MarketQuote['asset'];error:string};
-type QuotesResponse={quotes:Array<MarketQuote|QuoteError>;source:string;marketDataStatus:string};
+type QuotesResponse={quotes:Array<MarketQuote|QuoteError>;marketDataStatus:string};
 type HistoryResponse={quote:MarketQuote|null;candles:MarketCandle[];timeframe:TimeframeId;interval:string;source:string};
 type MarketCategory='Favorites'|'Forex'|'Crypto'|'Stocks'|'Indices';
+
+const displayUsd=(value:string|null)=>value===null?'Unavailable':formatUsd(value);
 
 const categoryFilters:MarketCategory[]=['Favorites','Forex','Crypto','Stocks','Indices'];
 const timeframes:Array<{label:string;value:TimeframeId}>=[
@@ -150,12 +153,12 @@ function MarketChartPanel({selectedSymbol,quotes,internalInstrumentId,accountMod
 	const quote=isQuote(quoteValue)?quoteValue:history?.quote;
 	return <section className="user-dashboard-panel user-market-chart-panel" aria-labelledby="user-market-overview">
 		<header className="user-dashboard-panel-heading">
-			<div><span className="user-dashboard-eyebrow">SUPPORTED MARKET DATA</span><h2 id="user-market-overview">Market overview</h2><p>{quote?.asset.name||selectedSymbol} · {history?.source||quote?.source||'Quote source loading'}{quote?.updatedAt?` · Updated ${timeAgo(quote.updatedAt)}`:''}</p></div>
+			<div><span className="user-dashboard-eyebrow">MARKET OVERVIEW</span><h2 id="user-market-overview">Market overview</h2><p>{quote?.asset.name||selectedSymbol}{quote?.updatedAt?` · Updated ${timeAgo(quote.updatedAt)}`:''}</p></div>
 			<div className="user-market-quote">{quote?<><strong>{formatMarketPrice(quote.price,quote.asset.currency)}</strong><span className={quote.changePercent>=0?'is-positive':'is-negative'}>{quote.changePercent>=0?'+':''}{quote.changePercent.toFixed(2)}%</span></>:<span className="user-dashboard-muted">Quote unavailable</span>}</div>
 		</header>
 		<div className="user-chart-toolbar"><div className="user-chart-timeframes" role="group" aria-label="Market chart range">{timeframes.map(item=><button key={item.value} type="button" aria-pressed={timeframe===item.value} className={timeframe===item.value?'is-selected':''} onClick={()=>setTimeframe(item.value)}>{item.label}</button>)}</div><Link href={`/markets?symbol=${encodeURIComponent(selectedSymbol)}`} className="user-dashboard-panel-link">Full market view <ExternalLink size={13}/></Link></div>
 		{history?<LivePriceChart candles={history.candles} quote={history.source==='Aurevia DEMO market feed'?undefined:quote??undefined} timeframe={timeframe} loading={loading} error={error} running={history.source==='Aurevia Internal'||history.source==='Aurevia DEMO market feed'}/>:loading?<div className="user-chart-empty" role="status">Loading market history…</div>:<div className="user-chart-empty" role="status">{error||'No historical market data is available for this range.'}</div>}
-		<p className="user-dashboard-footnote">Provider quotes are shown when available. DEMO prices are internal reference values; charts use provider history or recorded database candles only.</p>
+		<p className="user-dashboard-footnote">Quotes may be delayed. DEMO prices are internal reference values; charts use available historical market data.</p>
 	</section>;
 }
 
@@ -180,7 +183,7 @@ function AssetAllocation({overview}:{overview:Overview}){
 		{allocations.length?<div className="user-allocation-content">
 			<div className="user-allocation-chart" role="img" aria-label={`Portfolio allocation across ${allocations.length} asset categories`}>
 				<ResponsiveContainer width="100%" height="100%"><PieChart><Tooltip formatter={value=>formatUsd(String(value))}/><Pie data={allocations} dataKey="value" nameKey="category" innerRadius="66%" outerRadius="92%" paddingAngle={2} stroke="none">{allocations.map((item,index)=><Cell key={item.category} fill={allocationColors[index%allocationColors.length]}/>)}</Pie></PieChart></ResponsiveContainer>
-				<div><small>ACTIVE VALUE</small><b>{formatUsd(overview.portfolioSummary.totalValue)}</b></div>
+				<div><small>ACTIVE VALUE</small><b>{displayUsd(overview.portfolioSummary.totalValue)}</b></div>
 			</div>
 			<div className="user-allocation-list">{allocations.map((item,index)=><div key={item.category}><span><i style={{background:allocationColors[index%allocationColors.length]}}/>{item.category}</span><b>{formatUsd(item.value)}</b><small>{Number(item.percentage).toFixed(1)}%</small></div>)}</div>
 		</div>:<div className="user-dashboard-empty"><BriefcaseBusiness size={19}/><p>No portfolio holdings are recorded for this mode yet.</p></div>}
@@ -208,7 +211,7 @@ export default function UserDashboardExperience(){
 	const [mobileBalanceVisible,setMobileBalanceVisible]=useState(true);
 	const [error,setError]=useState('');
 	const [quotes,setQuotes]=useState<Map<string,MarketQuote|QuoteError>>(new Map());
-	const [quoteSource,setQuoteSource]=useState('');
+	const [quoteStatus,setQuoteStatus]=useState('Loading market prices');
 	const [marketCategory,setMarketCategory]=useState<MarketCategory>('Favorites');
 	const [marketSearch,setMarketSearch]=useState('');
 	const [marketSort,setMarketSort]=useState<'DEFAULT'|'PRICE'|'CHANGE'>('DEFAULT');
@@ -248,8 +251,11 @@ export default function UserDashboardExperience(){
 				const response=await fetch(`/api/live-markets?symbols=${encodeURIComponent(symbols)}`,{cache:'no-store'});
 				const result=await response.json() as QuotesResponse;
 				if(!response.ok)throw new Error('Market quotes are temporarily unavailable.');
-				if(active){setQuotes(new Map(result.quotes.map(item=>[item.asset.id,item])));setQuoteSource(result.source)}
-			}catch(exception){if(active)setQuoteSource(exception instanceof Error?exception.message:'Market quotes unavailable')}
+				if(active){
+					setQuotes(new Map(result.quotes.map(item=>[item.asset.id,item])));
+					setQuoteStatus(result.marketDataStatus==='LIVE'?'Current market prices':result.marketDataStatus==='PARTIAL'?'Some prices may be stale':result.marketDataStatus==='INTERNAL'?'Indicative prices':'Market prices unavailable');
+				}
+			}catch{if(active)setQuoteStatus('Market prices unavailable')}
 		};
 		refreshQuotesRef.current=refresh;
 		void refresh();
@@ -305,7 +311,7 @@ export default function UserDashboardExperience(){
 				</header>
 				<article className="mobile-balance-card">
 					<div className="mobile-balance-top"><span>Estimated account value</span><button type="button" aria-label={mobileBalanceVisible?'Hide account value':'Show account value'} aria-pressed={!mobileBalanceVisible} onClick={()=>setMobileBalanceVisible(value=>!value)}>{mobileBalanceVisible?<Eye size={17}/>:<EyeOff size={17}/>}</button></div>
-					<strong>{mobileBalanceVisible?formatUsd(overview.portfolioSummary.totalValue):'••••••••'}</strong>
+					<strong>{mobileBalanceVisible?displayUsd(overview.portfolioSummary.totalValue):'••••••••'}</strong>
 					<div className="mobile-balance-bottom"><span>USD · {overview.accountMode==='DEMO'?'Demo account':'Account total'}</span><Link href="/portfolio">Portfolio <ArrowRight size={13}/></Link></div>
 				</article>
 				<nav className="mobile-money-actions" aria-label="Quick account actions">
@@ -315,7 +321,7 @@ export default function UserDashboardExperience(){
 				</nav>
 				<section className="mobile-summary-section" aria-labelledby="mobile-assets-heading">
 					<header><h2 id="mobile-assets-heading">My assets</h2><Link href="/portfolio">See all <ArrowRight size={13}/></Link></header>
-					{overview.positions.length>0?<div className="mobile-assets-grid">{overview.positions.slice(0,2).map(position=><Link className="mobile-asset-card" href="/portfolio" key={position.id}><span className="mobile-asset-icon">{position.instrument.symbol.slice(0,1)}</span><span><b>{position.instrument.symbol}</b><small>{position.instrument.name}</small></span><strong>{formatUsd(position.marketValue)}</strong><small>{Number(position.quantity).toLocaleString(undefined,{maximumFractionDigits:6})} units</small></Link>)}</div>:<Link href="/portfolio" className="mobile-summary-empty">Your portfolio assets will appear here <ArrowRight size={14}/></Link>}
+					{overview.positions.length>0?<div className="mobile-assets-grid">{overview.positions.slice(0,2).map(position=><Link className="mobile-asset-card" href="/portfolio" key={position.id}><span className="mobile-asset-icon">{position.instrument.symbol.slice(0,1)}</span><span><b>{position.instrument.symbol}</b><small>{position.instrument.name}</small></span><strong>{displayUsd(position.marketValue)}</strong><small>{Number(position.quantity).toLocaleString(undefined,{maximumFractionDigits:6})} units</small></Link>)}</div>:<Link href="/portfolio" className="mobile-summary-empty">Your portfolio assets will appear here <ArrowRight size={14}/></Link>}
 				</section>
 				<details className="mobile-summary-section mobile-transactions mobile-activity-disclosure">
 					<summary id="mobile-transactions-heading"><span>Recent activity</span><ChevronDown size={16} aria-hidden="true"/></summary>
@@ -328,12 +334,13 @@ export default function UserDashboardExperience(){
 			<AureviaExchangeId id={overview.profile.aureviaExchangeId} className="mb-4"/>
 			<section className="user-dashboard-metrics" aria-label={`${overview.accountMode} account balance and portfolio value`}>
 				<UserMetric label={`${overview.accountMode} ${overview.accountMode==='DEMO'?'virtual cash':'account balance'}`} value={formatUsd(overview.balances[overview.accountMode]||'0')} detail={overview.accountMode==='DEMO'?`Available DEMO cash · ${formatUsd(overview.demoStartingBalance||'5000.00')} starting allocation`:'Internal USD ledger balance'} active icon={overview.accountMode==='DEMO'?WalletCards:ShieldCheck}/>
-				<UserMetric label={`${overview.accountMode} portfolio value`} value={formatUsd(overview.portfolioSummary.totalValue)} detail={overview.accountMode==='DEMO'?'Virtual cash + simulated trading positions':'Cash + positions + allocated principal'} active icon={ChartNoAxesCombined}/>
+				<UserMetric label={`${overview.accountMode} portfolio value`} value={displayUsd(overview.portfolioSummary.totalValue)} detail={overview.accountMode==='DEMO'?'Virtual cash + practice positions':'Cash + current market values + allocated principal'} active icon={ChartNoAxesCombined}/>
 			</section>
 			{overview.accountMode==='DEMO'&&<DemoAccountControls startingBalance={overview.demoStartingBalance||'5000.00'} onReset={refreshOverview}/>}
 			{overview.accountMode==='REAL'&&<p className="user-dashboard-real-note">REAL funding is credited only through existing administrator-approved requests. Balances shown are internal Aurevia ledger records.</p>}
+			{overview.unreconciledPaperPositionCount>0&&<p className="user-dashboard-real-note">Some earlier positions need wallet reconciliation and are excluded from account value and profit/loss. No balance or historical record has been changed.</p>}
 			<section className="user-market-assets" aria-label="Supported market quotes">
-				<header className="user-market-assets-heading"><div><span className="user-dashboard-eyebrow">SUPPORTED INSTRUMENTS</span><h2>Market watch</h2></div><div className="dashboard-market-controls"><label className="dashboard-market-search"><Search size={15}/><input aria-label="Search supported markets" placeholder="Search markets..." value={marketSearch} onChange={event=>setMarketSearch(event.target.value)}/></label><label className="dashboard-market-sort"><span>Sort by</span><select aria-label="Sort markets" value={marketSort} onChange={event=>setMarketSort(event.target.value as typeof marketSort)}><option value="DEFAULT">Default</option><option value="PRICE">Price</option><option value="CHANGE">Daily change</option></select></label><small>{quoteSource||'Quote source connecting'}</small></div></header>
+				<header className="user-market-assets-heading"><div><span className="user-dashboard-eyebrow">SUPPORTED INSTRUMENTS</span><h2>Market watch</h2></div><div className="dashboard-market-controls"><label className="dashboard-market-search"><Search size={15}/><input aria-label="Search supported markets" placeholder="Search markets..." value={marketSearch} onChange={event=>setMarketSearch(event.target.value)}/></label><label className="dashboard-market-sort"><span>Sort by</span><select aria-label="Sort markets" value={marketSort} onChange={event=>setMarketSort(event.target.value as typeof marketSort)}><option value="DEFAULT">Default</option><option value="PRICE">Price</option><option value="CHANGE">Daily change</option></select></label><small>{quoteStatus}</small></div></header>
 				<div className="user-market-categories" role="group" aria-label="Filter market instruments">{categoryFilters.map(category=><button key={category} type="button" aria-pressed={marketCategory===category} className={marketCategory===category?'is-selected':''} onClick={()=>setMarketCategory(category)}>{category}</button>)}</div>
 				<div className="user-market-asset-grid">{visibleAssets.slice(0,4).map(asset=>{
 					const quote=quotes.get(asset.id);
@@ -361,7 +368,7 @@ export default function UserDashboardExperience(){
 						<AssetAllocation overview={overview}/>
 						<section className="user-dashboard-panel" aria-labelledby="user-positions-heading">
 							<header className="user-dashboard-panel-heading"><div><span className="user-dashboard-eyebrow">ACTIVE {overview.accountMode} MODE</span><h2 id="user-positions-heading">Positions</h2><p>Open positions at current internal instrument prices.</p></div><Link className="user-dashboard-panel-link" href="/portfolio">Portfolio <ArrowRight size={14}/></Link></header>
-							{overview.positions.length?<div className="user-dashboard-table-wrap"><table className="user-dashboard-table"><thead><tr><th>Instrument</th><th>Side</th><th>Quantity</th><th>Value</th></tr></thead><tbody>{overview.positions.slice(0,5).map(position=><tr key={position.id}><td><b>{position.instrument.symbol}</b><small>{position.instrument.name}</small></td><td className={position.side==='BUY'?'is-positive':'is-negative'}>{position.side}</td><td>{Number(position.quantity).toLocaleString(undefined,{maximumFractionDigits:6})}</td><td>{formatUsd(position.marketValue)}</td></tr>)}</tbody></table></div>:<div className="user-dashboard-empty"><BriefcaseBusiness size={19}/><p>No open positions in {overview.accountMode} mode.</p><Link href="/trade">Explore supported markets <ArrowRight size={13}/></Link></div>}
+							{overview.positions.length?<div className="user-dashboard-table-wrap"><table className="user-dashboard-table"><thead><tr><th>Instrument</th><th>Side</th><th>Quantity</th><th>Value</th></tr></thead><tbody>{overview.positions.slice(0,5).map(position=><tr key={position.id}><td><b>{position.instrument.symbol}</b><small>{position.instrument.name}</small></td><td className={position.side==='BUY'?'is-positive':'is-negative'}>{position.side}</td><td>{Number(position.quantity).toLocaleString(undefined,{maximumFractionDigits:6})}</td><td>{displayUsd(position.marketValue)}</td></tr>)}</tbody></table></div>:<div className="user-dashboard-empty"><BriefcaseBusiness size={19}/><p>No open positions in {overview.accountMode} mode.</p><Link href="/trade">Explore supported markets <ArrowRight size={13}/></Link></div>}
 						</section>
 					</div>
 					<section className="user-dashboard-panel" aria-labelledby="user-orders-heading">

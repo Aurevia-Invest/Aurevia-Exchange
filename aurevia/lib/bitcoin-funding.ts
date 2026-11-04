@@ -49,7 +49,7 @@ export function paperOrderCollateral(records:PaperOrderCollateralRecord[]){
 		holdings.set(order.instrumentId,holding);
 	}
 	const heldCostBasis=[...holdings.values()].reduce((total,holding)=>total.plus(holding.cost),new Prisma.Decimal(0));
-	return {heldCostBasis,reservedBuys,committed:heldCostBasis.plus(reservedBuys)};
+	return {heldCostBasis,reservedBuys,committed:reservedBuys};
 }
 
 export function assertPaperBuyCollateral(balance:Prisma.Decimal,pendingWithdrawals:Prisma.Decimal,committed:Prisma.Decimal,requested:Prisma.Decimal){

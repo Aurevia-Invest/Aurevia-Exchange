@@ -22,15 +22,16 @@ function sameRequest(existing:{userId:string;opportunityId:string;accountMode:Ac
 export async function GET(){
  try{
   const user=await requireUser();
-  const activeUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
-  if(!activeUser||activeUser.status!=='ACTIVE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
-  const accountMode=activeUser.accountMode;
-  if(accountMode===AccountMode.DEMO)return NextResponse.json({accountMode,availableBalance:'0',opportunities:[],requests:[]},{headers:{'Cache-Control':'private, no-store'}});
-  const modeFilter={realEligible:true};
+  const activeUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true,role:true,accountRestricted:true}});
+  if(!activeUser||activeUser.status!=='ACTIVE'||activeUser.role!=='USER')return NextResponse.json({error:'This account is unavailable.'},{status:403});
+  if(activeUser.accountMode!==user.accountMode)return NextResponse.json({error:'Your active account mode changed. Refresh and try again.'},{status:409,headers:{'Cache-Control':'private, no-store'}});
+  if(activeUser.accountMode!==AccountMode.REAL)return NextResponse.json({error:'Investment access is available to eligible REAL accounts only.'},{status:403,headers:{'Cache-Control':'private, no-store'}});
+  if(activeUser.accountRestricted)return NextResponse.json({error:'Investment access is restricted for this account.'},{status:403,headers:{'Cache-Control':'private, no-store'}});
+  const accountMode=AccountMode.REAL;
   const [opportunities,requests,account]=await Promise.all([
-   db.investmentOpportunity.findMany({where:{status:InvestmentOpportunityStatus.AVAILABLE,...modeFilter},orderBy:{createdAt:'desc'}}),
-   db.investmentRequest.findMany({where:{userId:user.id,accountMode},include:{opportunity:{select:{title:true,category:true,assetSymbol:true,riskLevel:true,targetReturnPercent:true,durationDays:true}}},orderBy:{requestedAt:'desc'},take:100}),
-   db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${accountMode}:USD`},select:{id:true}}),
+   db.investmentOpportunity.findMany({where:{status:InvestmentOpportunityStatus.AVAILABLE,realEligible:true},orderBy:{createdAt:'desc'}}),
+   db.investmentRequest.findMany({where:{userId:user.id,accountMode},include:{opportunity:{select:{title:true,category:true,assetSymbol:true,riskLevel:true,targetReturnPercent:true,durationDays:true}}},orderBy:{requestedAt:'desc'}}),
+   db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${accountMode}:USD`},select:{id:true,startingBalance:true}}),
   ]);
     const [ledgerBalance,reserved]=await Promise.all([account?balance(db,account.id):new Prisma.Decimal(0),reservedWithdrawalAmount(db,user.id,accountMode,'USD')]);
     const availableBalance=Prisma.Decimal.max(new Prisma.Decimal(0),ledgerBalance.minus(reserved));
@@ -40,7 +41,7 @@ export async function GET(){
       ?simulatedInvestmentSettlement(item.amount,item.targetReturnPercent,item.tierBoostPercent??new Prisma.Decimal(0)).toString()
       :null,
     }));
-    return NextResponse.json(jsonSafe({accountMode,availableBalance,opportunities,requests:requestsWithDisplayTerms}),{headers:{'Cache-Control':'private, no-store'}});
+    return NextResponse.json(jsonSafe({accountMode,availableBalance,startingBalance:account?.startingBalance??new Prisma.Decimal(0),opportunities,requests:requestsWithDisplayTerms}),{headers:{'Cache-Control':'private, no-store'}});
  }catch(error){
   return NextResponse.json({error:error instanceof Error&&error.message==='UNAUTHORIZED'?'Unauthorized':'Unable to load investments.'},{status:error instanceof Error&&error.message==='UNAUTHORIZED'?401:503,headers:{'Cache-Control':'private, no-store'}});
  }
@@ -49,28 +50,31 @@ export async function GET(){
 export async function POST(request:Request){
  try{
   const user=await requireUser();
+  const inputProfile=await db.user.findUnique({where:{id:user.id},select:{status:true,role:true,accountMode:true}});
+  if(!inputProfile||inputProfile.status!=='ACTIVE'||inputProfile.role!=='USER')return NextResponse.json({error:'This account is unavailable.'},{status:403});
+  if(inputProfile.accountMode!==AccountMode.REAL)return NextResponse.json({error:'Investment access is available to eligible REAL accounts only.'},{status:403,headers:{'Cache-Control':'private, no-store'}});
+  if(user.accountMode!==inputProfile.accountMode)return NextResponse.json({error:'Your active account mode changed. Refresh and submit again.'},{status:409});
   const input=requestSchema.parse(await request.json());
   const requestedAmount=roundUsdAmount(input.amount);
   if(requestedAmount.lte(0))throw new Error('INVALID_AMOUNT');
   const idempotencyKey=request.headers.get('Idempotency-Key')||'';
   if(!requestKeyPattern.test(idempotencyKey))return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
   const submit=()=>db.$transaction(async tx=>{
-   const prior=await tx.investmentRequest.findUnique({where:{idempotencyKey}});
-   if(prior){
-    if(!sameRequest(prior,user.id,input.opportunityId,user.accountMode,requestedAmount.toNumber()))throw new Error('IDEMPOTENCY_KEY_REUSED');
-    return {investment:prior,replay:true};
-   }
    const [profile,opportunity]=await Promise.all([
-   tx.user.findUnique({where:{id:user.id},select:{status:true,role:true,accountMode:true,accountRestricted:true,approvedTier:true,name:true,country:true,phone:true,phoneVerified:true,kycStatus:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}}),
+    tx.user.findUnique({where:{id:user.id},select:{status:true,role:true,accountMode:true,accountRestricted:true,approvedTier:true,name:true,country:true,phone:true,phoneVerified:true,kycStatus:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}}),
     tx.investmentOpportunity.findUnique({where:{id:input.opportunityId}}),
    ]);
    if(!profile||profile.status!=='ACTIVE'||profile.role!=='USER')throw new Error('INVESTMENT_USER_UNAVAILABLE');
+   if(profile.accountMode!==AccountMode.REAL)throw new Error('INVESTMENT_REAL_MODE_REQUIRED');
    if(profile.accountMode!==user.accountMode)throw new Error('ACCOUNT_MODE_CHANGED');
-   if(profile.accountMode===AccountMode.DEMO)throw new Error('DEMO_INVESTING_DISABLED');
    if(profile.accountRestricted)throw new Error('INVESTMENT_USER_RESTRICTED');
+   const prior=await tx.investmentRequest.findUnique({where:{idempotencyKey}});
+   if(prior){
+    if(!sameRequest(prior,user.id,input.opportunityId,profile.accountMode,requestedAmount.toNumber()))throw new Error('IDEMPOTENCY_KEY_REUSED');
+    return {investment:prior,replay:true};
+   }
    if(!opportunity||opportunity.status!==InvestmentOpportunityStatus.AVAILABLE)throw new Error('INVESTMENT_UNAVAILABLE');
-   if(user.accountMode===AccountMode.DEMO&&!opportunity.demoEligible)throw new Error('INVESTMENT_MODE_UNAVAILABLE');
-   if(user.accountMode===AccountMode.REAL&&!opportunity.realEligible)throw new Error('INVESTMENT_MODE_UNAVAILABLE');
+   if(!opportunity.realEligible)throw new Error('INVESTMENT_MODE_UNAVAILABLE');
    const amount=requestedAmount;
    if(amount.lt(opportunity.minimumAmount)||(opportunity.maximumAmount&&amount.gt(opportunity.maximumAmount)))throw new Error('INVESTMENT_AMOUNT_OUT_OF_RANGE');
     const now=new Date();
@@ -81,16 +85,16 @@ export async function POST(request:Request){
     const profileRequirements=getTierProfileRequirements(profile);
     const currentTier=Number(getAccountTier({accountMode:profile.accountMode,kycStatus:profile.kycStatus,verificationDocuments:profile.kycDocuments.length,verificationSubmitted:!!profile.kyc?.submittedAt,phoneVerified:profile.phoneVerified,profileComplete:profileRequirements.profileComplete,approvedTier:profile.approvedTier}).label.at(-1));
     const tierBoostPercent=await configuredTierBoost(tx,currentTier);
-    const investment=await tx.investmentRequest.create({data:{userId:user.id,opportunityId:opportunity.id,accountMode:user.accountMode,amount,status,idempotencyKey,targetReturnPercent:opportunity.targetReturnPercent,tierBoostPercent,durationDays:opportunity.durationDays,...(opportunity.requiresApproval?{}:{approvedAt:now,activatedAt,maturesAt})}});
-   const userAccount=await ensureUserLedger(tx,user.id,user.accountMode,'USD');
+    const investment=await tx.investmentRequest.create({data:{userId:user.id,opportunityId:opportunity.id,accountMode:AccountMode.REAL,amount,status,idempotencyKey,targetReturnPercent:opportunity.targetReturnPercent,tierBoostPercent,durationDays:opportunity.durationDays,...(opportunity.requiresApproval?{}:{approvedAt:now,activatedAt,maturesAt})}});
+   const userAccount=await ensureUserLedger(tx,user.id,AccountMode.REAL,'USD');
    const available=await balance(tx,userAccount.id);
     const reserved=await reservedWithdrawalAmount(tx,user.id,user.accountMode,'USD');
     if(available.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_SIMULATED_BALANCE');
-   const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${user.accountMode}:USD`,`${user.accountMode} investment escrow`,'USD',user.accountMode);
-   await postDoubleEntry(tx,{reference:`INVESTMENT:${investment.id}:RESERVE`,description:`Reserve ${user.accountMode} investment funds for ${opportunity.title}`,debitAccountId:userAccount.id,creditAccountId:escrow.id,amount});
-   await tx.auditLog.create({data:{actorId:user.id,action:'INVESTMENT_SUBMITTED',entity:'INVESTMENT',entityId:investment.id,metadata:{opportunityId:opportunity.id,accountMode:user.accountMode,amount:amount.toString(),tierBoostPercent:tierBoostPercent.toString(),status,simulated:true}}});
-  await createNotification(tx,{userId:user.id,type:NotificationType.SYSTEM,title:`${user.accountMode} investment ${opportunity.requiresApproval?'request submitted':'started'}`,message:`Your ${user.accountMode} investment is ${opportunity.requiresApproval?'pending administrator approval':status===InvestmentStatus.ACTIVE?'active':`scheduled to start ${activatedAt.toISOString()}`}. The principal is reserved in the internal ledger; no external investment was made.`,dedupeKey:`investment:${investment.id}:submitted`,relatedEntity:'INVESTMENT',relatedId:investment.id,actionUrl:'/investments'});
-  if(opportunity.requiresApproval)await notifyActiveAdmins(tx,{type:NotificationType.SYSTEM,title:'Investment request awaiting review',message:`A ${user.accountMode} investment request is awaiting administrator review.`,dedupeKey:`investment:${investment.id}:admin`,relatedEntity:'INVESTMENT',relatedId:investment.id,actionUrl:'/admin/investments'});
+   const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${AccountMode.REAL}:USD`,`${AccountMode.REAL} investment escrow`,'USD',AccountMode.REAL);
+   await postDoubleEntry(tx,{reference:`INVESTMENT:${investment.id}:RESERVE`,description:`Reserve ${AccountMode.REAL} investment funds for ${opportunity.title}`,debitAccountId:userAccount.id,creditAccountId:escrow.id,amount});
+   await tx.auditLog.create({data:{actorId:user.id,action:'INVESTMENT_SUBMITTED',entity:'INVESTMENT',entityId:investment.id,metadata:{opportunityId:opportunity.id,accountMode:AccountMode.REAL,amount:amount.toString(),tierBoostPercent:tierBoostPercent.toString(),status,simulated:true}}});
+  await createNotification(tx,{userId:user.id,type:NotificationType.SYSTEM,title:`${AccountMode.REAL} investment ${opportunity.requiresApproval?'request submitted':'started'}`,message:`Your ${AccountMode.REAL} investment is ${opportunity.requiresApproval?'pending administrator approval':status===InvestmentStatus.ACTIVE?'active':`scheduled to start ${activatedAt.toISOString()}`}. The principal is reserved in the internal ledger; no external investment was made.`,dedupeKey:`investment:${investment.id}:submitted`,relatedEntity:'INVESTMENT',relatedId:investment.id,actionUrl:'/investments'});
+  if(opportunity.requiresApproval)await notifyActiveAdmins(tx,{type:NotificationType.SYSTEM,title:'Investment request awaiting review',message:'A REAL investment request is awaiting administrator review.',dedupeKey:`investment:${investment.id}:admin`,relatedEntity:'INVESTMENT',relatedId:investment.id,actionUrl:'/admin/investments'});
    return {investment,replay:false};
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
   let result:Awaited<ReturnType<typeof submit>>|undefined;
@@ -110,9 +114,9 @@ export async function POST(request:Request){
   if(error instanceof ZodError)return NextResponse.json({error:'Enter an amount within the opportunity limits.'},{status:400});
   if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
   if(error instanceof Error&&error.message==='ACCOUNT_MODE_CHANGED')return NextResponse.json({error:'Your active account mode changed. Refresh and submit the allocation again.'},{status:409});
-  if(error instanceof Error&&error.message==='DEMO_INVESTING_DISABLED')return NextResponse.json({error:'Investment requests are unavailable in DEMO. Use DEMO mode for practice trading only.'},{status:403});
+  if(error instanceof Error&&error.message==='INVESTMENT_REAL_MODE_REQUIRED')return NextResponse.json({error:'Investment access is available to eligible REAL accounts only.'},{status:403});
   if(error instanceof Error&&['IDEMPOTENCY_KEY_REUSED','INVESTMENT_UNAVAILABLE','INVESTMENT_MODE_UNAVAILABLE','INVESTMENT_MATURED','INVESTMENT_USER_UNAVAILABLE','INVESTMENT_USER_RESTRICTED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
-  if(error instanceof Error&&error.message==='INSUFFICIENT_SIMULATED_BALANCE')return NextResponse.json({error:'Insufficient available account cash for this investment.'},{status:400});
+  if(error instanceof Error&&error.message==='INSUFFICIENT_SIMULATED_BALANCE')return NextResponse.json({error:'Insufficient available REAL account cash for this investment.'},{status:400});
   if(error instanceof Error&&['INVESTMENT_AMOUNT_OUT_OF_RANGE','INVALID_AMOUNT'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:400});
   if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2002')return NextResponse.json({error:'This investment request was already received.'},{status:409});
   const code=error&&typeof error==='object'&&'code'in error?String(error.code):'';

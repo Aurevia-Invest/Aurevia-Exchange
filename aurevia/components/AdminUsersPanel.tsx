@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import {FormEvent,useCallback,useEffect,useState} from 'react';
-import {RefreshCw,Search,Trash2,UserRound} from 'lucide-react';
+import {Eye, Pencil,RefreshCw,Search,Trash2,UserRound} from 'lucide-react';
 import {SUPPORTED_CURRENCIES} from '@/lib/config/simulation';
 import ReceiptGenerator,{type ReceiptData} from '@/components/ReceiptGenerator';
 import AureviaExchangeId from '@/components/AureviaExchangeId';
@@ -10,6 +10,8 @@ import AccountTierBadge from '@/components/AccountTierBadge';
 
 type AdminUser={id:string;aureviaExchangeId:string|null;email:string;name:string|null;phone:string|null;country:string|null;role:'USER'|'ADMIN';status:string;accountMode:'DEMO'|'REAL';accountTier:string;kycStatus:string;createdAt:string;depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null};
 type AdminLoginEvent={id:string;action:string;createdAt:string;metadata:{clientIp?:string|null;userAgent?:string|null;reason?:string|null}|null};
+type DeletionAssessment={user:{id:string;email:string;status:string;role:string};balances:Array<{accountMode:'DEMO'|'REAL';currency:string;amount:string}>;blockers:Array<{code:string;count:number}>;deletable:boolean;retainedRecords:{kycDocuments:number;taxDocuments:number;financialHistory:boolean;auditHistory:boolean;supportRecords:boolean}};
+type DeletionAudit={id:string;entityId:string|null;createdAt:string;metadata:{reason?:string}|null;actor:{id:string;email:string;name:string|null}|null};
 function AdminUserPhoto({userId,name}:{userId:string;name:string|null}){
 	const [url,setUrl]=useState('');
 	const [loaded,setLoaded]=useState(false);
@@ -60,9 +62,18 @@ export default function AdminUsersPanel(){
 	const [search,setSearch]=useState('');
 	const [showDeleted,setShowDeleted]=useState(false);
 	const [accountMode,setAccountMode]=useState<'ALL'|'DEMO'|'REAL'>('ALL');
-	const [selected,setSelected]=useState<AdminUser|null>(null);
-	const [confirmation,setConfirmation]=useState('');
-	const [forceDelete,setForceDelete]=useState(false);
+	const [statusFilter,setStatusFilter]=useState<'ALL'|'ACTIVE'|'INACTIVE'>('ALL');
+	const [deletingUser,setDeletingUser]=useState<AdminUser|null>(null);
+	const [deletionAssessment,setDeletionAssessment]=useState<DeletionAssessment|null>(null);
+	const [deletionAssessmentLoading,setDeletionAssessmentLoading]=useState(false);
+	const [deletionEmail,setDeletionEmail]=useState('');
+	const [deletionPhrase,setDeletionPhrase]=useState('');
+	const [deletionReason,setDeletionReason]=useState('');
+	const [adminPassword,setAdminPassword]=useState('');
+	const [deletionIdempotencyKey,setDeletionIdempotencyKey]=useState('');
+	const [deletionHistory,setDeletionHistory]=useState<DeletionAudit[]>([]);
+	const [editingUserId,setEditingUserId]=useState('');
+	const [editDraft,setEditDraft]=useState({name:'',country:'',phone:''});
 	const [loading,setLoading]=useState(true);
 	const [busy,setBusy]=useState(false);
 	const [busyUserId,setBusyUserId]=useState('');
@@ -73,12 +84,13 @@ export default function AdminUsersPanel(){
 	const [adjustments,setAdjustments]=useState<Record<string,Adjustment>>({});
 	const [adjustmentReceipt,setAdjustmentReceipt]=useState<{userId:string;receipt:ReceiptData}|null>(null);
 
-	const load=useCallback(async(query:string,includeDeleted:boolean,signal?:AbortSignal,mode:'ALL'|'DEMO'|'REAL'='ALL')=>{
+	const load=useCallback(async(query:string,includeDeleted:boolean,signal?:AbortSignal,mode:'ALL'|'DEMO'|'REAL'='ALL',status:'ALL'|'ACTIVE'|'INACTIVE'='ALL')=>{
 		try{
 			const params=new URLSearchParams();
 			if(query)params.set('search',query);
 			if(includeDeleted)params.set('showDeleted','true');
 			if(mode!=='ALL')params.set('mode',mode);
+			if(status!=='ALL')params.set('status',status);
 			const queryString=params.toString();
 			const response=await fetch(`/api/admin/users${queryString?`?${queryString}`:''}`,{cache:'no-store',signal});
 			const result=await response.json();
@@ -101,22 +113,55 @@ export default function AdminUsersPanel(){
 
 	useEffect(()=>{
 		const controller=new AbortController();
-		const timer=window.setTimeout(()=>void load(search.trim(),showDeleted,controller.signal,accountMode),200);
+		const timer=window.setTimeout(()=>void load(search.trim(),showDeleted,controller.signal,accountMode,statusFilter),200);
 		return()=>{window.clearTimeout(timer);controller.abort()};
-	},[load,search,showDeleted,accountMode]);
+	},[load,search,showDeleted,accountMode,statusFilter]);
+
+	const loadDeletionHistory=useCallback(async()=>{
+		try{
+			const response=await fetch('/api/admin/users/delete?history=true',{cache:'no-store'});
+			const result=await response.json();
+			if(!response.ok)throw new Error(result.error||'Unable to load deletion history.');
+			setDeletionHistory(result as DeletionAudit[]);
+		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to load deletion history.')}
+	},[]);
+
+	useEffect(()=>{void loadDeletionHistory()},[loadDeletionHistory]);
+
+	async function startPermanentDeletion(user:AdminUser){
+		setDeletingUser(user);setDeletionAssessment(null);setDeletionEmail('');setDeletionPhrase('');setDeletionReason('');setAdminPassword('');setDeletionIdempotencyKey(crypto.randomUUID());setDeletionAssessmentLoading(true);setError('');
+		try{
+			const response=await fetch(`/api/admin/users/delete?userId=${encodeURIComponent(user.id)}`,{cache:'no-store'});
+			const result=await response.json();
+			if(!response.ok)throw new Error(result.error||'Unable to inspect this account.');
+			setDeletionAssessment(result as DeletionAssessment);
+		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to inspect this account.')}
+		finally{setDeletionAssessmentLoading(false)}
+	}
 
 	async function deleteAccount(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();
-		if(!selected||busy)return;
-		if(!window.confirm('Permanently delete this user and all related account data? This cannot be undone.'))return;
+		if(!deletingUser||!deletionAssessment?.deletable||busy)return;
 		setBusy(true);setError('');setNotice('');
 		try{
-			const response=await fetch('/api/admin/users/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({userId:selected.id,confirmation,force:forceDelete})});
+			const response=await fetch('/api/admin/users/delete',{method:'POST',headers:{'content-type':'application/json','Idempotency-Key':deletionIdempotencyKey},body:JSON.stringify({userId:deletingUser.id,confirmationEmail:deletionEmail,confirmationPhrase:deletionPhrase,adminPassword,reason:deletionReason})});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Account deletion could not be completed.');
-			setNotice('Account and related data permanently deleted.');setSelected(null);setConfirmation('');setForceDelete(false);await load(search.trim(),showDeleted,undefined,accountMode);
+			setNotice(`Account ${deletingUser.email} permanently deactivated. Financial, audit, support, KYC, and tax records were retained. ${result.storageCleanup.pending?'Profile image cleanup is pending.':'Eligible profile image cleanup completed.'}`);
+			setDeletingUser(null);setDeletionAssessment(null);setAdminPassword('');setDeletionIdempotencyKey('');await Promise.all([load(search.trim(),showDeleted,undefined,accountMode,statusFilter),loadDeletionHistory()]);
 		}catch(exception){setError(exception instanceof Error?exception.message:'Account deletion could not be completed.')}
 		finally{setBusy(false)}
+	}
+
+	async function saveUserProfile(event:FormEvent<HTMLFormElement>,user:AdminUser){
+		event.preventDefault();if(busy)return;
+		setBusy(true);setBusyUserId(user.id);setError('');setNotice('');
+		try{
+			const response=await fetch('/api/admin/users',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({userId:user.id,...editDraft})});
+			const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to edit user profile.');
+			mergeUser(result);setEditingUserId('');setNotice(`Profile updated for ${user.email}.`);
+		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to edit user profile.')}
+		finally{setBusy(false);setBusyUserId('')}
 	}
 
 	async function updateDeletedStatus(user:AdminUser,status:'ACTIVE'|'DELETED'){
@@ -127,7 +172,7 @@ export default function AdminUsersPanel(){
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to update account status.');
 			setNotice(status==='DELETED'?`Account ${user.email} moved to Deleted Items.`:`Account ${user.email} restored.`);
-			await load(search.trim(),showDeleted,undefined,accountMode);
+			await load(search.trim(),showDeleted,undefined,accountMode,statusFilter);
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to update account status.')}
 		finally{setBusy(false);setBusyUserId('')}
 	}
@@ -203,20 +248,31 @@ export default function AdminUsersPanel(){
 	}
 
 	return <div className="account-page admin-users-page">
-		<header className="account-heading"><div><span className="account-kicker">WORKSPACE · ACCOUNTS</span><h1>User accounts</h1><p>Manage customer access and review deleted accounts. Admin identities are managed separately.</p></div><button className="icon-action" type="button" aria-label="Refresh user accounts" onClick={()=>void load(search.trim(),showDeleted,undefined,accountMode)}><RefreshCw size={15}/></button></header>
+		<header className="account-heading"><div><span className="account-kicker">WORKSPACE · ACCOUNTS</span><h1>User accounts</h1><p>Manage customer access and review deleted accounts. Admin identities are managed separately.</p></div><button className="icon-action" type="button" aria-label="Refresh user accounts" onClick={()=>void load(search.trim(),showDeleted,undefined,accountMode,statusFilter)}><RefreshCw size={15}/></button></header>
 		{error&&<div className="account-callout mb-3" role="alert">{error}</div>}{notice&&<p className="mb-3 text-sm text-profit" role="status">{notice}</p>}
-		<div className="mb-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+		<div className="mb-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px_220px]">
 			<label className="account-label">Search users by Aurevia ID, internal ID, name, or email<div className="relative mt-1"><Search size={15} className="absolute left-3 top-3.5 muted"/><input className="input pl-9" value={search} onChange={event=>setSearch(event.target.value)} maxLength={120} autoComplete="off" placeholder="Search accounts"/></div></label>
 			<label className="account-label">Account mode<select className="input mt-1" value={accountMode} onChange={event=>{const mode=event.target.value;if(mode==='ALL'||mode==='DEMO'||mode==='REAL')setAccountMode(mode)}}><option value="ALL">All account modes</option><option value="DEMO">DEMO accounts</option><option value="REAL">REAL accounts</option></select></label>
+			<label className="account-label">Account status<select className="input mt-1" value={statusFilter} onChange={event=>{const status=event.target.value;if(status==='ALL'||status==='ACTIVE'||status==='INACTIVE')setStatusFilter(status)}}><option value="ALL">Active and inactive</option><option value="ACTIVE">Active accounts</option><option value="INACTIVE">Inactive / suspended</option></select></label>
 		</div>
 		<label className="mb-4 inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={showDeleted} onChange={event=>setShowDeleted(event.target.checked)}/>Show deleted accounts</label>
 		<div className="overflow-hidden rounded-md border border-white/10">
 			{loading?<p className="account-empty" role="status">Loading accounts…</p>:users.length?<div className="divide-y divide-white/10">{users.map(user=><article className="p-4" key={user.id}>
 				<div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0"><b className="block break-words">{user.name||'Unnamed account'} · {user.email}</b><small className="muted break-all">Internal ID: {user.id} · {user.role} · {user.accountMode} · {user.kycStatus} · {user.status}</small><div className="mt-1 flex flex-wrap items-center gap-2"><small className="break-all font-mono text-gold">Aurevia Exchange ID: {user.aureviaExchangeId||'Not assigned'}</small><AccountTierBadge tier={user.accountTier}/></div></div><div className="flex flex-wrap gap-2">
-					{user.status==='DELETED'?<><button type="button" className="btn min-h-10 bg-profit text-black" disabled={busy} onClick={()=>void updateDeletedStatus(user,'ACTIVE')}>{busyUserId===user.id?'Saving…':'Restore'}</button><button type="button" className="btn min-h-10 bg-loss text-black" disabled={busy} onClick={()=>{setSelected(user);setConfirmation('');setForceDelete(false)}}><Trash2 size={14}/>Permanently delete</button></>:<><button type="button" className="btn min-h-10 bg-white/5" disabled={busy||user.status==='CLOSED'} onClick={()=>void toggleStatus(user)}>{busyUserId===user.id?'Saving…':user.status==='ACTIVE'?'Freeze':'Unfreeze'}</button><button type="button" className="btn min-h-10 bg-loss text-black" disabled={busy||user.status==='CLOSED'} onClick={()=>void updateDeletedStatus(user,'DELETED')}><Trash2 size={14}/>Delete</button><button type="button" className="btn min-h-10 border border-loss/40 bg-loss/10 text-loss" disabled={busy||user.status==='CLOSED'} onClick={()=>{setSelected(user);setConfirmation('');setForceDelete(false)}}>Permanently delete</button></>}
+					<button type="button" className="btn min-h-10 bg-white/5" disabled={busy} onClick={()=>setExpandedUserId(expandedUserId===user.id?'':user.id)}><Eye size={14}/>View User</button>
+					{user.status!=='DELETED'&&<button type="button" className="btn min-h-10 bg-white/5" disabled={busy||user.status==='CLOSED'} onClick={()=>{setExpandedUserId(user.id);setEditingUserId(editingUserId===user.id?'':user.id);setEditDraft({name:user.name||'',country:user.country||'',phone:user.phone||''})}}><Pencil size={14}/>Edit User</button>}
+					{user.status==='DELETED'?<button type="button" className="btn min-h-10 bg-profit text-black" disabled={busy} onClick={()=>void updateDeletedStatus(user,'ACTIVE')}>{busyUserId===user.id?'Saving…':'Restore'}</button>:<><button type="button" className="btn min-h-10 bg-white/5" disabled={busy||user.status==='CLOSED'} onClick={()=>void toggleStatus(user)}>{busyUserId===user.id?'Saving…':user.status==='ACTIVE'?'Suspend Account':'Reactivate Account'}</button><button type="button" className="btn min-h-10 bg-loss text-black" disabled={busy||user.status==='CLOSED'} onClick={()=>void updateDeletedStatus(user,'DELETED')}><Trash2 size={14}/>Move to Deleted Items</button></>}
+					{user.status!=='CLOSED'&&<button type="button" className="btn min-h-10 border border-loss/40 bg-loss/10 text-loss" disabled={busy} onClick={()=>void startPermanentDeletion(user)}><Trash2 size={14}/>Delete Account Permanently</button>}
 				</div></div>
-				{user.status==='DELETED'?<p className="mt-3 text-sm muted">This account cannot sign in. Restore it to re-enable account access.</p>:<details className="mt-2" open={expandedUserId===user.id} onToggle={event=>{if(event.currentTarget.open)setExpandedUserId(user.id);else if(expandedUserId===user.id)setExpandedUserId('')}}><summary className="min-h-11 cursor-pointer py-2 text-sm gold">Account controls, verification, and ledger</summary>{expandedUserId===user.id&&<div>
+				{user.status==='DELETED'&&<p className="mt-3 text-sm muted">This account cannot sign in. Restore it to re-enable account access.</p>}
+				<details className="mt-2" open={expandedUserId===user.id} onToggle={event=>{if(event.currentTarget.open)setExpandedUserId(user.id);else if(expandedUserId===user.id)setExpandedUserId('')}}><summary className="min-h-11 cursor-pointer py-2 text-sm gold">Account controls, verification, and ledger</summary>{expandedUserId===user.id&&<div>
 					<AureviaExchangeId id={user.aureviaExchangeId} className="mt-3"/>
+					{editingUserId===user.id&&<form className="mt-3 grid gap-3 rounded border border-gold/20 p-3 sm:grid-cols-3" onSubmit={event=>void saveUserProfile(event,user)}>
+						<label className="account-label">Name<input className="input mt-1" maxLength={120} value={editDraft.name} onChange={event=>setEditDraft(current=>({...current,name:event.target.value}))}/></label>
+						<label className="account-label">Country<input className="input mt-1" maxLength={100} value={editDraft.country} onChange={event=>setEditDraft(current=>({...current,country:event.target.value}))}/></label>
+						<label className="account-label">Phone<input className="input mt-1" maxLength={40} value={editDraft.phone} onChange={event=>setEditDraft(current=>({...current,phone:event.target.value}))}/></label>
+						<div className="flex gap-2 sm:col-span-3"><button className="btn bg-gold text-black" type="submit" disabled={busy}>{busyUserId===user.id?'Saving…':'Save profile'}</button><button className="btn bg-white/5" type="button" disabled={busy} onClick={()=>setEditingUserId('')}>Cancel</button></div>
+					</form>}
 					<dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2"><div><dt className="muted">Country</dt><dd>{user.country||'Not set'}</dd></div><div><dt className="muted">Phone</dt><dd>{user.phone||'Not set'}</dd></div><div><dt className="muted">Created</dt><dd>{new Date(user.createdAt).toLocaleString()}</dd></div><div><dt className="muted">Deposit / withdrawal</dt><dd>{user.depositEnabled?'Enabled':'Disabled'} / {user.withdrawalEnabled?'Enabled':'Disabled'}</dd></div><div><dt className="muted">Account restriction</dt><dd>{user.accountRestricted?user.restrictionReason||'Restricted':'None'}</dd></div></dl>
 					<AdminUserPhoto userId={user.id} name={user.name}/>
 					<AdminLoginHistory userId={user.id}/>
@@ -242,15 +298,30 @@ export default function AdminUsersPanel(){
 						<p className="sm:col-span-2 lg:col-span-4 text-xs muted">Balance changes are ledger entries, audited with a reason and request key. REAL-mode entries do not move external funds.</p>
 					</form>
 					{adjustmentReceipt?.userId===user.id&&<section className="mt-4 border-t border-white/10 pt-4"><div className="account-panel-title"><div><h3>Direct funding receipt</h3><p className="account-panel-subtitle">Printable record of the mode-specific ledger entry.</p></div></div><ReceiptGenerator receipt={adjustmentReceipt.receipt}/></section>}
-				</div>}</details>}
+				</div>}</details>
 			</article>)}</div>:<p className="account-empty">No accounts match this search.</p>}
 		</div>
-		{selected&&<section className="account-panel mt-4 border border-loss/30 p-5" aria-labelledby="confirm-delete-heading"><h2 id="confirm-delete-heading" className="font-semibold">Confirm permanent deletion</h2><p className="mt-2 text-sm muted">This permanently deletes the account and all related records. Target: {selected.name||selected.email} ({selected.id}). Pending or approved funding and non-zero balances block deletion unless force is selected.</p>
-			<form className="mt-4 grid max-w-2xl gap-3" onSubmit={event=>void deleteAccount(event)}>
-				<label className="account-label">Type DELETE to confirm<input className="input" required autoComplete="off" value={confirmation} onChange={event=>setConfirmation(event.target.value)}/></label>
-				<label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={forceDelete} onChange={event=>setForceDelete(event.target.checked)}/><span>Force deletion despite pending/approved funding or a non-zero balance. Use only after resolving applicable obligations.</span></label>
-				<div className="flex flex-wrap gap-2"><button className="btn bg-loss text-black" type="submit" disabled={busy||confirmation!=='DELETE'} aria-busy={busy}>{busy?'Deleting…':'Confirm permanent deletion'}</button><button className="btn bg-white/5" type="button" disabled={busy} onClick={()=>setSelected(null)}>Cancel</button></div>
-			</form>
+		{deletingUser&&<section className="account-panel mt-4 border border-loss/40 p-5" aria-labelledby="confirm-delete-heading">
+			<h2 id="confirm-delete-heading" className="font-semibold text-loss">Delete Account Permanently</h2>
+			<p className="mt-2 text-sm muted">This irreversible action disables sign-in and removes the account’s direct profile identifiers. The database account key remains as an anonymized retained-record anchor; financial, audit, support, KYC, and tax records are not erased. No funds are transferred or confiscated.</p>
+			<div className="mt-3 rounded border border-white/10 p-3 text-sm"><b>Account ID:</b> <span className="break-all font-mono">{deletingUser.id}</span><br/><b>Email:</b> <span className="break-all">{deletingUser.email}</span></div>
+			{deletionAssessmentLoading?<p className="mt-3 text-sm muted" role="status">Checking wallet balances and unresolved obligations…</p>:deletionAssessment&&<>
+				<div className="mt-3 grid gap-2 text-sm sm:grid-cols-2"><div><b>Wallet balances</b>{deletionAssessment.balances.length?deletionAssessment.balances.map((item,index)=><p key={`${item.accountMode}:${item.currency}:${index}`}>{item.accountMode} {item.currency}: {item.amount}</p>):<p>None</p>}</div><div><b>Deletion blockers</b>{deletionAssessment.blockers.filter(item=>item.count>0).length?deletionAssessment.blockers.filter(item=>item.count>0).map(item=><p className="text-loss" key={item.code}>{item.code.replaceAll('_',' ').toLowerCase()}: {item.count}</p>):<p>No unresolved obligations found.</p>}</div></div>
+				<p className="mt-3 text-xs muted">Retained records: {deletionAssessment.retainedRecords.kycDocuments} KYC documents, {deletionAssessment.retainedRecords.taxDocuments} tax documents, financial history, audit history, and support records. These records remain subject to applicable retention controls.</p>
+				{!deletionAssessment.deletable&&<p className="mt-3 text-sm text-loss" role="alert">Deletion is blocked until every listed obligation and wallet balance is resolved. There is no force-delete override.</p>}
+			</>}
+			{deletionAssessment?.deletable&&<form className="mt-4 grid max-w-2xl gap-3" onSubmit={event=>void deleteAccount(event)}>
+				<label className="account-label">Enter the user’s email address to confirm<input className="input mt-1" type="email" required autoComplete="off" value={deletionEmail} onChange={event=>setDeletionEmail(event.target.value)}/></label>
+				<label className="account-label">Second confirmation: type DELETE PERMANENTLY<input className="input mt-1" required autoComplete="off" value={deletionPhrase} onChange={event=>setDeletionPhrase(event.target.value)}/></label>
+				<label className="account-label">Re-enter your administrator password<input className="input mt-1" type="password" required autoComplete="current-password" value={adminPassword} onChange={event=>setAdminPassword(event.target.value)}/></label>
+				<label className="account-label">Deletion reason<textarea className="input mt-1 min-h-20" required minLength={5} maxLength={500} value={deletionReason} onChange={event=>setDeletionReason(event.target.value)}/></label>
+				<p className="text-xs muted">The system will recheck eligibility atomically before deactivation. KYC and tax files are retained; only an eligible profile image is scheduled for cleanup.</p>
+				<div className="flex flex-wrap gap-2"><button className="btn bg-loss text-black" type="submit" disabled={busy||deletionEmail.trim().toLowerCase()!==deletingUser.email.trim().toLowerCase()||deletionPhrase!=='DELETE PERMANENTLY'||adminPassword.length===0||deletionReason.trim().length<5} aria-busy={busy}>{busy?'Deactivating…':'Confirm and permanently deactivate'}</button><button className="btn bg-white/5" type="button" disabled={busy} onClick={()=>{setDeletingUser(null);setDeletionAssessment(null)}}>Cancel</button></div>
+			</form>}
 		</section>}
+		<section className="account-panel mt-5 p-5" aria-labelledby="deletion-history-heading">
+			<div className="account-panel-title"><div><h2 id="deletion-history-heading">Permanent deletion audit history</h2><p className="account-panel-subtitle">Recent administrator actions, timestamps, account references, and recorded reasons.</p></div><button className="btn min-h-10 bg-white/5" type="button" onClick={()=>void loadDeletionHistory()}>Refresh</button></div>
+			{deletionHistory.length?<div className="mt-3 divide-y divide-white/10">{deletionHistory.map(item=><article className="py-3 text-sm" key={item.id}><b className="break-all">Account {item.entityId||'retained record'}</b><p className="muted">{new Date(item.createdAt).toLocaleString()} · {item.actor?.name||item.actor?.email||'Administrator record unavailable'}</p><p>Reason: {item.metadata?.reason||'Not recorded'}</p></article>)}</div>:<p className="mt-3 text-sm muted">No permanent account deactivations recorded.</p>}
+		</section>
 	</div>;
 }

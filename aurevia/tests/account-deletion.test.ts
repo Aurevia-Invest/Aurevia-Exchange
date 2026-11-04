@@ -1,90 +1,111 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
+import {createHash} from 'node:crypto';
 import {Prisma} from '@prisma/client';
 
 const mocks=vi.hoisted(()=>({balance:vi.fn()}));
 vi.mock('@/lib/ledger',()=>({balance:mocks.balance}));
 
-import {deleteAccountData} from '@/lib/account-deletion';
+import {deleteAccountData,inspectAccountDeletion} from '@/lib/account-deletion';
 
 function transaction(overrides:Record<string,unknown>={}){
 	return {
-		user:{findUnique:vi.fn().mockResolvedValue({
-			id:'user-1',
-			avatarKey:null,
-			kycDocuments:[{storageKey:'user-1/00000000-0000-4000-8000-000000000001.pdf'}],
-			funding:[{receiptKey:null}],
-			supportConversations:[{attachmentKey:null}],
-			clientStories:[],
-			taxCases:[],
-		}),delete:vi.fn().mockResolvedValue({})},
+		user:{findUnique:vi.fn().mockImplementation(({where}:{where:{id:string}})=>Promise.resolve(where.id==='admin-1'
+			?{id:'admin-1',role:'ADMIN',status:'ACTIVE'}
+			:{id:'user-1',email:'user@example.invalid',role:'USER',status:'ACTIVE',avatarKey:'user-1/00000000-0000-4000-8000-000000000001.png'})),update:vi.fn().mockResolvedValue({})},
+		ledgerAccount:{findMany:vi.fn().mockResolvedValue([])},
 		fundingRequest:{count:vi.fn().mockResolvedValue(0)},
-		ledgerAccount:{findMany:vi.fn().mockResolvedValue([]),update:vi.fn().mockResolvedValue({})},
-		ledgerTransaction:{deleteMany:vi.fn().mockResolvedValue({count:0})},
-		supportMessage:{deleteMany:vi.fn().mockResolvedValue({count:0})},
-		auditLog:{updateMany:vi.fn().mockResolvedValue({count:0}),create:vi.fn().mockResolvedValue({})},
+		order:{count:vi.fn().mockResolvedValue(0)},
+		position:{count:vi.fn().mockResolvedValue(0)},
+		investmentRequest:{count:vi.fn().mockResolvedValue(0)},
+		communityLoan:{count:vi.fn().mockResolvedValue(0)},
+		cardApplication:{count:vi.fn().mockResolvedValue(0)},
+		simulatedCard:{count:vi.fn().mockResolvedValue(0)},
+		taxCase:{count:vi.fn().mockResolvedValue(0)},
+		kycDocument:{count:vi.fn().mockResolvedValue(1)},
+		taxCaseDocument:{count:vi.fn().mockResolvedValue(2)},
+		passwordResetToken:{deleteMany:vi.fn().mockResolvedValue({count:0})},
+		verificationCode:{deleteMany:vi.fn().mockResolvedValue({count:0})},
+		pushOutbox:{deleteMany:vi.fn().mockResolvedValue({count:0})},
+		pushSubscription:{deleteMany:vi.fn().mockResolvedValue({count:0})},
+		pushPreference:{deleteMany:vi.fn().mockResolvedValue({count:0})},
+		kycEmailOutbox:{deleteMany:vi.fn().mockResolvedValue({count:0})},
+		activityVisibilityPreference:{deleteMany:vi.fn().mockResolvedValue({count:0})},
+		notification:{deleteMany:vi.fn().mockResolvedValue({count:0})},
+		auditLog:{findFirst:vi.fn().mockResolvedValue(null),create:vi.fn().mockResolvedValue({})},
 		...overrides,
 	} as unknown as Prisma.TransactionClient;
 }
 
-describe('physical account deletion',()=>{
+const deletionInput={userId:'user-1',actorId:'admin-1',confirmationEmail:'user@example.invalid',reason:'User account no longer required',idempotencyKey:'delete-request-0001'};
+
+describe('safe permanent account deactivation',()=>{
 	beforeEach(()=>{vi.clearAllMocks();mocks.balance.mockResolvedValue(new Prisma.Decimal(0))});
 
-	it('deletes the user in the transaction and returns private-file cleanup work',async()=>{
+	it('anonymizes login/profile identity while retaining the financial and regulatory record anchor',async()=>{
 		const tx=transaction();
-		const files=await deleteAccountData(tx,{userId:'user-1',actorId:'admin-1'});
+		const result=await deleteAccountData(tx,deletionInput);
 
-		expect(files).toEqual([{area:'kyc',ownerId:'user-1',key:'user-1/00000000-0000-4000-8000-000000000001.pdf'}]);
-		expect(tx.ledgerTransaction.deleteMany).not.toHaveBeenCalled();
-		expect(tx.supportMessage.deleteMany).toHaveBeenCalledWith({where:{authorId:'user-1'}});
-		expect(tx.auditLog.updateMany).toHaveBeenCalledWith({
-			where:{OR:[{actorId:'user-1'},{entityId:'user-1'}]},
-			data:{actorId:null,entityId:null,metadata:Prisma.DbNull},
-		});
-		expect(tx.user.delete).toHaveBeenCalledWith({where:{id:'user-1'}});
-		expect(tx.auditLog.create).toHaveBeenCalledWith({data:{
-			actorId:'admin-1',action:'ADMIN_ACCOUNT_DELETED',entity:'USER',entityId:'user-1',
-		}});
+		expect(result).toMatchObject({replayed:false,avatar:{area:'avatar',ownerId:'user-1'}});
+		expect(tx.user.update).toHaveBeenCalledWith(expect.objectContaining({
+			where:{id:'user-1'},
+			data:expect.objectContaining({status:'CLOSED',name:null,phone:null,activeSessionId:null,depositEnabled:false,withdrawalEnabled:false}),
+		}));
+		expect(tx.user).not.toHaveProperty('delete');
+		expect(tx.ledgerAccount).not.toHaveProperty('deleteMany');
+		expect(tx.investmentRequest).toHaveProperty('count');
+		expect(tx.kycDocument).toHaveProperty('count');
+		expect(tx.taxCaseDocument).toHaveProperty('count');
+		expect(tx.notification.deleteMany).toHaveBeenCalledWith({where:{userId:'user-1'}});
+		expect(tx.auditLog.create).toHaveBeenCalledWith({data:expect.objectContaining({
+			actorId:'admin-1',action:'ADMIN_ACCOUNT_PERMANENTLY_DELETED',entity:'USER',entityId:'user-1',
+			metadata:expect.objectContaining({reason:deletionInput.reason,accountRecordRetained:true,financialAndRegulatoryRecordsRetained:true}),
+		})});
 	});
 
-	it('blocks deletion with active funding unless an admin explicitly forces it',async()=>{
-		const tx=transaction({fundingRequest:{count:vi.fn().mockResolvedValue(1)}});
+	it.each([
+		['fundingRequest','ACCOUNT_HAS_UNRESOLVED_OBLIGATIONS'],
+		['order','ACCOUNT_HAS_UNRESOLVED_OBLIGATIONS'],
+		['position','ACCOUNT_HAS_UNRESOLVED_OBLIGATIONS'],
+		['investmentRequest','ACCOUNT_HAS_UNRESOLVED_OBLIGATIONS'],
+		['communityLoan','ACCOUNT_HAS_UNRESOLVED_OBLIGATIONS'],
+		['cardApplication','ACCOUNT_HAS_UNRESOLVED_OBLIGATIONS'],
+		['simulatedCard','ACCOUNT_HAS_UNRESOLVED_OBLIGATIONS'],
+		['taxCase','ACCOUNT_HAS_UNRESOLVED_OBLIGATIONS'],
+	] as const)('blocks deletion when %s reports outstanding activity',async(model,expected)=>{
+		const tx=transaction({[model]:{count:vi.fn().mockResolvedValue(1)}});
 
-		await expect(deleteAccountData(tx,{userId:'user-1',actorId:null})).rejects.toThrow('ACCOUNT_HAS_ACTIVE_FUNDING');
-		expect(tx.user.delete).not.toHaveBeenCalled();
+		await expect(deleteAccountData(tx,deletionInput)).rejects.toThrow(expected);
+		expect(tx.user.update).not.toHaveBeenCalled();
+		expect(tx.auditLog.create).not.toHaveBeenCalled();
 	});
 
-	it('blocks non-zero balances unless forced',async()=>{
+	it('blocks non-zero balances across either account mode',async()=>{
+		const tx=transaction({ledgerAccount:{findMany:vi.fn().mockResolvedValue([{id:'real-usd',accountMode:'REAL',currency:'USD'}])}});
 		mocks.balance.mockResolvedValue(new Prisma.Decimal('0.01'));
-		const tx=transaction({ledgerAccount:{findMany:vi.fn().mockResolvedValue([{id:'ledger-1'}]),update:vi.fn().mockResolvedValue({})}});
 
-		await expect(deleteAccountData(tx,{userId:'user-1',actorId:null})).rejects.toThrow('ACCOUNT_HAS_NONZERO_BALANCE');
-		expect(tx.user.delete).not.toHaveBeenCalled();
+		const result=await inspectAccountDeletion(tx,'user-1');
+		expect(result.deletable).toBe(false);
+		expect(result.blockers).toContainEqual({code:'NONZERO_WALLET_BALANCE',count:1});
+		await expect(deleteAccountData(tx,deletionInput)).rejects.toThrow('ACCOUNT_HAS_UNRESOLVED_OBLIGATIONS');
+		expect(tx.user.update).not.toHaveBeenCalled();
 	});
 
-	it('preserves and anonymizes zero-balance ledger accounts and their history',async()=>{
-		const tx=transaction({ledgerAccount:{
-			findMany:vi.fn().mockResolvedValue([{id:'ledger-1'}]),
-			update:vi.fn().mockResolvedValue({}),
-		}});
-
-		await deleteAccountData(tx,{userId:'user-1',actorId:null});
-
-		expect(tx.ledgerAccount.update).toHaveBeenCalledWith({
-			where:{id:'ledger-1'},
-			data:{userId:null,code:'CLOSED:ledger-1',name:'Closed customer account'},
-		});
-		expect(tx.ledgerTransaction.deleteMany).not.toHaveBeenCalled();
+	it('rejects an incorrect typed email and administrator accounts',async()=>{
+		await expect(deleteAccountData(transaction(),{...deletionInput,confirmationEmail:'wrong@example.invalid'})).rejects.toThrow('CONFIRMATION_EMAIL_MISMATCH');
+		const admin=transaction({user:{findUnique:vi.fn().mockResolvedValue({id:'user-1',email:'admin@example.invalid',role:'ADMIN',status:'ACTIVE',avatarKey:null}),update:vi.fn()}});
+		await expect(deleteAccountData(admin,deletionInput)).rejects.toThrow('ADMIN_ACCOUNT_ISOLATED');
+		expect(admin.user.update).not.toHaveBeenCalled();
 	});
 
-	it('allows an admin force deletion despite active funding and balances',async()=>{
-		mocks.balance.mockResolvedValue(new Prisma.Decimal(10));
-		const tx=transaction({fundingRequest:{count:vi.fn().mockResolvedValue(1)},ledgerAccount:{
-			findMany:vi.fn().mockResolvedValue([{id:'ledger-1'}]),
-			update:vi.fn().mockResolvedValue({}),
-		}});
+	it('replays a duplicate idempotency key without repeating deactivation',async()=>{
+		const requestFingerprint=createHash('sha256')
+			.update(JSON.stringify(['user-1','user@example.invalid',deletionInput.confirmationEmail,deletionInput.reason]))
+			.digest('hex');
+		const tx=transaction({auditLog:{findFirst:vi.fn().mockResolvedValue({metadata:{requestFingerprint}}),create:vi.fn()}});
 
-		await expect(deleteAccountData(tx,{userId:'user-1',actorId:'admin-1',force:true})).resolves.toHaveLength(1);
-		expect(tx.user.delete).toHaveBeenCalledOnce();
-		expect(tx.ledgerAccount.update).toHaveBeenCalledOnce();
+		await expect(deleteAccountData(tx,deletionInput)).resolves.toEqual({avatar:null,replayed:true});
+		expect(tx.user.update).not.toHaveBeenCalled();
+		expect(tx.auditLog.create).not.toHaveBeenCalled();
+		await expect(deleteAccountData(tx,{...deletionInput,reason:'Different reason under reused key'})).rejects.toThrow('IDEMPOTENCY_KEY_REUSED');
 	});
 });

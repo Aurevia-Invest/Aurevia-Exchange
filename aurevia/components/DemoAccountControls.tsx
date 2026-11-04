@@ -26,7 +26,7 @@ export default function DemoAccountControls({startingBalance,onReset}:{startingB
 	}
 
 	return <section className="demo-account-controls" aria-label="DEMO account controls">
-		<div><span><ShieldCheck size={14}/> DEMO MODE · VIRTUAL USD</span><b>Starting balance {formatUsd(startingBalance)}</b><p>Reset closes open DEMO positions and orders, restores virtual cash, and retains history. REAL records are not changed.</p></div>
+		<div><span><ShieldCheck size={14}/> DEMO MODE · VIRTUAL USD</span><b>Starting balance {formatUsd(startingBalance)}</b><p>Reset closes open DEMO positions and orders, cancels unsettled practice investments, restores virtual cash, and retains history. REAL records are not changed.</p></div>
 		{notice&&<p className="demo-account-notice" role="status">{notice}</p>}
 		{error&&<p className="demo-account-error" role="alert">{error}</p>}
 		{!open?<button type="button" onClick={()=>{setOpen(true);setError('');}}><RefreshCw size={14}/> Reset Demo Account</button>:<form onSubmit={event=>void reset(event)}>

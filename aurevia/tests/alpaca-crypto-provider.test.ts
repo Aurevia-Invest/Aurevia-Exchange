@@ -18,6 +18,22 @@ describe('Alpaca crypto provider safety',()=>{
 		expect(()=>new IndividualAlpacaTradingProvider({baseUrl:'https://api.alpaca.markets',apiKey:'test-key',apiSecret:'test-secret'})).toThrow('ALPACA_PAPER_ENDPOINT_REQUIRED');
 	});
 
+	it('recognizes ALPACA_BASE_URL and ALPACA_API_SECRET but remains paper-only',()=>{
+		for(const [name,value] of Object.entries({
+			ALPACA_PROVIDER:'alpaca',
+			ALPACA_BASE_URL:'https://paper-api.alpaca.markets/v2',
+			ALPACA_API_KEY:'test-key',
+			ALPACA_API_SECRET:'test-secret',
+			REAL_EXECUTION_ENABLED:'false',
+		}))vi.stubEnv(name,value);
+
+		const provider=createIndividualTradingApiProviderFromEnvironment();
+
+		expect(provider?.executionMode).toBe('PAPER');
+		expect(provider?.name).toBe('individual-alpaca-trading');
+		expect(provider?.executionMode).not.toBe('LIVE');
+	});
+
 	it('uses the paper Trading API fields and preserves provider-confirmed order state',async()=>{
 		const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({id:'provider-order-id',client_order_id:'order-key-123456',status:'accepted',created_at:'2026-10-15T12:00:00Z',updated_at:'2026-10-15T12:00:00Z',filled_qty:'0',filled_avg_price:null}),{status:201}));
 		const provider=new IndividualAlpacaTradingProvider({baseUrl:'https://paper-api.alpaca.markets',apiKey:'paper-key',apiSecret:'paper-secret',fetcher});
@@ -49,6 +65,34 @@ describe('Alpaca crypto provider safety',()=>{
 		expect(fetcher).toHaveBeenCalledOnce();
 		expect(fetcher.mock.calls[0][0]).toBe('https://paper-api.alpaca.markets/v2/account');
 		expect(fetcher.mock.calls[0][1].method).toBeUndefined();
+	});
+
+	it('performs the read-only paper connectivity check with compatible environment aliases',async()=>{
+		for(const [name,value] of Object.entries({
+			ALPACA_PROVIDER:'alpaca',
+			ALPACA_BASE_URL:'https://paper-api.alpaca.markets/v2',
+			ALPACA_API_KEY:'test-key',
+			ALPACA_API_SECRET:'test-secret',
+			REAL_EXECUTION_ENABLED:'false',
+		}))vi.stubEnv(name,value);
+		const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({
+			id:'paper-account',status:'ACTIVE',currency:'USD',cash:'1000',buying_power:'1000',
+			equity:'1000',portfolio_value:'1000',trade_suspended_by_user:false,
+			trading_blocked:false,account_blocked:false,
+		}),{status:200}));
+		vi.stubGlobal('fetch',fetcher);
+
+		const health=await getAlpacaPaperAccountHealth();
+
+		expect(health).toMatchObject({
+			status:'AVAILABLE',mode:'PAPER',configured:true,connected:true,
+			liveTradingEnabled:false,paperOrdersEnabled:false,
+		});
+		expect(fetcher.mock.calls[0][0]).toBe('https://paper-api.alpaca.markets/v2/account');
+		expect(fetcher.mock.calls[0][1].headers).toMatchObject({
+			'APCA-API-KEY-ID':'test-key',
+			'APCA-API-SECRET-KEY':'test-secret',
+		});
 	});
 
 	it('distinguishes invalid paper credentials and incomplete configuration without order requests',async()=>{

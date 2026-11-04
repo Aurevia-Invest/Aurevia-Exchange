@@ -5,6 +5,8 @@ import {useSession} from 'next-auth/react';
 import {ArrowUpRight,RefreshCw,ShieldCheck} from 'lucide-react';
 import Nav from '@/components/Nav';
 import AureviaLoading from '@/components/AureviaLoading';
+import DemoAccountControls from '@/components/DemoAccountControls';
+import InvestmentMarketBoard from '@/components/InvestmentMarketBoard';
 import {InvestmentCompletionCard,InvestmentProgressCard} from '@/components/InvestmentProgressCard';
 import {useLocale} from '@/lib/i18n-context';
 import {formatUsd} from '@/lib/currency-format';
@@ -12,7 +14,7 @@ import {filterInvestmentActivity,type InvestmentActivitySort,type InvestmentActi
 
 type Opportunity={id:string;title:string;category:string;description:string;assetSymbol:string|null;minimumAmount:string;maximumAmount:string|null;targetReturnPercent:string|null;durationDays:number;startsAt:string|null;maturesAt:string|null;riskLevel:string;status:string;demoEligible:boolean;realEligible:boolean;requiresApproval:boolean;targetPrice:string|null;stopPrice:string|null};
 type Request={id:string;opportunityId:string;accountMode:'DEMO'|'REAL';amount:string;status:string;requestedAt:string;activatedAt:string|null;maturesAt:string|null;settlementReference:string|null;simulatedPayout:string|null;displayTargetPayout:string|null;durationDays:number;opportunity:{title:string;category:string;riskLevel:string;targetReturnPercent:string|null;durationDays:number}};
-type Payload={accountMode:'DEMO'|'REAL';availableBalance:string;opportunities:Opportunity[];requests:Request[]};
+type Payload={accountMode:'DEMO'|'REAL';availableBalance:string;startingBalance:string;opportunities:Opportunity[];requests:Request[]};
 
 function amount(value:string|number|null|undefined,notSet:string){return value===null||value===undefined?notSet:formatUsd(value);}
 function statusText(value:string){return value.replaceAll('_',' ');}
@@ -33,6 +35,8 @@ export default function InvestmentExperience(){
  const [busy,setBusy]=useState('');
  const [error,setError]=useState('');
  const [notice,setNotice]=useState('');
+ const [marketSymbol,setMarketSymbol]=useState('');
+ const [updatedAt,setUpdatedAt]=useState('');
  const latestRequest=useRef(0);
 
  const load=useCallback(async(showLoading=false)=>{
@@ -42,7 +46,7 @@ export default function InvestmentExperience(){
    const response=await fetch('/api/investments',{cache:'no-store'});
    const result=await response.json();
    if(!response.ok)throw new Error(result.error||translate('unableToLoadInvestments'));
-   if(requestId===latestRequest.current){setData(result);setError('');}
+   if(requestId===latestRequest.current){setData(result);setUpdatedAt(new Date().toISOString());setError('');}
   }catch(exception){if(requestId===latestRequest.current)setError(exception instanceof Error?exception.message:translate('unableToLoadInvestments'));}
   finally{if(requestId===latestRequest.current)setLoading(false);}
  },[translate]);
@@ -55,6 +59,9 @@ export default function InvestmentExperience(){
  const activeRequestCount=data?.requests.filter(item=>['ACTIVE','APPROVED','PAUSED'].includes(item.status)).length||0;
  const reviewRequestCount=data?.requests.filter(item=>item.status==='PENDING_APPROVAL').length||0;
  const settledRequestCount=data?.requests.filter(item=>item.status==='SETTLED').length||0;
+ const allocatedAmount=data?.requests.filter(item=>['PENDING_APPROVAL','APPROVED','ACTIVE','PAUSED','COMPLETED'].includes(item.status)).reduce((total,item)=>total+Number(item.amount),0)||0;
+ const marketSymbols=useMemo(()=>[...new Set((data?.opportunities||[]).flatMap(item=>item.assetSymbol?[item.assetSymbol]:[]))],[data?.opportunities]);
+ const activeMarketSymbol=marketSymbols.includes(marketSymbol)?marketSymbol:marketSymbols[0]||'';
 
  useEffect(()=>{
   setData(null);setAmounts({});setConfirmOpportunityId('');setError('');setNotice('');
@@ -115,6 +122,16 @@ export default function InvestmentExperience(){
   <header className="account-heading"><div><span className="account-kicker">{translate('investmentsKicker')}</span><h1>{translate('investmentsTitle')}</h1><p>{translate('investmentSubtitle')}</p></div><span className={`status-pill ${data?.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{data?translate('portfolioAccount',{mode:data.accountMode}):translate('investmentLoadingAccount')}</span></header>
   {data&&<div className="account-callout mb-4" role="status"><span>{data.accountMode} investment activity uses internal records. Requests reserve available internal ledger funds. Configured targets are estimates only; no return is guaranteed or credited as earnings.</span></div>}
   {notice&&<p className="mb-3 text-sm text-profit" role="status">{notice}</p>}{error&&<div className="account-callout mb-3" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load(true)}><RefreshCw size={14}/> Retry</button></div>}
+  {data&&<section className="investment-overview-grid" aria-label="Investment account overview">
+   <article><span>Available {data.accountMode} cash</span><b>{formatUsd(data.availableBalance)}</b><small>Spendable account ledger balance</small></article>
+   <article><span>Allocated capital</span><b>{formatUsd(allocatedAmount)}</b><small>Active and awaiting-review requests</small></article>
+   <article><span>Available opportunities</span><b>{data.opportunities.length.toLocaleString()}</b><small>Eligible for this account mode</small></article>
+   <article><span>Active activity</span><b>{activeRequestCount.toLocaleString()}</b><small>{settledRequestCount.toLocaleString()} settled · {reviewRequestCount.toLocaleString()} awaiting review</small></article>
+  </section>}
+  {data?.accountMode==='DEMO'&&<DemoAccountControls startingBalance={data.startingBalance} onReset={()=>load(true)}/>}
+  {marketSymbols.length>0&&<div className="investment-market-selector"><label className="account-label" htmlFor="investment-market-symbol">Market context</label><select id="investment-market-symbol" className="input" value={activeMarketSymbol} onChange={event=>setMarketSymbol(event.target.value)}>{marketSymbols.map(symbol=><option key={symbol} value={symbol}>{symbol}</option>)}</select></div>}
+  {activeMarketSymbol&&<InvestmentMarketBoard symbol={activeMarketSymbol}/>}
+  {data&&<section className="investment-broadcast" aria-live="polite"><div><span className="investment-broadcast-pulse"/><b>Live investment activity</b><small>{updatedAt?`Account activity refreshed ${new Date(updatedAt).toLocaleTimeString()}`:'Connecting to account activity'}</small></div><div className="investment-broadcast-items">{data.requests.slice(0,4).map(item=><span key={item.id}><b>{item.opportunity.title}</b><small>{statusText(item.status)} · {amount(item.amount,translate('investmentNotSet'))}</small></span>)}</div></section>}
   <section id="opportunities" className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('availableOpportunities')}</h2><p className="account-panel-subtitle">{translate('targetFigures')}</p></div>{data&&<span className="muted text-sm">{translate('availableCashLabel')} {amount(data.availableBalance,translate('investmentNotSet'))}</span>}</div>
    {data&&data.opportunities.length>0&&<div className="investment-opportunity-filters"><label className="account-label">Search opportunities<input className="input" type="search" value={search} onChange={event=>setSearch(event.target.value)} placeholder="Name, category or asset"/></label><label className="account-label">Category<select className="input" value={category} onChange={event=>setCategory(event.target.value)}><option value="ALL">All categories</option>{categories.map(item=><option key={item}>{item}</option>)}</select></label></div>}
    {loading&&!data?<AureviaLoading variant="inline" label={translate('loadingOpportunities')} className="account-empty"/>:data?.opportunities.length&&visibleOpportunities.length?<div className="mt-4 grid gap-4 lg:grid-cols-2">{visibleOpportunities.map(opportunity=>{

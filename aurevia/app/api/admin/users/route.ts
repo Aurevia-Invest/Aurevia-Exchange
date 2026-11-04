@@ -11,6 +11,9 @@ import {getAccountTier,getTierProfileRequirements} from '@/lib/production-policy
 
 const schema=z.object({
   userId:z.string(),
+  name:z.string().trim().max(120).nullable().optional(),
+  country:z.string().trim().max(100).nullable().optional(),
+  phone:z.string().trim().max(40).nullable().optional(),
   status:z.enum(['ACTIVE','FROZEN','DELETED']).optional(),
   kycStatus:z.enum(['PENDING','APPROVED','REJECTED','NEEDS_CHANGES']).optional(),
   depositEnabled:z.boolean().optional(),
@@ -28,6 +31,8 @@ export async function GET(request:Request){
     const includeDeleted=params.get('showDeleted')==='true';
     const requestedMode=params.get('mode');
     if(requestedMode&&requestedMode!=='DEMO'&&requestedMode!=='REAL')return NextResponse.json({error:'Invalid account mode.'},{status:400});
+    const requestedStatus=params.get('status');
+    if(requestedStatus&&requestedStatus!=='ACTIVE'&&requestedStatus!=='INACTIVE')return NextResponse.json({error:'Invalid account status filter.'},{status:400});
     const mode=requestedMode==='DEMO'?AccountMode.DEMO:requestedMode==='REAL'?AccountMode.REAL:undefined;
     const configuredAdminEmail=getServerConfiguration().auth.adminEmail.trim().toLowerCase();
     const exchangeIdSearch=search.toUpperCase();
@@ -40,7 +45,7 @@ export async function GET(request:Request){
     ];
     const where:Prisma.UserWhereInput={
       role:'USER',
-      status:includeDeleted?'DELETED':{notIn:['DELETED','CLOSED']},
+      status:includeDeleted?'DELETED':requestedStatus==='ACTIVE'?'ACTIVE':requestedStatus==='INACTIVE'?{in:['FROZEN','SUSPENDED']}:{notIn:['DELETED','CLOSED']},
       ...(mode?{accountMode:mode}:{}),
       ...(configuredAdminEmail?{email:{not:configuredAdminEmail}}:{}),
       ...(search?{OR:searchConditions}:{}),
@@ -77,21 +82,22 @@ export async function PATCH(req:Request){
     const configuredAdminEmail=getServerConfiguration().auth.adminEmail.trim().toLowerCase();
     if(input.userId===admin.id&&input.status==='FROZEN')throw new Error('CANNOT_DISABLE_CURRENT_ADMIN');
     const updated=await db.$transaction(async tx=>{
-      const current=await tx.user.findUniqueOrThrow({where:{id:input.userId},select:{email:true,role:true,status:true,kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:'APPROVED'},select:{kind:true}}}});
+      const current=await tx.user.findUniqueOrThrow({where:{id:input.userId},select:{email:true,name:true,country:true,phone:true,role:true,status:true,kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:{in:['IDENTITY_DOCUMENT','SELFIE']},status:'APPROVED'},select:{kind:true}}}});
       if(input.status==='DELETED'&&(current.role==='ADMIN'||current.status==='CLOSED'))throw new Error('ACCOUNT_CANNOT_BE_SOFT_DELETED');
       if(current.status==='DELETED'&&input.status!=='ACTIVE')throw new Error('DELETED_ACCOUNT_MUST_BE_RESTORED');
       if(configuredAdminEmail&&current.email.toLowerCase()===configuredAdminEmail)throw new Error('ADMIN_ACCOUNT_ISOLATED');
       const removesActiveAdmin=current.role==='ADMIN'&&current.status==='ACTIVE'&&input.status==='FROZEN';
       if(removesActiveAdmin&&await tx.user.count({where:{role:'ADMIN',status:'ACTIVE'}})<=1)throw new Error('LAST_ACTIVE_ADMIN_REQUIRED');
       const kycChanged=input.kycStatus!==undefined&&input.kycStatus!==current.kycStatus;
+      const profileChanged=(input.name!==undefined&&input.name!==current.name)||(input.country!==undefined&&input.country!==current.country)||(input.phone!==undefined&&input.phone!==current.phone);
       const controlsChanged=(input.depositEnabled!==undefined&&input.depositEnabled!==current.depositEnabled)||(input.withdrawalEnabled!==undefined&&input.withdrawalEnabled!==current.withdrawalEnabled)||(input.accountRestricted!==undefined&&input.accountRestricted!==current.accountRestricted)||(input.restrictionReason!==undefined&&input.restrictionReason!==current.restrictionReason);
       if(input.kycStatus!==undefined&&!kycChanged)throw new Error('KYC_STATUS_UNCHANGED');
       if(input.kycStatus==='APPROVED'&&(!current.kyc?.submittedAt||!current.kycDocuments.some(document=>document.kind==='IDENTITY_DOCUMENT')||!current.kycDocuments.some(document=>document.kind==='SELFIE')))throw new Error('APPROVED_IDENTITY_DOCUMENT_REQUIRED');
       const statusChanged=input.status!==undefined&&input.status!==current.status;
-      const user=await tx.user.update({where:{id:input.userId},data:{status:input.status,...(input.status==='DELETED'?{activeSessionId:null}:{}),kycStatus:input.kycStatus,...(input.kycStatus==='APPROVED'?{verifiedAt:new Date()}:input.kycStatus!==undefined?{verifiedAt:null}:{}),depositEnabled:input.depositEnabled,withdrawalEnabled:input.withdrawalEnabled,accountRestricted:input.accountRestricted,...(input.accountRestricted===false?{restrictionReason:null}:input.restrictionReason!==undefined?{restrictionReason:input.restrictionReason||null}:{})},select:{id:true,email:true,name:true,role:true,status:true,kycStatus:true,accountMode:true,createdAt:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true}});
+      const user=await tx.user.update({where:{id:input.userId},data:{name:input.name,country:input.country,phone:input.phone,status:input.status,...(input.status==='DELETED'?{activeSessionId:null}:{}),kycStatus:input.kycStatus,...(input.kycStatus==='APPROVED'?{verifiedAt:new Date()}:input.kycStatus!==undefined?{verifiedAt:null}:{}),depositEnabled:input.depositEnabled,withdrawalEnabled:input.withdrawalEnabled,accountRestricted:input.accountRestricted,...(input.accountRestricted===false?{restrictionReason:null}:input.restrictionReason!==undefined?{restrictionReason:input.restrictionReason||null}:{})},select:{id:true,email:true,name:true,country:true,phone:true,role:true,status:true,kycStatus:true,accountMode:true,createdAt:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true}});
       if(kycChanged)await tx.kycProfile.updateMany({where:{userId:user.id},data:{reviewedAt:new Date(),reviewNote:input.reviewNote||null}});
       const accountStatusAction=input.status==='DELETED'?'USER_SOFT_DELETED':current.status==='DELETED'&&input.status==='ACTIVE'?'USER_RESTORED':null;
-      await tx.auditLog.create({data:{actorId:admin.id,action:accountStatusAction||(kycChanged?`KYC_${input.kycStatus}`:controlsChanged?'USER_ACCOUNT_RESTRICTION':statusChanged?'USER_STATUS_UPDATE':'USER_UPDATE'),entity:'USER',entityId:user.id,metadata:{...input,reviewNote:input.reviewNote||null}}});
+      await tx.auditLog.create({data:{actorId:admin.id,action:accountStatusAction||(kycChanged?`KYC_${input.kycStatus}`:controlsChanged?'USER_ACCOUNT_RESTRICTION':profileChanged?'USER_PROFILE_EDITED':statusChanged?'USER_STATUS_UPDATE':'USER_UPDATE'),entity:'USER',entityId:user.id,metadata:{...input,reviewNote:input.reviewNote||null}}});
       if(kycChanged){
         const status=input.kycStatus!;
         const title=status==='APPROVED'?'Identity profile approved by administrator':status==='REJECTED'?'Identity profile rejected by administrator':status==='NEEDS_CHANGES'?'Additional identity information requested':'Identity profile review updated';

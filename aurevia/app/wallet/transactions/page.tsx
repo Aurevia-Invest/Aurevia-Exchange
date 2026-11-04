@@ -28,15 +28,24 @@ export default function TransactionsPage(){
 	const latestRequest=useRef(0);
 	const preferenceKey=session?.user?.id&&activeMode?`aurevia:funding-history:hidden:${session.user.id}:${activeMode}`:null;
 
-	const load=useCallback(async()=>{
+	const load=useCallback(async(showLoading=false)=>{
 		const requestId=++latestRequest.current;
-		setLoading(true);setError('');
-		setData(null);
+		if(showLoading)setLoading(true);
+		setError('');
 		try{const response=await fetch('/api/wallet',{cache:'no-store'});const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to load transaction history.');if(requestId===latestRequest.current)setData(result)}
 		catch(exception){if(requestId===latestRequest.current)setError(exception instanceof Error?exception.message:'Unable to load transaction history.')}
 		finally{if(requestId===latestRequest.current)setLoading(false)}
 	},[]);
-	useEffect(()=>{if(sessionStatus==='authenticated')void load()},[load,sessionStatus,activeMode]);
+	useEffect(()=>{
+		if(sessionStatus!=='authenticated')return;
+		setData(null);
+		void load(true);
+		const refresh=()=>{if(document.visibilityState==='visible')void load()};
+		const timer=window.setInterval(refresh,5_000);
+		window.addEventListener('focus',refresh);
+		document.addEventListener('visibilitychange',refresh);
+		return()=>{window.clearInterval(timer);window.removeEventListener('focus',refresh);document.removeEventListener('visibilitychange',refresh)};
+	},[load,sessionStatus,activeMode]);
 	useEffect(()=>{
 		setHistoryPreferenceReady(false);
 		setPreferenceError('');
@@ -63,7 +72,7 @@ export default function TransactionsPage(){
 		<section className="account-panel card p-5"><div className="account-panel-title"><div><h2><WalletCards size={17} className="gold"/> Funding requests</h2><p className="account-panel-subtitle">No request is a payment confirmation until its recorded review state says so.</p></div><button type="button" className="icon-action" aria-label="Refresh transaction history" onClick={()=>void load()}><RefreshCw size={15}/></button></div>
 			<div className="mb-3 flex justify-end"><button type="button" className="text-link" disabled={!historyPreferenceReady} onClick={()=>setHistoryVisibility(true)}>Hide transaction list</button></div>
 			<div className="transaction-history-filters" role="group" aria-label="Filter transactions">{(['ALL','DEPOSIT','WITHDRAWAL'] as const).map(value=><button key={value} type="button" aria-pressed={filter===value} onClick={()=>setFilter(value)}>{value==='ALL'?'All':value==='DEPOSIT'?'Deposits':'Withdrawals'}</button>)}</div>
-			{error?<div className="account-empty transaction-history-error" role="alert"><p>{error}</p><button type="button" className="text-link" onClick={()=>void load()}><RefreshCw size={14}/> Retry</button></div>:loading?<div className="account-empty" role="status">Loading transaction history…</div>:transactions.length?<div className="transaction-history-list">{transactions.map(item=><Link className="transaction-history-row" href={`/wallet/transactions/${encodeURIComponent(item.id)}`} key={item.id}><span className={`transaction-history-icon ${item.type==='DEPOSIT'?'is-deposit':'is-withdrawal'}`}>{item.type==='DEPOSIT'?<ArrowDownLeft size={17}/>:<ArrowUpRight size={17}/>}</span><span className="transaction-history-main"><b>{item.type==='DEPOSIT'?'Deposit':'Withdrawal'} · {item.method}</b><small>{item.id}</small><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time></span><span className="transaction-history-amount">{money(item.amount,item.currency)}<small className={`status-pill status-${item.status.toLowerCase().replaceAll('_','-')}`}>{statusLabels[item.status]||item.status.replaceAll('_',' ')}</small></span></Link>)}</div>:<div className="notification-empty-state"><WalletCards size={25} aria-hidden="true"/><h3>{data?.transactions.length?'No matching requests':'No transactions yet'}</h3><p>{data?.transactions.length?'Choose another filter to see your requests.':'Funding requests will appear here after you submit them.'}</p><Link href="/wallet" className="text-link">Open wallet</Link></div>}
+			{error?<div className="account-empty transaction-history-error" role="alert"><p>{error}</p><button type="button" className="text-link" onClick={()=>void load(true)}><RefreshCw size={14}/> Retry</button></div>:loading&&!data?<div className="account-empty" role="status">Loading transaction history…</div>:transactions.length?<div className="transaction-history-list">{transactions.map(item=><Link className="transaction-history-row" href={`/wallet/transactions/${encodeURIComponent(item.id)}`} key={item.id}><span className={`transaction-history-icon ${item.type==='DEPOSIT'?'is-deposit':'is-withdrawal'}`}>{item.type==='DEPOSIT'?<ArrowDownLeft size={17}/>:<ArrowUpRight size={17}/>}</span><span className="transaction-history-main"><b>{item.type==='DEPOSIT'?'Deposit':'Withdrawal'} · {item.method}</b><small>{item.id}</small><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time></span><span className="transaction-history-amount">{money(item.amount,item.currency)}<small className={`status-pill status-${item.status.toLowerCase().replaceAll('_','-')}`}>{statusLabels[item.status]||item.status.replaceAll('_',' ')}</small></span></Link>)}</div>:<div className="notification-empty-state"><WalletCards size={25} aria-hidden="true"/><h3>{data?.transactions.length?'No matching requests':'No transactions yet'}</h3><p>{data?.transactions.length?'Choose another filter to see your requests.':'Funding requests will appear here after you submit them.'}</p><Link href="/wallet" className="text-link">Open wallet</Link></div>}
 		</section>
 		</>}
 	</main></>;

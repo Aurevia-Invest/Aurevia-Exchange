@@ -1,6 +1,6 @@
 'use client';
 
-import {useEffect,useMemo,useRef,useState} from 'react';
+import {useEffect,useMemo,useState} from 'react';
 import {useSearchParams} from 'next/navigation';
 import {QueryClient,QueryClientProvider,useQuery} from '@tanstack/react-query';
 import {useSession} from 'next-auth/react';
@@ -16,7 +16,6 @@ type QuotesResponse={quotes:Array<MarketQuote|QuoteError>;source:string};
 type HistoryResponse={quote:MarketQuote|null;candles:MarketCandle[];timeframe:TimeframeId;interval:string;source?:string};
 type ReturnMetric={label:string;days:number;value:number|null};
 type MarketAnalysis={summary:string;observations:Array<{symbol:string;observation:string}>;caveat:string};
-type MarketDataExplanation={symbol:string;dataType:'quote'|'history';status:'current_provider'|'stale_provider'|'internal_reference'|'unavailable';explanation:{explanation:string;recommendedAction:'refresh'|'configure_market_provider'|'try_later'|'contact_support';caveat:string}};
 type MarketCategory='Favorites'|'Forex'|'Crypto'|'Stocks'|'Indices';
 
 const TICKER_SYMBOLS=['BTC','DJI','MERV','DAX','IBEX','NIKKEI','EURGBP','SPX','NASDAQ'];
@@ -42,7 +41,6 @@ function LiveMarketDashboardContent(){
   const removeSymbol=useMarketWatchlists(state=>state.removeSymbol);
   const reorderSymbol=useMarketWatchlists(state=>state.reorderSymbol);
   const [timeframe,setTimeframe]=useState<TimeframeId>('1d');
-  const [streamStatus,setStreamStatus]=useState<'connecting'|'connected'|'offline'>('connecting');
   const [streamUpdates,setStreamUpdates]=useState<Record<string, Partial<MarketQuote>>>({});
   const [sidebarOpen,setSidebarOpen]=useState(false);
   const [showAddSymbol,setShowAddSymbol]=useState(false);
@@ -54,13 +52,8 @@ function LiveMarketDashboardContent(){
   const [watchlistScopeReady,setWatchlistScopeReady]=useState(false);
   const [watchlistScopeError,setWatchlistScopeError]=useState('');
   const [marketAnalysis,setMarketAnalysis]=useState<MarketAnalysis|null>(null);
-  const [marketAnalysisSources,setMarketAnalysisSources]=useState<Array<{symbol:string;name:string;provider:string;quotedAt:string}>>([]);
   const [marketAnalysisError,setMarketAnalysisError]=useState('');
   const [marketAnalysisBusy,setMarketAnalysisBusy]=useState(false);
-  const [dataExplanation,setDataExplanation]=useState<MarketDataExplanation|null>(null);
-  const [dataExplanationError,setDataExplanationError]=useState('');
-  const [explainingDataType,setExplainingDataType]=useState<'quote'|'history'|null>(null);
-  const dataExplanationRequest=useRef<AbortController|null>(null);
   const activeList=watchlists.find(list=>list.id===activeWatchlistId)||watchlists[0];
   const selectedAsset=getMarketAsset(selectedSymbol)||getMarketAsset('DJI')!;
   const quoteIds=Array.from(new Set([...activeList.symbols,...DEFAULT_WATCHLIST,...COMPARISON_SYMBOLS,selectedAsset.id]));
@@ -87,12 +80,8 @@ function LiveMarketDashboardContent(){
   },[batchQuery.data?.quotes,streamUpdates]);
   const activeQuote=(batchQuotes.get(selectedAsset.id) && isQuote(batchQuotes.get(selectedAsset.id)) ? batchQuotes.get(selectedAsset.id) as MarketQuote : getQuote(selectedQuery.data,selectedAsset.id)) || historyQuery.data?.quote;
   const error=historyQuery.error instanceof Error?historyQuery.error.message:selectedQuery.error instanceof Error?selectedQuery.error.message:'';
-  const activeProvider=activeQuote?.source;
   const activeQuoteIsExternal=!!activeQuote&&isExternalMarketDataSource(activeQuote.source);
-  const activeQuoteStatus=!activeQuote?'Unavailable':activeQuote.isStale?'Stale':activeQuoteIsExternal?'Live':'Internal reference';
-  const activeQuoteSourceLabel=!activeQuote?'No provider quote':activeQuoteIsExternal?activeProvider||'External provider':'Aurevia Internal reference';
-  const historyNeedsExplanation=!historyQuery.isLoading&&(!historyQuery.data||!historyQuery.data.candles.length||!isExternalMarketDataSource(historyQuery.data.source||''));
-  const quoteNeedsExplanation=!selectedQuery.isLoading&&(!activeQuote||!activeQuoteIsExternal||activeQuote.isStale);
+  const activeQuoteStatus=!activeQuote?'Unavailable':activeQuote.isStale?'Stale':activeQuoteIsExternal?'Current':'Indicative';
   const liveQuotes=[...batchQuotes.values()].filter((item):item is MarketQuote=>isQuote(item)&&!item.isStale);
   const gainers=[...liveQuotes].filter(item=>item.changePercent>0).sort((a,b)=>b.changePercent-a.changePercent).slice(0,3);
   const losers=[...liveQuotes].filter(item=>item.changePercent<0).sort((a,b)=>a.changePercent-b.changePercent).slice(0,3);
@@ -100,17 +89,7 @@ function LiveMarketDashboardContent(){
   useEffect(()=>{if(!getMarketAsset(selectedSymbol))selectSymbol('DJI')},[selectedSymbol,selectSymbol]);
   useEffect(()=>{if(getMarketAsset(requestedSymbol))selectSymbol(requestedSymbol)},[requestedSymbol,selectSymbol]);
   useEffect(()=>{
-    dataExplanationRequest.current?.abort();
-    dataExplanationRequest.current=null;
-    setDataExplanation(null);
-    setDataExplanationError('');
-    setExplainingDataType(null);
-    return()=>dataExplanationRequest.current?.abort();
-  },[selectedAsset.id,timeframe]);
-  useEffect(()=>{
     const socket:Socket = io({path:'/socket.io',transports:['websocket'],autoConnect:true,reconnection:true,reconnectionDelay:700});
-    const onConnect=()=>setStreamStatus('connected');
-    const onDisconnect=()=>setStreamStatus('offline');
     const onMarketUpdate=(updates:Array<{symbol:string;price:number;change:number;changePercent:number;source:string;dataMode:'SIMULATED'|'LIVE';lastUpdatedAt:string}>)=>{
       setStreamUpdates(current=>{
         const next={...current};
@@ -128,11 +107,8 @@ function LiveMarketDashboardContent(){
         return next;
       });
     };
-    socket.on('connect',onConnect);
-    socket.on('disconnect',onDisconnect);
     socket.on('market:update',onMarketUpdate);
-    setStreamStatus(socket.connected?'connected':'connecting');
-    return ()=>{socket.off('connect',onConnect);socket.off('disconnect',onDisconnect);socket.off('market:update',onMarketUpdate);socket.disconnect();};
+    return ()=>{socket.off('market:update',onMarketUpdate);socket.disconnect();};
   },[activeQuoteIsExternal]);
   useEffect(()=>{
     if(sessionStatus==='loading')return;
@@ -164,7 +140,6 @@ function LiveMarketDashboardContent(){
   async function analyzeMarket(){
     setMarketAnalysisBusy(true);
     setMarketAnalysis(null);
-    setMarketAnalysisSources([]);
     setMarketAnalysisError('');
     try{
       const symbols=[...new Set([selectedAsset.id,...activeList.symbols])].slice(0,6);
@@ -172,39 +147,10 @@ function LiveMarketDashboardContent(){
       const result=await response.json();
       if(!response.ok)throw new Error(result.error||'Market analysis is unavailable.');
       setMarketAnalysis(result.analysis as MarketAnalysis);
-      setMarketAnalysisSources(Array.isArray(result.quotes)?result.quotes:[]);
     }catch(exception){
       setMarketAnalysisError(exception instanceof Error?exception.message:'Market analysis is unavailable.');
     }finally{
       setMarketAnalysisBusy(false);
-    }
-  }
-
-  async function explainDataAvailability(dataType:'quote'|'history'){
-    dataExplanationRequest.current?.abort();
-    const controller=new AbortController();
-    dataExplanationRequest.current=controller;
-    setExplainingDataType(dataType);
-    setDataExplanation(null);
-    setDataExplanationError('');
-    try{
-      const response=await fetch('/api/market/data-explanation',{
-        method:'POST',
-        headers:{'content-type':'application/json'},
-        body:JSON.stringify({symbol:selectedAsset.id,dataType,...(dataType==='history'?{timeframe}:{})}),
-        signal:controller.signal,
-      });
-      const result=await response.json();
-      if(!response.ok)throw new Error(result.error||'Market data availability explanation is unavailable.');
-      if(controller.signal.aborted)return;
-      setDataExplanation(result as MarketDataExplanation);
-    }catch(exception){
-      if(!controller.signal.aborted)setDataExplanationError(exception instanceof Error?exception.message:'Market data availability explanation is unavailable.');
-    }finally{
-      if(dataExplanationRequest.current===controller){
-        dataExplanationRequest.current=null;
-        setExplainingDataType(null);
-      }
     }
   }
 
@@ -221,8 +167,8 @@ function LiveMarketDashboardContent(){
 
   return <><Nav/><main className="live-market-page">
     <div className="live-market-topline">
-      <div className="live-market-heading"><span>GLOBAL MARKETS <i/> {activeQuoteIsExternal?`${activeProvider?.toUpperCase()} PROVIDER DATA`:activeQuote?'AUREVIA INTERNAL REFERENCE DATA':'LIVE PROVIDER DATA UNAVAILABLE'}</span><h1>Markets</h1><p>Provider quotes are labeled with their source. Internal reference prices are estimates, not live or executable market quotes.</p></div>
-      <div className={`live-source-status ${activeQuote?.isStale?'is-stale':''} ${activeQuoteIsExternal&&!activeQuote?.isStale?'is-live':''} ${activeQuote&&!activeQuoteIsExternal?'is-internal':''}`}><span className="live-status-dot"/>{`Market data: ${activeQuoteStatus}`} <small>{activeQuote?`${activeQuoteSourceLabel} quote · ${formatTime(activeQuote.updatedAt)}${activeQuote.isStale&&activeQuoteIsExternal?' · last provider quote':''}`:'Configure Finnhub or Alpaca market data to view provider quotes'} · {streamStatus==='connected'?'WebSocket connected':'WebSocket reconnecting'}</small></div>
+      <div className="live-market-heading"><span>GLOBAL MARKETS <i/> {activeQuoteIsExternal&&!activeQuote?.isStale?'CURRENT QUOTE':activeQuote?'INDICATIVE PRICES':'QUOTE UNAVAILABLE'}</span><h1>Markets</h1><p>Quotes may be delayed. Internal reference prices are estimates and are not executable.</p></div>
+      <div className={`live-source-status ${activeQuote?.isStale?'is-stale':''} ${activeQuoteIsExternal&&!activeQuote?.isStale?'is-live':''} ${activeQuote&&!activeQuoteIsExternal?'is-internal':''}`}><span className="live-status-dot"/>{`Price status: ${activeQuoteStatus}`} <small>{activeQuote?`Updated ${formatTime(activeQuote.updatedAt)}`:'Market prices are temporarily unavailable'}</small></div>
     </div>
 
     <section className="live-ticker" aria-label="Market ticker">
@@ -240,7 +186,7 @@ function LiveMarketDashboardContent(){
     <section className="live-movers" aria-label="Market movers">
       {[{title:'Top gainers',items:gainers},{title:'Top decliners',items:losers}].map(group=><div className="live-movers-group" key={group.title}>
         <h2>{group.title}</h2>
-        <div>{group.items.length?group.items.map(quote=><button type="button" className="live-mover" key={quote.asset.id} onClick={()=>selectSymbol(quote.asset.id)}><span><b>{quote.asset.id}</b><small>{quote.asset.name}</small></span><strong className={tone(quote.changePercent)}>{formatPercent(quote.changePercent)}</strong></button>):<p>No current provider quotes available.</p>}</div>
+        <div>{group.items.length?group.items.map(quote=><button type="button" className="live-mover" key={quote.asset.id} onClick={()=>selectSymbol(quote.asset.id)}><span><b>{quote.asset.id}</b><small>{quote.asset.name}</small></span><strong className={tone(quote.changePercent)}>{formatPercent(quote.changePercent)}</strong></button>):<p>No current market prices available.</p>}</div>
       </div>)}
     </section>
 
@@ -279,7 +225,7 @@ function LiveMarketDashboardContent(){
 
       <section className="live-main-column">
         <section className="user-market-assets live-market-pulse" aria-label="Supported market quotes">
-          <header className="user-market-assets-heading"><div><span className="user-dashboard-eyebrow">SUPPORTED INSTRUMENTS</span><h2>Market pulse</h2></div><small>{batchQuery.data?.source||'Connecting to quote sources'}</small></header>
+          <header className="user-market-assets-heading"><div><span className="user-dashboard-eyebrow">SUPPORTED INSTRUMENTS</span><h2>Market pulse</h2></div><small>{batchQuery.isLoading?'Loading market prices':batchQuery.isError?'Market prices unavailable':'Market quotes'}</small></header>
           <div className="user-market-categories" role="group" aria-label="Filter market instruments">{MARKET_CATEGORIES.map(category=><button key={category} type="button" aria-pressed={marketCategory===category} className={marketCategory===category?'is-selected':''} onClick={()=>setMarketCategory(category)}>{category}</button>)}</div>
           {marketPulseAssets.length?<div className="user-market-asset-grid">{marketPulseAssets.map(asset=>{
             const quote=batchQuotes.get(asset.id);
@@ -300,36 +246,11 @@ function LiveMarketDashboardContent(){
             {activeQuote&&<span className={`live-change ${tone(activeQuote.changePercent)}`}><b>{activeQuote.change>=0?'+':''}{formatPrice(activeQuote.change,selectedAsset.currency,selectedAsset.type==='FOREX')}</b><b>({formatPercent(activeQuote.changePercent)})</b></span>}
             <span className="live-market-open-state"><i/> {marketOpenLabel(selectedAsset.type)}</span>
           </div>
-          <div className="live-chart-metadata"><span>{activeQuote?.isStale?'Last quote · STALE': 'Last quote'} {activeQuote?formatTime(activeQuote.updatedAt):'—'}</span><span>Quote source <b>{activeQuote?.source||'Unavailable'}</b></span><span>Chart source <b>{historyQuery.data?.source||'Loading'}</b></span><button type="button" className="live-refresh-button" aria-label="Refresh quotes" onClick={()=>{void selectedQuery.refetch();void batchQuery.refetch();void historyQuery.refetch()}}><RefreshCw size={13} className={selectedQuery.isFetching?'is-spinning':''}/> Refresh</button></div>
+          <div className="live-chart-metadata"><span>{activeQuote?.isStale?'Last quote · STALE':'Last quote'} {activeQuote?formatTime(activeQuote.updatedAt):'—'}</span><button type="button" className="live-refresh-button" aria-label="Refresh quotes" onClick={()=>{void selectedQuery.refetch();void batchQuery.refetch();void historyQuery.refetch()}}><RefreshCw size={13} className={selectedQuery.isFetching?'is-spinning':''}/> Refresh</button></div>
           {session?.user?.id&&<section className="live-market-ai" aria-label="AI market context">
-            {(quoteNeedsExplanation||historyNeedsExplanation)&&<div className="live-data-status-ai">
-              <p>AI can explain the verified source status; it cannot supply or estimate missing market data.</p>
-              <div>
-                {quoteNeedsExplanation&&<button type="button" className="btn bg-white/5" onClick={()=>void explainDataAvailability('quote')} disabled={explainingDataType!==null}>
-                  {explainingDataType==='quote'?<RefreshCw size={14} className="is-spinning"/>:<Sparkles size={14}/>}
-                  {explainingDataType==='quote'?'Checking quote status…':'Explain quote availability'}
-                </button>}
-                {historyNeedsExplanation&&<button type="button" className="btn bg-white/5" onClick={()=>void explainDataAvailability('history')} disabled={explainingDataType!==null}>
-                  {explainingDataType==='history'?<RefreshCw size={14} className="is-spinning"/>:<Sparkles size={14}/>}
-                  {explainingDataType==='history'?'Checking history status…':'Explain chart history'}
-                </button>}
-              </div>
-              {dataExplanationError&&<p className="live-data-alert" role="alert">{dataExplanationError}</p>}
-              {dataExplanation&&<div className="live-data-alert" aria-live="polite">
-                <strong>{dataExplanation.symbol} {dataExplanation.dataType==='quote'?'quote':'chart history'} · {dataExplanation.status.replaceAll('_',' ')}</strong>
-                <p>{dataExplanation.explanation.explanation}</p>
-                <p>{dataExplanation.explanation.caveat}</p>
-                <small>Suggested next step: {({
-                  refresh:'Refresh the market data.',
-                  configure_market_provider:'Ask an administrator to configure a supported market-data provider.',
-                  try_later:'Try again later.',
-                  contact_support:'Contact Aurevia support.',
-                })[dataExplanation.explanation.recommendedAction]}</small>
-              </div>}
-            </div>}
             <button type="button" className="btn bg-white/5" onClick={()=>void analyzeMarket()} disabled={marketAnalysisBusy}>
               {marketAnalysisBusy?<RefreshCw size={14} className="is-spinning"/>:<Sparkles size={14}/>}
-              {marketAnalysisBusy?'Analyzing provider quotes…':'Explain provider quotes'}
+              {marketAnalysisBusy?'Analyzing market data…':'Explain market movement'}
             </button>
             {marketAnalysisError&&<p className="live-data-alert" role="alert">{marketAnalysisError}</p>}
             {marketAnalysis&&<div className="live-data-alert" aria-live="polite">
@@ -337,7 +258,6 @@ function LiveMarketDashboardContent(){
               <p>{marketAnalysis.summary}</p>
               {marketAnalysis.observations.length>0&&<ul>{marketAnalysis.observations.map(item=><li key={item.symbol}><b>{item.symbol}:</b> {item.observation}</li>)}</ul>}
               <p>{marketAnalysis.caveat}</p>
-              <small>Quote sources: {marketAnalysisSources.map(item=>`${item.name} (${item.provider}, ${formatTime(item.quotedAt)})`).join('; ')}.</small>
             </div>}
           </section>}
           <div className="live-timeframes" role="group" aria-label="Chart interval">{TIMEFRAMES.map(item=><button type="button" key={item.id} className={timeframe===item.id?'is-active':''} aria-pressed={timeframe===item.id} onClick={()=>setTimeframe(item.id)}>{item.label}</button>)}</div>
@@ -354,7 +274,7 @@ function LiveMarketDashboardContent(){
           <div className="live-performance">{performance.map(metric=><div key={metric.label}><span>{metric.label}</span><b className={metric.value===null?'':tone(metric.value)}>{metric.value===null?'—':formatPercent(metric.value)}</b></div>)}</div>
         </div>
 
-        <section className="live-comparison-section"><div className="live-section-title"><div><span>MARKET BENCHMARKS</span><h2>Quick comparison</h2></div><span className="live-source-note">Daily change · selected data source</span></div><div className="live-comparison-grid">{COMPARISON_SYMBOLS.map(id=>{const quote=batchQuotes.get(id);const asset=getMarketAsset(id)!;return <button type="button" className={`live-comparison-card ${selectedAsset.id===id?'is-active':''}`} key={id} onClick={()=>selectSymbol(id)}><span>{id}</span><small>{asset.name}</small><strong className={isQuote(quote)?tone(quote.changePercent):''}>{isQuote(quote)?formatPercent(quote.changePercent):'—'}</strong><em>{isQuote(quote)?formatPrice(quote.price,quote.asset.currency):quote?'Unavailable':'Updating'}</em></button>})}</div></section>
+        <section className="live-comparison-section"><div className="live-section-title"><div><span>MARKET BENCHMARKS</span><h2>Quick comparison</h2></div><span className="live-source-note">Daily change · current quote</span></div><div className="live-comparison-grid">{COMPARISON_SYMBOLS.map(id=>{const quote=batchQuotes.get(id);const asset=getMarketAsset(id)!;return <button type="button" className={`live-comparison-card ${selectedAsset.id===id?'is-active':''}`} key={id} onClick={()=>selectSymbol(id)}><span>{id}</span><small>{asset.name}</small><strong className={isQuote(quote)?tone(quote.changePercent):''}>{isQuote(quote)?formatPercent(quote.changePercent):'—'}</strong><em>{isQuote(quote)?formatPrice(quote.price,quote.asset.currency):quote?'Unavailable':'Updating'}</em></button>})}</div></section>
       </section>
 
       <aside className="live-right-panel">
@@ -367,8 +287,7 @@ function LiveMarketDashboardContent(){
           <div className="live-key-row"><span>Type</span><b>{marketTypeLabel(selectedAsset.type)}</b></div>
           <div className="live-key-row"><span>Day range</span><b>{activeQuote?.dayLow!==null&&activeQuote?.dayLow!==undefined&&activeQuote.dayHigh!==null?`${formatPrice(activeQuote.dayLow,selectedAsset.currency)} – ${formatPrice(activeQuote.dayHigh,selectedAsset.currency)}`:'—'}</b></div>
         </section>
-        <section className="live-right-card live-provider-card"><span className="live-provider-mark">{activeQuoteIsExternal?activeProvider==='Finnhub'?'F':'A':activeQuote?'R':'—'}</span><div><b>{`Market data: ${activeQuoteStatus}`}</b><small>{activeQuoteSourceLabel}</small></div><span className={`live-provider-dot ${activeQuoteIsExternal?'is-external':'is-internal'}`} title={activeQuoteIsExternal?`${activeProvider} provider quote`:activeQuote?'Internal reference data':'No live market-data provider response'}/></section>
-        <p className="live-disclaimer">{activeQuoteIsExternal?`The current quote is from ${activeProvider} and may be delayed.`:activeQuote?'This internal reference price is an estimate, not a live market quote.':'Aurevia internal reference data is shown only when external providers are unavailable.'} {historyQuery.data?.source?historyQuery.data.source==='Aurevia Internal'?'Chart history uses internal reference data for display.':`Chart history is from ${historyQuery.data.source}.`:'Chart history is using the internal reference feed.'} This view is informational; eligible REAL-mode orders, when enabled, are submitted separately through Trade to Alpaca Paper Trading only.</p>
+        <p className="live-disclaimer">Market prices are informational and may be delayed. Internal reference prices are estimates, not executable quotes. REAL account orders use simulated execution, not live market transactions.</p>
       </aside>
     </div>
   </main></>;

@@ -10,7 +10,7 @@ import {createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
 
 const schema=z.object({confirmation:z.literal('RESET DEMO ACCOUNT')});
-const refundableStatuses=[InvestmentStatus.PENDING_APPROVAL,InvestmentStatus.APPROVED,InvestmentStatus.ACTIVE,InvestmentStatus.PAUSED];
+const refundableStatuses=[InvestmentStatus.PENDING_APPROVAL,InvestmentStatus.APPROVED,InvestmentStatus.ACTIVE,InvestmentStatus.PAUSED,InvestmentStatus.COMPLETED];
 
 export async function POST(request:Request){
  try{
@@ -22,9 +22,6 @@ export async function POST(request:Request){
    if(!accountOwner||accountOwner.status!=='ACTIVE'||accountOwner.role!=='USER')throw new Error('ACCOUNT_UNAVAILABLE');
    if(accountOwner?.accountMode!==AccountMode.DEMO)throw new Error('DEMO_MODE_REQUIRED');
    await initializeDemoAccount(tx,user.id);
-   const incomplete=await tx.investmentRequest.findFirst({where:{userId:user.id,accountMode:AccountMode.DEMO,status:InvestmentStatus.COMPLETED},select:{id:true}});
-   if(incomplete)throw new Error('COMPLETED_INVESTMENT_REQUIRES_SETTLEMENT');
-
    const openStatuses=[OrderStatus.OPEN,OrderStatus.PARTIALLY_FILLED];
    const orders=await tx.order.findMany({where:{userId:user.id,accountMode:AccountMode.DEMO,status:{in:openStatuses}},select:{id:true}});
    const cancelledOrders=await tx.order.updateMany({where:{userId:user.id,accountMode:AccountMode.DEMO,status:{in:openStatuses}},data:{status:OrderStatus.CANCELLED}});
@@ -64,7 +61,7 @@ export async function POST(request:Request){
   if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
   if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many reset attempts. Try again tomorrow.'},{status:429});
   if(error instanceof Error&&error.message==='ACCOUNT_UNAVAILABLE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
-  if(error instanceof Error&&['DEMO_MODE_REQUIRED','COMPLETED_INVESTMENT_REQUIRES_SETTLEMENT','DEMO_RESET_STATE_CHANGED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
+  if(error instanceof Error&&['DEMO_MODE_REQUIRED','DEMO_RESET_STATE_CHANGED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
   return NextResponse.json({error:'Unable to reset the DEMO portfolio.'},{status:503});
  }
 }

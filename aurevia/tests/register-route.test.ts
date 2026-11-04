@@ -37,6 +37,7 @@ const payload={
 	password:'SecureTestPassword1',
 	name:'New User',
 	country:'United States',
+	gender:'PREFER_NOT_TO_SAY',
 	dateOfBirth:'1990-01-01',
 	phone:'+12025550123',
 	accountMode:'DEMO',
@@ -82,6 +83,7 @@ describe('immediate registration',()=>{
 			email:payload.email,
 			passwordHash:expect.any(String),
 			name:payload.name,
+			gender:payload.gender,
 			phone:payload.phone,
 			accountMode:'DEMO',
 			dateOfBirth:new Date('1990-01-01T00:00:00.000Z'),
@@ -125,6 +127,15 @@ describe('immediate registration',()=>{
 		expect(mocks.userFindFirst).not.toHaveBeenCalled();
 		expect(mocks.transaction).not.toHaveBeenCalled();
 		expect(mocks.createAccount).not.toHaveBeenCalled();
+	});
+
+	it('requires a valid gender selection before creating an account',async()=>{
+		const response=await POST(request({...payload,gender:undefined}));
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({error:'Check your name, email, country, password, and consent details.'});
+		expect(mocks.createAccount).not.toHaveBeenCalled();
+		expect(mocks.transaction).not.toHaveBeenCalled();
 	});
 
 	it('treats a case-variant retry with the correct password as sign-in',async()=>{

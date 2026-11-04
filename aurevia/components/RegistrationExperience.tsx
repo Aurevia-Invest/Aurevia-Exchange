@@ -5,7 +5,7 @@ import {useRouter} from 'next/navigation';
 import {signIn,useSession} from 'next-auth/react';
 import Link from 'next/link';
 import Image from 'next/image';
-import {ArrowRight,ShieldCheck} from 'lucide-react';
+import {ArrowRight,Check,Eye,EyeOff,FlaskConical,ShieldCheck,TrendingUp} from 'lucide-react';
 import Nav from '@/components/Nav';
 import CountrySelector from '@/components/CountrySelector';
 import {findCountry} from '@/lib/countries';
@@ -13,7 +13,8 @@ import {normalizePhoneE164,parseDateOfBirth} from '@/lib/registration-validation
 import {useLocale} from '@/lib/i18n-context';
 
 type AccountMode='DEMO'|'REAL';
-type RegistrationDetails={firstName:string;lastName:string;dateOfBirth:string;residenceCountry:string;phoneCountry:string;phoneNumber:string;email:string;password:string;confirmPassword:string;accountMode:AccountMode};
+type GenderSelection='FEMALE'|'MALE'|'NON_BINARY'|'PREFER_NOT_TO_SAY';
+type RegistrationDetails={firstName:string;lastName:string;dateOfBirth:string;gender:GenderSelection|'';residenceCountry:string;phoneCountry:string;phoneNumber:string;email:string;password:string;confirmPassword:string;accountMode:AccountMode};
 type ExistingAccountIssue='account'|'unavailable'|'pending'|'phone';
 
 function createRegistrationRequestId(){
@@ -30,9 +31,21 @@ function isRecord(value:unknown):value is Record<string,unknown>{
 	return typeof value==='object'&&value!==null&&!Array.isArray(value);
 }
 
-const initialDetails:RegistrationDetails={firstName:'',lastName:'',dateOfBirth:'',residenceCountry:'',phoneCountry:'',phoneNumber:'',email:'',password:'',confirmPassword:'',accountMode:'DEMO'};
+const initialDetails:RegistrationDetails={firstName:'',lastName:'',dateOfBirth:'',gender:'',residenceCountry:'',phoneCountry:'',phoneNumber:'',email:'',password:'',confirmPassword:'',accountMode:'DEMO'};
 
 function dateInputMaximum(){return new Date().toISOString().slice(0,10)}
+
+function parseGenderSelection(value:string):RegistrationDetails['gender']{
+	switch(value){
+		case 'FEMALE':
+		case 'MALE':
+		case 'NON_BINARY':
+		case 'PREFER_NOT_TO_SAY':
+			return value;
+		default:
+			return '';
+	}
+}
 
 export default function RegistrationExperience(){
 	const {translate}=useLocale();
@@ -44,6 +57,8 @@ export default function RegistrationExperience(){
 	const [dateError,setDateError]=useState('');
 	const [phoneError,setPhoneError]=useState('');
 	const [passwordError,setPasswordError]=useState('');
+	const [passwordVisible,setPasswordVisible]=useState(false);
+	const [confirmationVisible,setConfirmationVisible]=useState(false);
 	const [busy,setBusy]=useState(false);
 	const submissionInFlight=useRef(false);
 	const router=useRouter();
@@ -53,6 +68,7 @@ export default function RegistrationExperience(){
 		details.firstName.trim()
 		&&details.lastName.trim()
 		&&parseDateOfBirth(details.dateOfBirth)
+		&&details.gender
 		&&residence
 		&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(details.email.trim())
 		&&details.password.length>=10
@@ -99,7 +115,7 @@ export default function RegistrationExperience(){
 						'accept':'application/json',
 						...(requestId?{'x-aurevia-request-id':requestId}:{}),
 					},
-					body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted,website:''}),
+					body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,gender:details.gender,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted,website:''}),
 					signal:controller.signal,
 				});
 			}catch(exception){
@@ -195,14 +211,14 @@ export default function RegistrationExperience(){
 	}
 
 	return <><Nav/><main className="auth-scene"><section className="auth-card auth-register-card" aria-labelledby="registration-title">
-		<div className="auth-brand"><Image src="/aurevia-logo.png" alt="" width={48} height={48}/><span className="brand-copy"><strong>Aurevia</strong><small>EXCHANGE</small></span></div>
-			<h1 id="registration-title" className="auth-heading">{translate('createAccountTitle')}</h1>
-			<nav className="register-section-jump" aria-label="Registration sections"><a href="#register-profile">{translate('personalInformation')}</a><a href="#register-contact">{translate('contactInformation')}</a><a href="#register-security">{translate('security')}</a><a href="#register-account">{translate('accountType')}</a></nav>
+		<div className="register-masthead"><div><div className="auth-brand"><Image src="/aurevia-logo.png" alt="" width={48} height={48}/><span className="brand-copy"><strong>Aurevia</strong><small>EXCHANGE</small></span></div><p className="account-kicker">PRIVATE BY DESIGN · BUILT FOR YOUR NEXT MOVE</p><h1 id="registration-title" className="auth-heading">{translate('createAccountTitle')}</h1><p className="auth-subtitle">Create your secure profile and choose how you want to get started.</p></div><div className="register-masthead-badge"><ShieldCheck size={18} aria-hidden="true"/><span>Secure<br/>account setup</span></div></div>
+			<nav className="register-section-jump" aria-label="Registration sections"><a href="#register-profile"><span>01</span>{translate('personalInformation')}</a><a href="#register-contact"><span>02</span>{translate('contactInformation')}</a><a href="#register-security"><span>03</span>{translate('security')}</a><a href="#register-account"><span>04</span>{translate('accountType')}</a></nav>
 			<form onSubmit={submit} className="register-form space-y-4">
 				<fieldset id="register-profile" className="register-form-section"><legend className="sr-only">{translate('personalInformation')}</legend><h2>{translate('personalInformation')}</h2><div className="grid gap-3 sm:grid-cols-2">
 					<label className="auth-field-label">{translate('firstName')}<input className="auth-input" name="given-name" autoComplete="given-name" value={details.firstName} onChange={event=>update('firstName',event.target.value)} required maxLength={60}/></label>
 					<label className="auth-field-label">{translate('lastName')}<input className="auth-input" name="family-name" autoComplete="family-name" value={details.lastName} onChange={event=>update('lastName',event.target.value)} required maxLength={59}/></label>
 					<label className="auth-field-label">{translate('dateOfBirth')}<input className="auth-input auth-date-input" type="date" name="bday" autoComplete="bday" value={details.dateOfBirth} max={dateInputMaximum()} aria-describedby={dateError?'dob-error':undefined} onChange={event=>{update('dateOfBirth',event.target.value);setDateError('')}} required/></label>
+					<label className="auth-field-label">{translate('gender')}<select className="auth-input" name="gender" autoComplete="sex" value={details.gender} onChange={event=>update('gender',parseGenderSelection(event.target.value))} required><option value="">{translate('selectGender')}</option><option value="FEMALE">{translate('genderFemale')}</option><option value="MALE">{translate('genderMale')}</option><option value="NON_BINARY">{translate('genderNonBinary')}</option><option value="PREFER_NOT_TO_SAY">{translate('genderPreferNotToSay')}</option></select></label>
 					<div><span className="auth-field-label">{translate('countryResidence')}</span><CountrySelector label={translate('countryResidence')} value={details.residenceCountry} onChange={code=>{update('residenceCountry',code);setCountryError('')}} required invalid={Boolean(countryError)} errorId={countryError?'country-error':undefined}/>{countryError&&<p id="country-error" className="mt-1 text-xs text-loss" role="alert">{countryError}</p>}</div>
 				</div>
 					{dateError&&<p id="dob-error" className="mt-2 text-xs text-loss" role="alert">{dateError}</p>}
@@ -212,11 +228,15 @@ export default function RegistrationExperience(){
 					<div><label className="auth-field-label" htmlFor="registration-phone">{translate('phoneNumber')} <span className="muted font-normal">{translate('phoneOptional')}</span></label><div className="register-phone-row mt-1"><CountrySelector label="Phone country and dialing code" value={details.phoneCountry} onChange={code=>{update('phoneCountry',code);setPhoneError('')}} invalid={Boolean(phoneError)} errorId={phoneError?'phone-error':undefined}/><input id="registration-phone" className="auth-input mt-0 min-w-0" name="tel-national" type="tel" autoComplete="tel-national" inputMode="tel" value={details.phoneNumber} onChange={event=>{update('phoneNumber',event.target.value);setPhoneError('')}} placeholder={translate('phoneNumber')} aria-describedby={phoneError?'phone-error':undefined}/></div>{phoneError&&<p id="phone-error" className="mt-1 text-xs text-loss" role="alert">{phoneError}</p>}</div>
 				</div></fieldset>
 				<fieldset id="register-security" className="register-form-section"><legend className="sr-only">{translate('security')}</legend><h2>{translate('security')}</h2><div className="grid gap-3 sm:grid-cols-2">
-					<label className="auth-field-label">{translate('password')}<input className="auth-input" name="new-password" type="password" autoComplete="new-password" value={details.password} onChange={event=>{update('password',event.target.value);setPasswordError('')}} required minLength={10} maxLength={128} pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{10,128}" aria-describedby="password-requirements"/></label>
-					<label className="auth-field-label">{translate('confirmPassword')}<input className="auth-input" name="confirm-password" type="password" autoComplete="new-password" value={details.confirmPassword} onChange={event=>{update('confirmPassword',event.target.value);setPasswordError('')}} required maxLength={128} aria-describedby={passwordError?'password-error':undefined}/></label>
+					<div><label className="auth-field-label" htmlFor="registration-password">{translate('password')}</label><div className="auth-password-wrap"><input id="registration-password" className="auth-input" name="new-password" type={passwordVisible?'text':'password'} autoComplete="new-password" value={details.password} onChange={event=>{update('password',event.target.value);setPasswordError('')}} required minLength={10} maxLength={128} pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{10,128}" aria-describedby="password-requirements"/><button type="button" className="auth-password-toggle" aria-label={passwordVisible?translate('hidePassword'):translate('showPassword')} aria-pressed={passwordVisible} onClick={()=>setPasswordVisible(value=>!value)}>{passwordVisible?<EyeOff size={17}/>:<Eye size={17}/>}</button></div></div>
+					<div><label className="auth-field-label" htmlFor="registration-confirm-password">{translate('confirmPassword')}</label><div className="auth-password-wrap"><input id="registration-confirm-password" className="auth-input" name="confirm-password" type={confirmationVisible?'text':'password'} autoComplete="new-password" value={details.confirmPassword} onChange={event=>{update('confirmPassword',event.target.value);setPasswordError('')}} required maxLength={128} aria-describedby={passwordError?'password-error':undefined}/><button type="button" className="auth-password-toggle" aria-label={confirmationVisible?translate('hidePassword'):translate('showPassword')} aria-pressed={confirmationVisible} onClick={()=>setConfirmationVisible(value=>!value)}>{confirmationVisible?<EyeOff size={17}/>:<Eye size={17}/>}</button></div></div>
 				</div><p id="password-requirements" className="mt-2 text-xs muted">{translate('passwordRequirements')}</p>{passwordError&&<p id="password-error" className="mt-1 text-xs text-loss" role="alert">{passwordError}</p>}</fieldset>
 				<fieldset id="register-account" className="register-form-section"><legend className="sr-only">{translate('accountType')}</legend><h2>{translate('accountType')}</h2>
-					<div className="grid gap-2 sm:grid-cols-2"><label className={`block cursor-pointer rounded-md border p-3 ${details.accountMode==='DEMO'?'border-gold/40 bg-white/5':'border-white/10'}`}><span className="flex min-h-11 items-center gap-3"><input type="radio" name="accountMode" value="DEMO" checked={details.accountMode==='DEMO'} onChange={()=>update('accountMode','DEMO')}/><b>{translate('demoAccount')}</b></span><span className="block pl-7 text-xs leading-5 muted">{translate('demoAccountCopy')}</span></label><label className={`block cursor-pointer rounded-md border p-3 ${details.accountMode==='REAL'?'border-gold/40 bg-white/5':'border-white/10'}`}><span className="flex min-h-11 items-center gap-3"><input type="radio" name="accountMode" value="REAL" checked={details.accountMode==='REAL'} onChange={()=>update('accountMode','REAL')}/><b>{translate('realAccount')}</b></span><span className="block pl-7 text-xs leading-5 muted">{translate('realAccountCopy')}</span></label></div>
+					<p className="account-mode-intro">Choose a starting account. You can explore the platform in DEMO mode, or create a REAL profile for eligible funding features.</p>
+					<div className="account-mode-options" role="radiogroup" aria-label={translate('accountType')}>
+						<label className={`account-mode-card ${details.accountMode==='DEMO'?'is-selected':''}`}><input type="radio" name="accountMode" value="DEMO" checked={details.accountMode==='DEMO'} onChange={()=>update('accountMode','DEMO')}/><span className="account-mode-icon"><FlaskConical size={20} aria-hidden="true"/></span><span className="account-mode-content"><span className="account-mode-eyebrow">PRACTICE · NO REAL FUNDS</span><b>{translate('demoAccount')}</b><span>{translate('demoAccountCopy')}</span></span><span className="account-mode-check" aria-hidden="true"><Check size={15}/></span></label>
+						<label className={`account-mode-card ${details.accountMode==='REAL'?'is-selected':''}`}><input type="radio" name="accountMode" value="REAL" checked={details.accountMode==='REAL'} onChange={()=>update('accountMode','REAL')}/><span className="account-mode-icon"><TrendingUp size={20} aria-hidden="true"/></span><span className="account-mode-content"><span className="account-mode-eyebrow">PERSONAL PROFILE · REVIEW REQUIRED</span><b>{translate('realAccount')}</b><span>{translate('realAccountCopy')}</span></span><span className="account-mode-check" aria-hidden="true"><Check size={15}/></span></label>
+					</div>
 					<p className="mt-3 text-xs leading-5 muted">Registration is free. Tier 3 KYC requires phone verification. We use your email for account contact and password recovery.</p>
 					{details.accountMode==='REAL'&&<p className="mt-2 flex items-center gap-2 text-xs leading-5 muted" role="status"><span className="tier-badge">Tier 1</span><span>Starting account status. Higher tiers follow the existing review process.</span></p>}
 					<label className="mt-4 flex min-h-11 items-start gap-2 text-xs leading-5 muted"><input className="mt-1" type="checkbox" checked={termsAccepted} onChange={event=>setTermsAccepted(event.target.checked)} required/><span>{translate('termsConsent')} <Link className="auth-link" href="/terms">{translate('terms')}</Link>, <Link className="auth-link" href="/privacy">{translate('privacyPolicy')}</Link>, {translate('riskDisclosure')}</span></label>

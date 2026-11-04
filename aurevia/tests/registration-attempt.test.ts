@@ -41,6 +41,7 @@ describe('immediate registration account creation',()=>{
 			passwordHash:'bcrypt-hash',
 			name:'Person Example',
 			country:'Nigeria',
+			gender:'FEMALE',
 			phone:'+2348031234567',
 			dateOfBirth:new Date('1990-01-01T00:00:00.000Z'),
 			accountMode:'DEMO',
@@ -50,6 +51,7 @@ describe('immediate registration account creation',()=>{
 		expect(mocks.userCreateMany).toHaveBeenCalledWith(expect.objectContaining({
 			data:[expect.objectContaining({
 				phone:'+2348031234567',
+				gender:'FEMALE',
 				phoneVerified:false,
 				phoneVerifiedAt:null,
 				status:'ACTIVE',

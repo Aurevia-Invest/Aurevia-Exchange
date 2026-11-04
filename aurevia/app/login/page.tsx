@@ -50,11 +50,11 @@ export default function Login(){
 		finally{setBusy(false);}
 	}
 
-	return <><Nav/><main className="auth-scene"><section className="auth-card" aria-labelledby="signin-title">
+	return <><Nav/><main className="auth-scene"><section className="auth-card auth-signin-card" aria-labelledby="signin-title">
 		<div className="auth-brand"><Image src="/aurevia-logo.png" alt="" width={52} height={52} priority/><span className="brand-copy"><strong>Aurevia</strong><small>EXCHANGE</small></span></div>
-		<p className="account-kicker">{translate('secureAccess')}</p>
+		<p className="account-kicker">{translate('secureAccess')} · PRIVATE ACCOUNT ACCESS</p>
 		<h1 id="signin-title" className="auth-heading">{translate('welcomeBack')}</h1>
-		<p className="auth-subtitle">{translate('signIn')}</p>
+		<p className="auth-subtitle">Sign in to pick up where you left off. Your account is protected with secure, encrypted access.</p>
 		<div className="auth-market-line" aria-hidden="true"/>
 		{registered&&<p className="mt-4 text-sm text-profit" role="status">{translate('registeredSignIn')}</p>}
 		<form onSubmit={submit} className="mt-5 space-y-4">
@@ -66,6 +66,6 @@ export default function Login(){
 			<button type="submit" disabled={busy} className="auth-submit flex w-full items-center justify-center gap-2" aria-busy={busy}>{busy?<><LoaderCircle size={16} className="animate-spin" aria-hidden="true"/>{translate('loading')}</> : translate('signIn')}</button>
 		</form>
 		<p className="auth-footer">{translate('newToAurevia')} <Link className="auth-link" href="/register">{translate('createAccount')}</Link></p>
-		<div className="mt-5 flex items-center justify-center gap-2 border-t border-white/10 pt-4 text-xs muted"><ShieldCheck size={15} className="gold" aria-hidden="true"/>{translate('protectedSession')}</div>
+		<div className="auth-assurance"><ShieldCheck size={17} className="gold" aria-hidden="true"/><span><b>{translate('protectedSession')}</b><small>Your password stays private and is never shown in the app.</small></span></div>
 	</section></main></>;
 }

@@ -1,4 +1,4 @@
-import {AccountMode,Prisma} from '@prisma/client';
+import {AccountMode,GenderSelection,Prisma} from '@prisma/client';
 import {generateAureviaExchangeId} from '@/lib/aurevia-exchange-id';
 import {initializePaperAccount} from '@/lib/ledger';
 
@@ -7,6 +7,7 @@ export type ImmediateRegistrationInput={
 	passwordHash:string;
 	name:string;
 	country:string;
+	gender:GenderSelection;
 	phone:string|null;
 	dateOfBirth:Date;
 	accountMode:AccountMode;
@@ -33,6 +34,7 @@ export async function createImmediateRegistration(
 				passwordHash:input.passwordHash,
 				name:input.name,
 				country:input.country,
+				gender:input.gender,
 				phone:input.phone,
 				phoneVerified:false,
 				phoneVerifiedAt:null,

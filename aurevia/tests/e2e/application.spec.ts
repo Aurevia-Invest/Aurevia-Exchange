@@ -424,18 +424,24 @@ test('login and registration fields receive real pointer and keyboard input',asy
 	await waitForStartup(page);
 	await page.getByRole('navigation',{name:'Registration sections'}).getByRole('link',{name:'Contact information'}).click();
 	await expect(page).toHaveURL(/#register-contact$/);
-	await expect(page.locator('#register-contact')).toBeVisible();
-	await typeInto(page,page.getByLabel('First name'),'Browser');
-	await typeInto(page,page.getByLabel('Last name'),'Input Test');
-	const dateOfBirth=page.getByLabel('Date of birth');
+	const registrationForm=page.locator('form.register-form').first();
+	await expect(registrationForm.locator('#register-contact')).toBeVisible();
+	await typeInto(page,registrationForm.getByLabel('First name'),'Browser');
+	await typeInto(page,registrationForm.getByLabel('Last name'),'Input Test');
+	const dateOfBirth=registrationForm.getByLabel('Date of birth');
 	await dateOfBirth.click();
 	await expect.poll(()=>dateOfBirth.evaluate(element=>document.activeElement===element)).toBe(true);
 	await dateOfBirth.fill('1990-01-01');
 	await expect(dateOfBirth).toHaveValue('1990-01-01');
-	await typeInto(page,page.getByLabel('Email address'),'input-test@example.test');
-	await typeInto(page,page.getByLabel(/Phone number/),'2025550100');
-	await typeInto(page,page.getByLabel('Password',{exact:true}),'ValidPassword123!');
-	await typeInto(page,page.getByLabel('Confirm password'),'ValidPassword123!');
+	await typeInto(page,registrationForm.getByLabel('Email address'),'input-test@example.test');
+	await typeInto(page,registrationForm.getByLabel(/Phone number/),'2025550100');
+	const registrationPassword=registrationForm.getByLabel('Password',{exact:true});
+	await typeInto(page,registrationPassword,'ValidPassword123!');
+	await registrationForm.getByRole('button',{name:'Show password'}).first().click();
+	await expect(registrationPassword).toHaveAttribute('type','text');
+	await registrationForm.getByRole('button',{name:'Hide password'}).first().click();
+	await expect(registrationPassword).toHaveAttribute('type','password');
+	await typeInto(page,registrationForm.getByLabel('Confirm password'),'ValidPassword123!');
 	await expect(page.locator('#register-account .tier-badge')).toHaveCount(0);
 	await page.getByRole('radio',{name:/REAL ACCOUNT/}).click();
 	await expect(page.getByRole('radio',{name:/REAL ACCOUNT/})).toBeChecked();
@@ -464,7 +470,7 @@ test('password recovery stays private and usable across mobile and desktop width
 	await page.setViewportSize({width:320,height:800});
 	await page.goto('/forgot-password');
 	await page.getByLabel('Email address').fill('person@example.invalid');
-	await page.getByRole('button',{name:'Request recovery link'}).click();
+	await page.getByRole('button',{name:'Send recovery link'}).click();
 	await expect(page.getByRole('status')).toContainText('If an eligible account matches');
 	await expectNoHorizontalOverflow(page);
 
@@ -505,6 +511,14 @@ test('password reset consumes a database token and changes the account password'
 	expect(updatedUser.activeSessionId).toBeNull();
 	expect((await db.passwordResetToken.findUniqueOrThrow({where:{id:reset.id}})).consumedAt).not.toBeNull();
 	expect((await page.request.post('/api/password-reset/confirm',{data:{token,password:'ChangedPassword1'}})).status()).toBe(400);
+
+	await page.goto('/login');
+	await waitForStartup(page);
+	await page.getByLabel('Email or administrator username').fill(user.email);
+	await page.getByLabel('Password',{exact:true}).fill('ChangedPassword1');
+	await page.getByRole('button',{name:'Sign in'}).click();
+	await page.waitForURL(url=>url.pathname==='/dashboard');
+	await expect(page.getByRole('heading',{name:/Welcome back/})).toBeVisible();
 });
 
 test('dashboard hierarchy remains usable and contained at mobile and desktop widths',async({page})=>{
@@ -897,6 +911,7 @@ test('signup submits without a security widget and creates an account without ph
 	await registrationForm.locator('input[autocomplete="given-name"]').fill('Temporary');
 	await registrationForm.locator('input[autocomplete="family-name"]').fill('Browser Test');
 	await registrationForm.locator('input[type="date"]').fill('2000-02-29');
+	await registrationForm.getByLabel('Gender').selectOption('FEMALE');
 	const residencePicker=page.getByRole('button',{name:/country of residence/i});
 	await residencePicker.click();
 	const residenceDialog=page.getByRole('dialog',{name:'Select country of residence'});
@@ -923,9 +938,9 @@ test('signup submits without a security widget and creates an account without ph
 
 	const signedIn=await page.request.get('/api/auth/session').then(response=>response.json());
 	expect(signedIn.user.email).toBe(email);
-	const registeredUser=await db.user.findUniqueOrThrow({where:{email},select:{id:true,status:true,phone:true,phoneVerified:true,phoneVerifiedAt:true}});
+	const registeredUser=await db.user.findUniqueOrThrow({where:{email},select:{id:true,status:true,phone:true,phoneVerified:true,phoneVerifiedAt:true,gender:true}});
 	expect(registeredUser).toMatchObject({
-		status:'ACTIVE',phone:'+447400123456',phoneVerified:false,phoneVerifiedAt:null,
+		status:'ACTIVE',phone:'+447400123456',phoneVerified:false,phoneVerifiedAt:null,gender:'FEMALE',
 	});
 	expect(await db.kycProfile.findUnique({where:{userId:registeredUser.id},select:{dob:true}})).toEqual({dob:new Date('2000-02-29T00:00:00.000Z')});
 	expect(await db.ledgerAccount.findMany({where:{userId:registeredUser.id},select:{accountMode:true},orderBy:{accountMode:'asc'}})).toEqual([
@@ -946,6 +961,7 @@ test('ten concurrent signups with phone numbers complete without transaction tim
 		password:'SecureTestPassword1',
 		name:`Concurrent Signup ${index+1}`,
 		country:'United Kingdom',
+		gender:'PREFER_NOT_TO_SAY',
 		dateOfBirth:'1990-01-01',
 		phone:`+4474001234${String(index+57)}`,
 		accountMode:'DEMO',
@@ -2744,7 +2760,7 @@ test('account deletion preserves ledger history and permits fresh registration w
 	expect(ledgerAfter.reduce((balance,entry)=>balance+(entry.type==='CREDIT'?1:-1)*Number(entry.amount),0)).toBeCloseTo(balanceBefore,8);
 
 	const newPassword='NewE2e1!Password';
-	const registered=await page.request.post('/api/register',{data:{name:'Replacement E2E User',email,password:newPassword,country:'Test',dateOfBirth:'1990-01-01',accountMode:'DEMO',termsAccepted:true}});
+	const registered=await page.request.post('/api/register',{data:{name:'Replacement E2E User',email,password:newPassword,country:'Test',gender:'PREFER_NOT_TO_SAY',dateOfBirth:'1990-01-01',accountMode:'DEMO',termsAccepted:true}});
 	expect(registered.status()).toBe(201);
 	expect(await db.user.findUnique({where:{email}})).toMatchObject({email,status:'ACTIVE'});
 });

@@ -19,6 +19,13 @@ enum AccountMode {
   REAL
 }
 
+enum GenderSelection {
+  FEMALE
+  MALE
+  NON_BINARY
+  PREFER_NOT_TO_SAY
+}
+
 enum UserStatus {
   ACTIVE
   FROZEN
@@ -277,6 +284,7 @@ model User {
   activeSessionId                  String?                           @unique
   activeSessionUpdatedAt           DateTime?
   country                          String?
+  gender                           GenderSelection                   @default(PREFER_NOT_TO_SAY)
   role                             Role                              @default(USER)
   accountMode                      AccountMode                       @default(DEMO)
   preferredDisplayCurrency         String                            @default("USD")

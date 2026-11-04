@@ -92,6 +92,8 @@ describe('Akedly V2 server integration',()=>{
 				phoneNumber:'+12125550123',
 			});
 			const wrongSecret=createHmac('sha256','incorrect-widget-secret').update(signingMessage,'utf8').digest('hex');
+			const wrongApiKeySecret=createHmac('sha256','test-api-key').update(signingMessage,'utf8').digest('hex');
+			const wrongWebhookSecret=createHmac('sha256',akedlyEnvironment.AKEDLY_WEBHOOK_SECRET).update(signingMessage,'utf8').digest('hex');
 			const wrongTimestamp=createHmac('sha256','test-widget-secret').update(JSON.stringify({
 				apiKey:'test-api-key',
 				publicKey:'test-public-key',
@@ -105,10 +107,19 @@ describe('Akedly V2 server integration',()=>{
 				phoneNumber:'+12125550124',
 			}),'utf8').digest('hex');
 
-			expect(body.timestamp).toBe(timestamp);
-			expect(body.signature).toBe('74e2277749d796ae81db8b307d8337a1984fa10966c5e1859cf7cce41763cdb9');
+			expect(signingMessage).toBe('{"apiKey":"test-api-key","publicKey":"test-public-key","timestamp":1701552354000,"phoneNumber":"+12125550123"}');
+			expect(body).toMatchObject({
+				apiKey:'test-api-key',
+				publicKey:'test-public-key',
+				timestamp,
+				signature:'74e2277749d796ae81db8b307d8337a1984fa10966c5e1859cf7cce41763cdb9',
+				verificationAddress:{phoneNumber:'+12125550123'},
+				digits:6,
+			});
 			expect(body.signature).toMatch(/^[a-f0-9]{64}$/);
 			expect(body.signature).not.toBe(wrongSecret);
+			expect(body.signature).not.toBe(wrongApiKeySecret);
+			expect(body.signature).not.toBe(wrongWebhookSecret);
 			expect(body.signature).not.toBe(wrongTimestamp);
 			expect(body.signature).not.toBe(wrongPhone);
 		}finally{
@@ -275,6 +286,28 @@ describe('Akedly V2 server integration',()=>{
 			providerMessage:'private provider response for [redacted-email]',
 			providerEndpoint:'https://api.akedly.io/api/v1/widget-sdk/create-attempt',
 		});
+		expect(akedlyAttemptFailureDiagnostics(failure,'')).toMatchObject({
+			providerFailureCategory:'INVALID_SIGNATURE',
+			recommendedAction:'Verify AKEDLY_WIDGET_SECRET is the Widget Secret for this widget and check the exact signed payload.',
+		});
+	});
+
+	it('distinguishes invalid API credentials from an invalid HMAC signature',async()=>{
+		vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({
+			status:'error',
+			error:{code:'invalid_api_key',message:'private provider response'},
+		}),{status:401,headers:{'content-type':'application/json'}})));
+
+		const failure=await createAkedlyAttempt({phoneNumber:'+12125550123'}).catch(error=>error);
+		const diagnostics=akedlyAttemptFailureDiagnostics(failure,'+12125550123');
+
+		expect(diagnostics).toMatchObject({
+			providerCode:'INVALID_API_KEY',
+			providerFailureCategory:'INVALID_CREDENTIALS',
+			recommendedAction:'Verify the API key is active and authorized for the configured widget and pipeline.',
+		});
+		expect(JSON.stringify(diagnostics)).not.toContain('test-api-key');
+		expect(JSON.stringify(diagnostics)).not.toContain('test-widget-secret');
 	});
 
 	it('captures a redacted provider response message and endpoint for support correlation',async()=>{

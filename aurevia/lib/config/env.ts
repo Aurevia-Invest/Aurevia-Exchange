@@ -92,6 +92,7 @@ export type ServerConfiguration = {
     publicKey: string;
     widgetSecret: string;
     webhookSecret: string;
+    formattingIssues: string[];
     configured: boolean;
   };
 };
@@ -107,6 +108,24 @@ const booleanEnv = (name: string, source: EnvironmentSource = process.env): bool
 export const hasSurroundingQuotes = (value: string): boolean => {
   const quote = value[0];
   return value.length >= 2 && (quote === '"' || quote === "'") && value.at(-1) === quote;
+};
+const akedlyEnvironmentFormattingIssues = (source: EnvironmentSource): string[] => {
+  const keys = [
+    'AKEDLY_API_KEY',
+    'AKEDLY_PIPELINE_ID',
+    'AKEDLY_WIDGET_ID',
+    'AKEDLY_PUBLIC_KEY',
+    'AKEDLY_WIDGET_SECRET',
+    'AKEDLY_WEBHOOK_SECRET',
+  ] as const;
+  return keys.flatMap(name => {
+    const value = source[name];
+    if(!value) return [];
+    if(value !== value.trim()) return [`${name} (remove surrounding whitespace)`];
+    if(/[\u0000-\u001f\u007f]/.test(value)) return [`${name} (remove control characters)`];
+    if(hasSurroundingQuotes(value)) return [`${name} (remove surrounding quotes)`];
+    return [];
+  });
 };
 const akedlyEnabledEnv = (source: EnvironmentSource = process.env): boolean => {
   const value = env('AKEDLY_ENABLED', source);
@@ -191,6 +210,7 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
     publicKey: env('AKEDLY_PUBLIC_KEY', source),
     widgetSecret: env('AKEDLY_WIDGET_SECRET', source),
     webhookSecret: env('AKEDLY_WEBHOOK_SECRET', source),
+    formattingIssues: akedlyEnvironmentFormattingIssues(source),
   };
 
   return {
@@ -280,7 +300,7 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
     akedly: {
       ...akedly,
       configured: [akedly.apiKey,akedly.pipelineId,akedly.widgetId,akedly.publicKey,akedly.widgetSecret,akedly.webhookSecret]
-        .every(value=>Boolean(value)&&!hasSurroundingQuotes(value)),
+        .every(Boolean)&&akedly.formattingIssues.length===0,
     },
   };
 }
@@ -310,6 +330,7 @@ export function validateServerConfiguration(config: ServerConfiguration): string
   } catch {
     issues.push('NEXTAUTH_URL must be a valid absolute HTTPS URL');
   }
+  issues.push(...config.akedly.formattingIssues.map(issue=>`Invalid Akedly environment formatting: ${issue}`));
   if(config.execution.realEnabled && (!config.execution.alpacaTradingConfigured || config.execution.alpacaProvider.toLowerCase() !== 'alpaca')) issues.push('REAL_EXECUTION_ENABLED requires a complete Individual Alpaca Trading API configuration selected with ALPACA_PROVIDER=alpaca');
   if(config.execution.realEnabled && config.execution.alpacaTradingUrlConfigured && !config.execution.alpacaTradingUrlValid) issues.push('ALPACA_TRADING_BASE_URL must use an approved HTTPS Alpaca Trading API host');
   return issues;

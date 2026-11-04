@@ -1,6 +1,6 @@
 import {createHmac} from 'node:crypto';
 import {Webhook} from 'svix';
-import {getServerConfiguration,hasSurroundingQuotes} from '@/lib/config/env';
+import {getServerConfiguration} from '@/lib/config/env';
 
 const API_BASE_URL='https://api.akedly.io';
 const WIDGET_ORIGIN='https://auth.akedly.io';
@@ -83,8 +83,8 @@ export function akedlyReadiness(){
 		['AKEDLY_WEBHOOK_SECRET',config.webhookSecret],
 	] as const){
 		if(!value)missing.push(name);
-		else if(hasSurroundingQuotes(value))missing.push(`${name} (remove surrounding quotes)`);
 	}
+	missing.push(...config.formattingIssues);
 	return {enabled:config.enabled,missing,ready:config.enabled&&missing.length===0};
 }
 
@@ -129,6 +129,20 @@ export function akedlyAttemptFailureDiagnostics(error:unknown,phoneNumber:string
 	const providerCode=typeof detail?.providerCode==='string'&&/^[A-Z][A-Z0-9_]{1,39}$/.test(detail.providerCode)
 		?detail.providerCode
 		:'UNCLASSIFIED';
+	const providerFailureCategory=providerCode==='INVALID_SIGNATURE'
+		?'INVALID_SIGNATURE'
+		:providerCode==='SIGNATURE_EXPIRED'
+			?'SIGNATURE_EXPIRED'
+			:['INVALID_API_KEY','API_KEY_SCOPE_DENIED','PIPELINE_OWNERSHIP_MISMATCH'].includes(providerCode)
+				?'INVALID_CREDENTIALS'
+				:'PROVIDER_REJECTION';
+	const recommendedAction=providerFailureCategory==='INVALID_SIGNATURE'
+		?'Verify AKEDLY_WIDGET_SECRET is the Widget Secret for this widget and check the exact signed payload.'
+		:providerFailureCategory==='SIGNATURE_EXPIRED'
+			?'Check server clock synchronization and create a fresh signature immediately before sending.'
+			:providerFailureCategory==='INVALID_CREDENTIALS'
+				?'Verify the API key is active and authorized for the configured widget and pipeline.'
+				:undefined;
 	const httpStatus=typeof detail?.httpStatus==='number'&&Number.isInteger(detail.httpStatus)&&detail.httpStatus>=100&&detail.httpStatus<=599
 		?detail.httpStatus
 		:null;
@@ -149,6 +163,8 @@ export function akedlyAttemptFailureDiagnostics(error:unknown,phoneNumber:string
 		failureStage,
 		failureClassification:providerCode,
 		providerCode,
+		providerFailureCategory,
+		...(recommendedAction?{recommendedAction}:{}),
 		underlyingErrorType:typeof detail?.underlyingErrorType==='string'
 			&&/^[A-Za-z][A-Za-z0-9]{0,40}$/.test(detail.underlyingErrorType)
 			?detail.underlyingErrorType
@@ -182,7 +198,7 @@ export async function createAkedlyAttempt(contact:AkedlyContact):Promise<AkedlyA
 	if(contact.phoneNumber!==undefined)signingPayload.phoneNumber=contact.phoneNumber;
 	let signature:string;
 	try{
-		signature=createHmac('sha256',config.widgetSecret)
+		signature=createHmac('sha256',Buffer.from(config.widgetSecret,'utf8'))
 			.update(JSON.stringify(signingPayload),'utf8')
 			.digest('hex');
 	}catch(error){

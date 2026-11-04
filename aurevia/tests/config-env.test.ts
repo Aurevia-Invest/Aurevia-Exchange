@@ -103,6 +103,28 @@ describe('canonical environment configuration',()=>{
     expect(JSON.stringify(getPublicConfiguration(akedlySource))).not.toContain('test-webhook-secret');
   });
 
+  it('rejects whitespace and control characters in Akedly server credentials without echoing values',()=>{
+    const config=getServerConfiguration({
+      AKEDLY_API_KEY:' test-api-key ',
+      AKEDLY_PIPELINE_ID:'test-pipeline',
+      AKEDLY_WIDGET_ID:'test-widget',
+      AKEDLY_PUBLIC_KEY:'test-public-key',
+      AKEDLY_WIDGET_SECRET:'test-widget\n-secret',
+      AKEDLY_WEBHOOK_SECRET:'test-webhook-secret',
+    });
+
+    expect(config.akedly.configured).toBe(false);
+    expect(config.akedly.formattingIssues).toEqual([
+      'AKEDLY_API_KEY (remove surrounding whitespace)',
+      'AKEDLY_WIDGET_SECRET (remove control characters)',
+    ]);
+    expect(validateServerConfiguration(config)).toContain(
+      'Invalid Akedly environment formatting: AKEDLY_WIDGET_SECRET (remove control characters)',
+    );
+    expect(JSON.stringify(config.akedly.formattingIssues)).not.toContain('test-api-key');
+    expect(JSON.stringify(config.akedly.formattingIssues)).not.toContain('test-widget-secret');
+  });
+
   it('detects optional integrations without requiring credentials',()=>{
     const config=getServerConfiguration({
       REAL_EXECUTION_ENABLED:'false',

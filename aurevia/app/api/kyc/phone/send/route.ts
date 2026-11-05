@@ -8,6 +8,7 @@ import {rateLimit} from '@/lib/rate-limit';
 import {verificationConfig} from '@/lib/config';
 import {hashVerificationCode,hasConfiguredSmsProvider,hasConfiguredTermii,hasConfiguredTwilio,sendTermiiVerificationToken,sendTwilioVerificationCode,TermiiProviderError,TwilioVerifyProviderError} from '@/lib/verification-delivery';
 import {isValidE164} from '@/lib/registration-validation';
+import {trustedProxyClientIp} from '@/lib/request-ip';
 import {AkedlyProviderError,akedlyAttemptFailureDiagnostics,akedlyIsConfigured,akedlyReadiness} from '@/lib/akedly';
 import {startAkedlyVerification} from '@/lib/akedly-verification';
 import {isTierThreePhoneVerificationEligible,getTierProfileRequirements} from '@/lib/production-policy';
@@ -23,7 +24,7 @@ export async function POST(request:Request){
 	try{
 		const user=await requireUser();
 		const input=schema.parse(await request.json());
-		rateLimit(`kyc-phone-send-ip:${request.headers.get('x-forwarded-for')||'unknown'}`,5,60*60_000);
+		rateLimit(`kyc-phone-send-ip:${trustedProxyClientIp(request)||'unknown'}`,30,60*60_000);
 		rateLimit(`kyc-phone-send-user:${user.id}`,3,60*60_000);
 		rateLimit(`kyc-phone-send-number:${input.phone}`,3,60*60_000);
 		const current=await db.$transaction(async tx=>{

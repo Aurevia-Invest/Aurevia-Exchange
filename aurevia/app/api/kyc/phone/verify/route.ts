@@ -8,6 +8,7 @@ import {rateLimit} from '@/lib/rate-limit';
 import {verificationConfig} from '@/lib/config';
 import {verificationCodeMatches,verifyTermiiVerificationToken,verifyTwilioVerificationCode,TwilioVerifyProviderError} from '@/lib/verification-delivery';
 import {akedlyAttemptIdFromReference} from '@/lib/akedly-verification';
+import {trustedProxyClientIp} from '@/lib/request-ip';
 import {isTierThreePhoneVerificationEligible,getTierProfileRequirements} from '@/lib/production-policy';
 
 const schema=z.object({code:z.string().regex(/^\d{6}$/)});
@@ -16,8 +17,7 @@ export async function POST(request:Request){
 	try{
 		const user=await requireUser();
 		const {code}=schema.parse(await request.json());
-		const ip=request.headers.get('x-forwarded-for')||'unknown';
-		rateLimit(`kyc-phone-verify-ip:${ip}`,15,15*60_000);
+		rateLimit(`kyc-phone-verify-ip:${trustedProxyClientIp(request)||'unknown'}`,60,15*60_000);
 		rateLimit(`kyc-phone-verify-user:${user.id}`,verificationConfig.maxAttempts*4,60*60_000);
 
 		const account=await db.user.findUnique({where:{id:user.id},select:{

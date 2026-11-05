@@ -115,7 +115,7 @@ export default function RegistrationExperience(){
 						'accept':'application/json',
 						...(requestId?{'x-aurevia-request-id':requestId}:{}),
 					},
-					body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,gender:details.gender,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted,website:''}),
+					body:JSON.stringify({name:`${details.firstName} ${details.lastName}`,email:details.email,password:details.password,country:residence.name,gender:details.gender,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted,website:''}),
 					signal:controller.signal,
 				});
 			}catch(exception){

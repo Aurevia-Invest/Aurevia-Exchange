@@ -13,7 +13,7 @@ import {createNotification,notifyActiveAdmins} from '@/lib/notifications';
 const schema=z.object({
 	email:z.string().trim().email().max(254),
 	password:z.string().min(10).max(128).regex(/[a-z]/).regex(/[A-Z]/).regex(/[0-9]/),
-	name:z.string().trim().min(2).max(120),
+	name:z.string().min(1).max(120).refine(value=>value.trim().length>0,'Enter your name.'),
 	country:z.string().trim().min(2).max(80),
 	gender:z.enum(['FEMALE','MALE','NON_BINARY','PREFER_NOT_TO_SAY']),
 	dateOfBirth:z.string().refine(value=>parseDateOfBirth(value)!==null,'Enter a valid date that is not in the future.'),
@@ -123,13 +123,12 @@ export async function POST(request:Request){
 	let transactionDurationMs:number|null=null;
 	let transactionOutcome:'not_started'|'succeeded'|'failed'='not_started';
 	try{
-		const clientIp=trustedProxyClientIp(request);
-		rateLimit(`register:${clientIp||'unknown'}`,5,10*60_000);
 		const input=schema.parse(await request.json());
 		parsedInput=input;
 		if(input.website)return NextResponse.json({error:'Invalid registration request.'},{status:400,headers:{'Cache-Control':'no-store'}});
 		const email=input.email.trim().toLowerCase();
 
+		rateLimit(`register:${trustedProxyClientIp(request)||'unknown'}`,30,10*60_000);
 		rateLimit(`register-email:${email}`,3,60*60_000);
 		const dateOfBirth=parseDateOfBirth(input.dateOfBirth);
 		if(!dateOfBirth)return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
@@ -145,7 +144,7 @@ export async function POST(request:Request){
 				user=await db.$transaction(async tx=>createImmediateRegistration(tx,{
 					email,
 					passwordHash,
-					name:input.name.replace(/\s+/g,' ').trim(),
+					name:input.name,
 					country:input.country,
 					gender:input.gender,
 					phone:input.phone||null,
@@ -175,6 +174,7 @@ export async function POST(request:Request){
 		return response;
 	}catch(error){
 		if(error instanceof ZodError){
+			if(error.issues.some(issue=>issue.path[0]==='name'))return NextResponse.json({error:'Enter your name using between 1 and 120 characters.'},{status:400});
 			if(error.issues.some(issue=>issue.path[0]==='dateOfBirth'))return NextResponse.json({error:'Enter a valid date of birth that is not in the future.'},{status:400});
 			if(error.issues.some(issue=>issue.path[0]==='phone'))return NextResponse.json({error:'Enter a valid phone number in international format.'},{status:400});
 			if(error.issues.some(issue=>issue.path[0]==='website'))return NextResponse.json({error:'Invalid registration request.'},{status:400});

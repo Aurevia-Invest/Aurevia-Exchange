@@ -178,7 +178,7 @@ export default function SecurityCenter({email,twoFactorEnabled:initialTwoFactorE
 		</article>
 
 		<article className="security-center-card">
-			<div className="security-center-row"><span className="security-center-icon"><GoldShieldIcon/></span><div className="security-center-copy"><b>Two-Factor Authentication</b><p>{twoFactorEnabled?'Your authenticator is configured in Profile settings. Sign-in uses your password only.':'Configure an optional authenticator here. Sign-in uses your password only.'}</p></div><span className={`status-pill ${twoFactorEnabled?'security-status-enabled':''}`}>{twoFactorEnabled?'ENABLED':'DISABLED'}</span></div>
+			<div className="security-center-row"><span className="security-center-icon"><GoldShieldIcon/></span><div className="security-center-copy"><b>Two-Factor Authentication</b><p>{twoFactorEnabled?'Your authenticator is managed here and does not change password-only sign-in.':'Optional authenticator setup is managed here and is never required for registration or sign-in.'}</p></div><span className={`status-pill ${twoFactorEnabled?'security-status-enabled':''}`}>{twoFactorEnabled?'ENABLED':'DISABLED'}</span></div>
 			{!twoFactorAvailable&&<p className="security-center-unavailable" role="status">Authenticator setup is unavailable until the server-side TOTP encryption key is configured.</p>}
 			{twoFactorAvailable&&!totpExpanded&&!recoveryCodes.length&&<button className="security-center-action" type="button" disabled={busy} onClick={()=>{setTotpExpanded(true);setTotpSetup(null);setTotpPassword('');setTotpCode('')}}>{twoFactorEnabled?'Disable two-factor authentication':'Enable two-factor authentication'}</button>}
 			{totpExpanded&&<form className="security-center-form" onSubmit={event=>void updateTotp(event)}>

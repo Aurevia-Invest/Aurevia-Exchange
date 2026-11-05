@@ -153,6 +153,8 @@ describe('phone verification provider fallback',()=>{
 		const response=await POST(request());
 
 		expect(response.status).toBe(200);
+		expect(mocks.rateLimit).toHaveBeenCalledWith('kyc-phone-send-ip:192.0.2.6',30,60*60_000);
+		expect(mocks.rateLimit).toHaveBeenCalledWith('kyc-phone-send-user:user-1',3,60*60_000);
 		expect(mocks.startAkedly).toHaveBeenCalledOnce();
 		expect(mocks.sendTermii).toHaveBeenCalledWith('+12125550123');
 	});

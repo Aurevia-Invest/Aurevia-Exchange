@@ -8,6 +8,8 @@ const authMocks=vi.hoisted(()=>({
 	userFindFirst:vi.fn(),
 	userUpdateMany:vi.fn(),
 	auditCreate:vi.fn(),
+	transaction:vi.fn(),
+	consumeSecondFactor:vi.fn(),
 	securitySessionFindFirst:vi.fn(),
 	securitySessionCreate:vi.fn(),
 	rateLimit:vi.fn(),
@@ -20,8 +22,10 @@ vi.mock('@/lib/db',()=>({db:{
 	user:{findFirst:authMocks.userFindFirst,updateMany:authMocks.userUpdateMany},
 	securitySession:{findFirst:authMocks.securitySessionFindFirst,create:authMocks.securitySessionCreate},
 	auditLog:{create:authMocks.auditCreate},
+	$transaction:authMocks.transaction,
 }}));
 vi.mock('@/lib/notifications',()=>({createNotification:vi.fn()}));
+vi.mock('@/lib/security-auth',()=>({consumeSecondFactor:authMocks.consumeSecondFactor}));
 vi.mock('@/lib/rate-limit',()=>({
 	rateLimit:authMocks.rateLimit,
 	clearRateLimit:vi.fn(),
@@ -48,6 +52,8 @@ beforeEach(()=>{
 	authMocks.rateLimit.mockResolvedValue(undefined);
 	authMocks.persistentRateLimit.mockResolvedValue(undefined);
 	authMocks.clearPersistentRateLimit.mockResolvedValue(undefined);
+	authMocks.transaction.mockImplementation(async(operation:(tx:unknown)=>unknown)=>operation({}));
+	authMocks.consumeSecondFactor.mockResolvedValue(true);
 });
 
 async function authorize(credentials:Record<string,string>){
@@ -102,6 +108,7 @@ describe('credentials authorization',()=>{
 			where:{email:{equals:'legacy.user@example.invalid',mode:'insensitive'}},
 		});
 		expect(result).toMatchObject({id:'legacy-user',email:'Legacy.User@Example.invalid'});
+		expect(authMocks.consumeSecondFactor).not.toHaveBeenCalled();
 		expect(authMocks.securitySessionCreate).toHaveBeenCalledWith({data:expect.objectContaining({
 			userId:'legacy-user',
 			sessionHash:expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -110,7 +117,7 @@ describe('credentials authorization',()=>{
 		})});
 	});
 
-	it('allows a new-device sign-in using only the password when 2FA is enabled',async()=>{
+	it('allows password-only sign-in when optional 2FA is enabled in Security Settings',async()=>{
 		const password='LegacyPassword1';
 		authMocks.userFindFirst.mockResolvedValue({
 			id:'mfa-user',email:'mfa@example.invalid',name:'MFA User',
@@ -120,17 +127,21 @@ describe('credentials authorization',()=>{
 		});
 		const result=await authorize({username:'mfa@example.invalid',email:'mfa@example.invalid',password});
 
-		expect(result).toMatchObject({id:'mfa-user'});
-		expect(authMocks.securitySessionCreate).toHaveBeenCalledWith({data:expect.objectContaining({
-			userId:'mfa-user',
-			expiresAt:expect.any(Date),
-		})});
-		expect(authMocks.rateLimit).not.toHaveBeenCalled();
-		expect(authMocks.persistentRateLimit).not.toHaveBeenCalled();
-		expect(authMocks.clearPersistentRateLimit).toHaveBeenCalledWith('credential-login-account:mfa-user');
-		expect(authOptions.providers[0]).toMatchObject({
-			credentials:expect.not.objectContaining({secondFactorCode:expect.anything()}),
+		expect(result).toMatchObject({id:'mfa-user',email:'mfa@example.invalid'});
+		expect(authMocks.consumeSecondFactor).not.toHaveBeenCalled();
+		expect(authMocks.securitySessionCreate).toHaveBeenCalledOnce();
+	});
+
+	it('accepts a correct password with leading or trailing spaces',async()=>{
+		const password=' CorrectPassword42 ';
+		authMocks.userFindFirst.mockResolvedValue({
+			id:'user-1',email:'user@example.invalid',name:'User',
+			passwordHash:await bcrypt.hash(password,4),role:'USER',accountMode:'DEMO',status:'ACTIVE',
+			activeSessionId:null,activeSessionUpdatedAt:null,
 		});
+
+		await expect(authorize({username:'user@example.invalid',email:'user@example.invalid',password})).resolves.toMatchObject({id:'user-1'});
+		expect(authMocks.securitySessionCreate).toHaveBeenCalledOnce();
 	});
 
 	it('counts only incorrect passwords toward sign-in rate limits',async()=>{

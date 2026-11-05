@@ -54,6 +54,7 @@ describe('immediate registration account creation',()=>{
 				gender:'FEMALE',
 				phoneVerified:false,
 				phoneVerifiedAt:null,
+				twoFactorEnabled:false,
 				status:'ACTIVE',
 			})],
 			skipDuplicates:true,

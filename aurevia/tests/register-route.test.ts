@@ -91,7 +91,7 @@ describe('immediate registration',()=>{
 		}));
 		expect(mocks.createAccount.mock.calls[0][1].passwordHash).not.toBe(payload.password);
 		expect(response.headers.get('set-cookie')).toBeNull();
-		expect(mocks.rateLimit).toHaveBeenCalledWith('register:192.0.2.5',5,600_000);
+		expect(mocks.rateLimit).toHaveBeenCalledWith('register:192.0.2.5',30,600_000);
 		expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function),{
 			isolationLevel:Prisma.TransactionIsolationLevel.ReadCommitted,
 			maxWait:5_000,
@@ -110,13 +110,33 @@ describe('immediate registration',()=>{
 		expect(mocks.createAccount).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({email:'new-user@example.invalid'}));
 	});
 
+	it('preserves international names exactly as entered and accepts Nigerian E.164 numbers',async()=>{
+		const name='  José Núñez-Sørensen 李 O’Connor  ';
+		const response=await POST(request({...payload,name,country:'Nigeria',phone:'+2348031234567'}));
+
+		expect(response.status).toBe(201);
+		expect(mocks.createAccount).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({
+			name,
+			country:'Nigeria',
+			phone:'+2348031234567',
+		}));
+	});
+
+	it('returns a field-specific error for blank names',async()=>{
+		const response=await POST(request({...payload,name:'   '}));
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({error:'Enter your name using between 1 and 120 characters.'});
+		expect(mocks.createAccount).not.toHaveBeenCalled();
+	});
+
 	it('still applies a shared IP limit when the trusted proxy address is unavailable',async()=>{
 		mocks.trustedProxyClientIp.mockReturnValue(null);
 
 		const response=await POST(request());
 
 		expect(response.status).toBe(201);
-		expect(mocks.rateLimit).toHaveBeenCalledWith('register:unknown',5,600_000);
+		expect(mocks.rateLimit).toHaveBeenCalledWith('register:unknown',30,600_000);
 	});
 
 	it('rejects a filled honeypot without touching account data',async()=>{
@@ -127,6 +147,7 @@ describe('immediate registration',()=>{
 		expect(mocks.userFindFirst).not.toHaveBeenCalled();
 		expect(mocks.transaction).not.toHaveBeenCalled();
 		expect(mocks.createAccount).not.toHaveBeenCalled();
+		expect(mocks.rateLimit).not.toHaveBeenCalled();
 	});
 
 	it('requires a valid gender selection before creating an account',async()=>{

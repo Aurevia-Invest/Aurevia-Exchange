@@ -88,6 +88,8 @@ describe('password recovery',()=>{
 		const response=await requestReset(request('/api/password-reset/request',{email:'Person@example.invalid'}));
 
 		expect(response.status).toBe(202);
+		expect(mocks.rateLimit).toHaveBeenCalledWith('password-reset-request:192.0.2.5',30,60*60_000);
+		expect(mocks.rateLimit).toHaveBeenCalledWith(`password-reset-email:${createHash('sha256').update('person@example.invalid').digest('hex')}`,3,60*60_000);
 		expect(mocks.userFindFirst).toHaveBeenCalledWith({
 			where:{email:{equals:'person@example.invalid',mode:'insensitive'}},
 			select:{id:true,email:true,status:true},

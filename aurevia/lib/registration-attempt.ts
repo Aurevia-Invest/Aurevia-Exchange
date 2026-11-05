@@ -38,6 +38,7 @@ export async function createImmediateRegistration(
 				phone:input.phone,
 				phoneVerified:false,
 				phoneVerifiedAt:null,
+				twoFactorEnabled:false,
 				role:'USER',
 				accountMode:input.accountMode,
 				termsAcceptedAt:input.termsAcceptedAt,

@@ -48,6 +48,7 @@ export const authOptions:NextAuthOptions={
       if(!password)return null;
       const username=(c?.username||'').trim();
       const email=(c?.email||username).trim().toLowerCase();
+      const passwordForAuthentication=typeof c?.password==='string'?c.password:'';
       const headers=request.headers as IncomingHttpHeaders|undefined;
       const ipAddress=headers?auditClientIp(headers):null;
       const userAgent=(headers?headerValue(headers['user-agent']):'').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,500)||null;
@@ -69,7 +70,7 @@ export const authOptions:NextAuthOptions={
       const {isAdminUsername,lookupEmail}=resolveCredentialLookup(username,email,authConfig.adminUsername,authConfig.adminEmail,c?.adminLogin==='true');
       if(!lookupEmail){await writeLoginAudit('FAILED',undefined,undefined,'MISSING_IDENTIFIER');return null;}
       let u=await db.user.findFirst({where:{email:{equals:lookupEmail,mode:'insensitive'}}});
-      if((!u||u.role!==Role.ADMIN)&&c?.adminLogin==='true'&&authConfig.adminUsername&&authConfig.adminEmail&&authConfig.adminPassword?.length>=12&&matchesConfiguredAdminIdentity(username,email,authConfig.adminUsername,authConfig.adminEmail)&&matchesConfiguredAdminPassword(password,authConfig.adminPassword)){
+      if((!u||u.role!==Role.ADMIN)&&c?.adminLogin==='true'&&authConfig.adminUsername&&authConfig.adminEmail&&authConfig.adminPassword?.length>=12&&matchesConfiguredAdminIdentity(username,email,authConfig.adminUsername,authConfig.adminEmail)&&matchesConfiguredAdminPassword(passwordForAuthentication,authConfig.adminPassword)){
         const configuredEmail=authConfig.adminEmail.trim().toLowerCase();
         const passwordHash=await bcrypt.hash(authConfig.adminPassword,12);
         u=await db.$transaction(async tx=>{
@@ -94,32 +95,33 @@ export const authOptions:NextAuthOptions={
         await writeLoginAudit('FAILED',u?.id,undefined,!u?'ACCOUNT_NOT_FOUND':'ACCOUNT_INACTIVE');
         return null;
       }
-      const accountAttemptKey=`credential-login-account:${u.id}`;
+      const authenticatedUser=u;
+      const accountAttemptKey=`credential-login-account:${authenticatedUser.id}`;
       const usesConfiguredAdminPassword=!!authConfig.adminEmail&&lookupEmail.toLowerCase()===authConfig.adminEmail.toLowerCase();
       const ok=usesConfiguredAdminPassword
-        ?matchesConfiguredAdminPassword(password,authConfig.adminPassword)
-        :await bcrypt.compare(password,u.passwordHash);
+        ?matchesConfiguredAdminPassword(passwordForAuthentication,authConfig.adminPassword)
+        :await bcrypt.compare(passwordForAuthentication,authenticatedUser.passwordHash);
       if(!ok){
         try{
           rateLimit(ipAttemptKey,20,15*60_000);
           await persistentRateLimit(accountAttemptKey,12,15*60_000);
         }catch(error){
           if(!(error instanceof RateLimitError))throw error;
-          await writeLoginAudit('FAILED',u.id,undefined,'RATE_LIMITED');
-          try{await createNotification(db,{userId:u.id,type:NotificationType.SECURITY,title:'Suspicious sign-in attempts',message:'Repeated unsuccessful sign-in attempts were detected. If you do not recognize this activity, change your password and review active sessions.',dedupeKey:`security:${u.id}:login-rate-limited:${Math.floor(Date.now()/900_000)}`,actionUrl:'/settings#security'});}catch{console.warn('Unable to persist authentication security notification.')}
+          await writeLoginAudit('FAILED',authenticatedUser.id,undefined,'RATE_LIMITED');
+          try{await createNotification(db,{userId:authenticatedUser.id,type:NotificationType.SECURITY,title:'Suspicious sign-in attempts',message:'Repeated unsuccessful sign-in attempts were detected. If you do not recognize this activity, change your password and review active sessions.',dedupeKey:`security:${authenticatedUser.id}:login-rate-limited:${Math.floor(Date.now()/900_000)}`,actionUrl:'/settings#security'});}catch{console.warn('Unable to persist authentication security notification.')}
           return null;
         }
-        await writeLoginAudit('FAILED',u.id,undefined,'INVALID_CREDENTIALS');
+        await writeLoginAudit('FAILED',authenticatedUser.id,undefined,'INVALID_CREDENTIALS');
         return null;
       }
-      if(isAdminUsername&&u.role!=='ADMIN'){await writeLoginAudit('FAILED',u.id,undefined,'ADMIN_ROLE_REQUIRED');return null;}
+      if(isAdminUsername&&authenticatedUser.role!=='ADMIN'){await writeLoginAudit('FAILED',authenticatedUser.id,undefined,'ADMIN_ROLE_REQUIRED');return null;}
       const now=new Date();
       await clearPersistentRateLimit(accountAttemptKey);
       const sessionId=randomUUID();
       const label=sessionDeviceLabel(userAgent);
-      await db.securitySession.create({data:{userId:u.id,sessionHash:hashSessionId(sessionId),deviceLabel:label,userAgent,expiresAt:new Date(now.getTime()+AUTH_SESSION_MAX_AGE_SECONDS*1000)}});
-      await writeLoginAudit('SUCCESS',u.id,sessionId);
-      return {id:u.id,email:u.email,name:u.name,role:u.role,accountMode:u.accountMode,sessionId};
+      await db.securitySession.create({data:{userId:authenticatedUser.id,sessionHash:hashSessionId(sessionId),deviceLabel:label,userAgent,expiresAt:new Date(now.getTime()+AUTH_SESSION_MAX_AGE_SECONDS*1000)}});
+      await writeLoginAudit('SUCCESS',authenticatedUser.id,sessionId);
+      return {id:authenticatedUser.id,email:authenticatedUser.email,name:authenticatedUser.name,role:authenticatedUser.role,accountMode:authenticatedUser.accountMode,sessionId};
     }
   })],
   callbacks:{

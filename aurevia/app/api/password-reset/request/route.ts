@@ -56,9 +56,9 @@ function getPasswordResetUrl(){
 export async function POST(request:Request){
 	const requestId=randomUUID();
 	try{
-		rateLimit(`password-reset-request:${getClientIp(request)}`,5,60*60_000);
 		const input=schema.parse(await request.json());
 		const email=input.email.toLowerCase();
+		rateLimit(`password-reset-request:${getClientIp(request)}`,30,60*60_000);
 		rateLimit(`password-reset-email:${createHash('sha256').update(email).digest('hex')}`,3,60*60_000);
 		if(!isEmailConfigured()){
 			console.warn('Password reset is unavailable: email delivery is not configured.');

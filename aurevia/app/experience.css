@@ -436,7 +436,7 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,su
 .profile-avatar-wrap{position:relative;display:grid;width:54px;height:54px;flex:none;place-items:center;border:1px solid rgba(197,164,107,.35);border-radius:50%;background:#102219}
 .profile-avatar,.user-avatar{aspect-ratio:1/1;overflow:hidden;border-radius:50%;flex-shrink:0}
 .profile-avatar img,.user-avatar img{width:100%;height:100%;border-radius:50%;object-fit:cover;object-position:center;flex-shrink:0}
-.profile-avatar-image{display:block;width:100%;height:100%;border-radius:50%;object-fit:cover;object-position:center;clip-path:circle(50%);flex-shrink:0}
+.profile-avatar-image{display:block;width:100%;height:100%;border-radius:50%!important;object-fit:cover!important;object-position:center!important;clip-path:circle(50%)!important;flex-shrink:0}
 .profile-avatar-fallback-icon{flex:none;color:currentColor}
 .admin-settings-avatar{display:grid;width:72px;height:72px;flex:none;place-items:center;overflow:hidden;border:1px solid rgba(156,121,69,.28);border-radius:50%;background:#f6f0e5;color:#9c7945}
 .dashboard-avatar{width:56px;height:56px;border-radius:50%;object-fit:cover;flex-shrink:0}

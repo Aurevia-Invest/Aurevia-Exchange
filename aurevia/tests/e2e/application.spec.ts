@@ -2039,6 +2039,20 @@ test('verified personal details remain read-only during the two-month lock windo
 		expect(update.status()).toBe(423);
 		expect((await update.json()).error).toContain('locked');
 		expect((await db.user.findUniqueOrThrow({where:{id:user.id},select:{name:true}})).name).toBe(user.name);
+		const topbarAvatar=page.locator('.user-topbar-avatar img');
+		await expect(topbarAvatar).toBeVisible();
+		await expect.poll(()=>topbarAvatar.evaluate(image=>{
+			const style=getComputedStyle(image);
+			return {borderRadius:style.borderRadius,clipPath:style.clipPath,objectFit:style.objectFit};
+		})).toEqual({borderRadius:'50%',clipPath:'circle(50%)',objectFit:'cover'});
+		await page.setViewportSize({width:390,height:844});
+		await page.goto('/dashboard');
+		const mobileAvatar=page.locator('.mobile-home-avatar img');
+		await expect(mobileAvatar).toBeVisible();
+		await expect.poll(()=>mobileAvatar.evaluate(image=>{
+			const style=getComputedStyle(image);
+			return {borderRadius:style.borderRadius,clipPath:style.clipPath,objectFit:style.objectFit};
+		})).toEqual({borderRadius:'50%',clipPath:'circle(50%)',objectFit:'cover'});
 	}finally{
 		await db.user.update({where:{id:user.id},data:{kycStatus:user.kycStatus,verifiedAt:user.verifiedAt}});
 	}

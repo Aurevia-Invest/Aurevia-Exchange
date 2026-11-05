@@ -5,12 +5,13 @@ const mocks=vi.hoisted(()=>({
 	findUnique:vi.fn(),
 	investmentFindFirst:vi.fn(),
 	transaction:vi.fn(),
+	synchronizeTier:vi.fn(),
 }));
 
 vi.mock('@/lib/auth',()=>({requireUser:mocks.requireUser}));
 vi.mock('@/lib/db',()=>({db:{user:{findUnique:mocks.findUnique},investmentRequest:{findFirst:mocks.investmentFindFirst},$transaction:mocks.transaction}}));
 vi.mock('@/lib/notifications',()=>({createNotification:vi.fn()}));
-vi.mock('@/lib/tier-progression',()=>({synchronizeCompletedProfileTier:vi.fn()}));
+vi.mock('@/lib/tier-progression',()=>({synchronizeCompletedProfileTier:mocks.synchronizeTier}));
 
 import {GET,PATCH} from '../app/api/profile/route';
 
@@ -19,6 +20,7 @@ describe('profile two-factor status',()=>{
 		vi.clearAllMocks();
 		mocks.requireUser.mockResolvedValue({id:'user-1'});
 		mocks.investmentFindFirst.mockResolvedValue(null);
+		mocks.synchronizeTier.mockResolvedValue(false);
 		mocks.transaction.mockImplementation((operation:(tx:unknown)=>unknown)=>operation({
 			user:{findUnique:mocks.findUnique,updateMany:vi.fn().mockResolvedValue({count:0})},
 			auditLog:{create:vi.fn()},
@@ -39,7 +41,7 @@ describe('profile two-factor status',()=>{
 			totpSecretEncrypted:null,
 			role:'USER',
 			status:'ACTIVE',
-			accountMode:'DEMO',
+			accountMode:'REAL',
 			kycStatus:'PENDING',
 			verifiedAt:null,
 			withdrawalEnabled:true,
@@ -51,7 +53,9 @@ describe('profile two-factor status',()=>{
 
 		const response=await GET();
 		expect(response.status).toBe(200);
-		expect(await response.json()).toMatchObject({twoFactorEnabled:false,twoFactorAvailable:false});
+		expect(await response.json()).toMatchObject({twoFactorEnabled:false,twoFactorAvailable:false,canWithdraw:true});
+		expect(mocks.synchronizeTier).not.toHaveBeenCalled();
+		expect(mocks.investmentFindFirst).not.toHaveBeenCalled();
 	});
 
 	it('does not allow profile updates to change the server-side two-factor state',async()=>{

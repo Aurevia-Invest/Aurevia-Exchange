@@ -1,5 +1,5 @@
 import {NextResponse} from 'next/server';
-import {AccountMode,InvestmentStatus,Prisma} from '@prisma/client';
+import {AccountMode,Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
@@ -51,16 +51,11 @@ function safeErrorDetails(error:unknown){
 export async function GET(){
 	try{
 		const user=await requireUser();
-		const profile=await db.$transaction(async tx=>{
-			const current=await tx.user.findUnique({where:{id:user.id},select:{id:true}});
-			if(!current)return null;
-			await synchronizeCompletedProfileTier(tx,user.id);
-			return tx.user.findUnique({where:{id:user.id},select:profileSelect});
-		});
+		const profile=await db.user.findUnique({where:{id:user.id},select:profileSelect});
 		if(!profile)return NextResponse.json({error:'Profile not found.'},{status:404});
 		if(profile.status!=='ACTIVE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
-		const completedInvestment=profile.accountMode===AccountMode.REAL?await db.investmentRequest.findFirst({where:{userId:user.id,accountMode:profile.accountMode,status:{in:[InvestmentStatus.COMPLETED,InvestmentStatus.SETTLED]}},select:{id:true}}):null;
-		return NextResponse.json({...profileResponse(profile),canWithdraw:profile.accountMode===AccountMode.REAL||Boolean(completedInvestment)},{headers:{'Cache-Control':'private, no-store'}});
+		const canWithdraw=profile.accountMode===AccountMode.REAL;
+		return NextResponse.json({...profileResponse(profile),canWithdraw},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
 		if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});

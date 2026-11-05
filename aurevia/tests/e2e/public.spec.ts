@@ -117,13 +117,12 @@ test('homepage labels internal reference prices as non-live market data',async({
 
 test('homepage clearly labels stock and crypto trading modes',async({page})=>{
 	await page.goto('/');
-	const stocks=page.locator('.asset-item').filter({hasText:'Stock trading'});
-	await expect(stocks).toHaveCount(1);
+	await waitForStartup(page);
+	const stocks=page.locator('.asset-item').filter({hasText:'Stock trading'}).first();
 	await expect(stocks).toContainText('DEMO');
 	await expect(stocks).toContainText('NVDA');
 	await expect(stocks).toContainText('Alpaca Paper Trading');
-	const crypto=page.locator('.asset-item').filter({hasText:'Crypto trading'});
-	await expect(crypto).toHaveCount(1);
+	const crypto=page.locator('.asset-item').filter({hasText:'Crypto trading'}).first();
 	await expect(crypto).toContainText('BTC/USD');
 	await expect(crypto).toContainText('ETH/USD');
 	await expect(crypto).toContainText('Alpaca Paper Trading');

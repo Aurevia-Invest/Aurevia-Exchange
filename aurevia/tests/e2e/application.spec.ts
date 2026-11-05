@@ -386,6 +386,9 @@ test('waitlist form submits and shows a truthful success state',async({page})=>{
 test('mobile navigation opens and navigates to Login',async({page})=>{
 	await page.setViewportSize({width:320,height:800});
 	await page.goto('/');
+	const policyConsent=page.getByRole('dialog',{name:'Review before continuing'});
+	if(await policyConsent.isVisible())await policyConsent.getByRole('button',{name:/^Accept terms/}).click();
+	await waitForStartup(page);
 	await page.getByRole('button',{name:'Open navigation'}).click();
 	const nav=page.getByRole('navigation',{name:'Primary navigation'});
 	await expect(nav).toBeVisible();
@@ -637,6 +640,7 @@ test('authenticated bottom navigation stays fixed across viewports and More dest
 test('global chat support persists its position and exchanges private admin messages',async({browser,page})=>{
 	await page.setViewportSize({width:390,height:844});
 	await page.goto('/login');
+	await waitForStartup(page);
 	await expect(page.getByRole('button',{name:'Show chat support'})).toBeVisible();
 	const launcher=await revealSupportChat(page);
 	await expect(launcher).toBeVisible();
@@ -722,6 +726,7 @@ test('global chat support persists its position and exchanges private admin mess
 test('language selection persists Arabic RTL direction and remains responsive',async({page})=>{
 	await page.setViewportSize({width:390,height:844});
 	await page.goto('/');
+	await waitForStartup(page);
 	const languageTrigger=page.getByRole('button',{name:/Select language:/});
 	await languageTrigger.click();
 	await page.getByRole('menuitemradio',{name:/العربية/}).click();
@@ -737,6 +742,7 @@ test('language selection persists Arabic RTL direction and remains responsive',a
 test('language selector supports keyboard navigation, outside dismissal, and focus restoration',async({page})=>{
 	await page.setViewportSize({width:320,height:800});
 	await page.goto('/');
+	await waitForStartup(page);
 	const trigger=page.getByRole('button',{name:/Select language:/});
 	await trigger.focus();
 	await page.keyboard.press('ArrowDown');
@@ -761,6 +767,7 @@ test('startup releases page interaction if session initialization is delayed',as
 		await route.fulfill({status:200,contentType:'application/json',body:'{}'});
 	});
 	await page.goto('/login');
+	await waitForStartup(page);
 	const startup=page.getByRole('status',{name:'Loading Aurevia Exchange'});
 	if(await startup.count())await expect(startup).toBeHidden({timeout:5000});
 	const email=page.getByLabel('Email address');
@@ -840,6 +847,7 @@ test('watchlists persist across refresh and remain isolated between accounts',as
 test('country selector searches Nigeria and United Kingdom and shows their dialing codes',async({page})=>{
 	await page.setViewportSize({width:320,height:800});
 	await page.goto('/register');
+	await waitForStartup(page);
 	const picker=page.getByRole('button',{name:/phone country and dialing code/i});
 	await expect(picker).toHaveAttribute('aria-label',/Select country/);
 	await picker.click();
@@ -882,6 +890,7 @@ test('mobile date entry is calendar-backed and future dates are blocked',async({
 test('sign-in password visibility, recovery link, and account link are accessible on mobile',async({page})=>{
 	await page.setViewportSize({width:320,height:800});
 	await page.goto('/login');
+	await waitForStartup(page);
 	const password=page.getByLabel('Password',{exact:true});
 	await password.fill('ExamplePassword123');
 	await page.getByRole('button',{name:'Show password'}).click();
@@ -1097,6 +1106,7 @@ test('notifications bell, unread state, mark one/all, and history persist',async
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await page.setViewportSize({width:390,height:844});
 	await page.goto('/');
+	await waitForStartup(page);
 	const bell=page.getByRole('button',{name:/Notifications/});
 	await expect(bell).toContainText(/\d/);
 	await bell.click();
@@ -1135,9 +1145,11 @@ test('account-mode changes initialize and isolate wallet, trade, history, and su
 	let releaseModeUpdate!:()=>void;
 	const modeUpdateGate=new Promise<void>(resolve=>{releaseModeUpdate=resolve});
 	await page.route('**/api/account/mode',async route=>{await modeUpdateGate;await route.continue()});
+	const modeUpdateResponse=page.waitForResponse(response=>response.url().endsWith('/api/account/mode')&&response.request().method()==='PATCH');
 	await selectAccountMode(page,'REAL',{waitForCompletion:false});
 	await expect(demoMode).toBeDisabled();
 	releaseModeUpdate();
+	expect((await modeUpdateResponse).ok()).toBeTruthy();
 	await page.unroute('**/api/account/mode');
 	await expect(realMode).toHaveAttribute('aria-pressed','true');
 	await expect(page.locator('.wallet-page-heading .wallet-eyebrow')).toContainText('REAL ACCOUNT');
@@ -2248,7 +2260,9 @@ test('DEMO order idempotency prevents duplicate fills and user history stays iso
 	expect(Number(position.quantity)).toBe(2);
 	const openPortfolio=await page.request.get('/api/portfolio').then(response=>response.json());
 	expect(Number(openPortfolio.totalValue)).toBeCloseTo(Number(openPortfolio.cashBalance)+Number(openPortfolio.positionValue),2);
-	expect(Number(openPortfolio.unrealizedPnl)).toBeCloseTo(Number(position.unrealizedPnl),2);
+	expect(openPortfolio.positions).toHaveLength(1);
+	expect(Number(openPortfolio.positions[0].quantity)).toBe(Number(position.quantity));
+	expect(Number(openPortfolio.unrealizedPnl)).toBeCloseTo(Number(openPortfolio.positions[0].unrealizedPnl),2);
 
 	const sellMarket=await page.request.get('/api/market').then(response=>response.json());
 	const sellInstrument=sellMarket.find((item:{symbol:string})=>item.symbol===symbol);

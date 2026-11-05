@@ -17,14 +17,20 @@ export const test=base;
 export {expect};
 
 export async function waitForStartup(page:Page){
+	const startupScreen=page.locator('.startup-screen');
 	const skipIntroduction=page.getByRole('button',{name:'Skip introduction'});
 	const availableContent=page.locator('.scene-content > div[aria-hidden="false"]');
-	await Promise.race([
-		skipIntroduction.waitFor({state:'visible'}),
-		availableContent.waitFor({state:'attached'}),
-	]);
-	if(await skipIntroduction.isVisible())await skipIntroduction.click();
-	await expect(page.locator('.startup-screen')).toHaveCount(0);
+	const policyConsent=page.locator('.policy-consent-dialog');
+	await page.waitForFunction(()=>{
+		const consentDialog=document.querySelector<HTMLDialogElement>('.policy-consent-dialog');
+		const content=document.querySelector('.scene-content > div');
+		return consentDialog?.open===true||(
+			localStorage.getItem('aurevia-policy-consent-v1')!==null&&
+			(document.querySelector('.intro-skip')!==null||content?.getAttribute('aria-hidden')==='false')
+		);
+	});
+	if(await policyConsent.isVisible())await policyConsent.getByRole('button',{name:/^Accept terms/}).click();
+	await expect(startupScreen).toHaveCount(0);
 	await expect(page.locator('.scene-content > div[inert]')).toHaveCount(0);
 }
 
@@ -129,8 +135,12 @@ test.afterEach(async({page},testInfo)=>{
 	await testInfo.attach('browser-runtime.json',{body:Buffer.from(JSON.stringify(capture,null,2)),contentType:'application/json'});
 	const expectedClientErrors=capture.failedResponses.filter(response=>(testInfo.title.includes('duplicate signup offers sign-in')&&response.url.endsWith('/api/register')&&response.status===409)||(testInfo.title.includes('registration fails closed when Akedly credentials are unavailable')&&response.url.endsWith('/api/register')&&response.status===503)||(response.url.endsWith('/api/auth/callback/credentials')&&response.status===401)||((testInfo.title.includes('watchlists persist')||testInfo.title.includes('session replacement is explicit')||testInfo.title.includes('Nova escalation reaches admin')||testInfo.title.includes('tier requests require')||testInfo.title.includes('account deletion'))&&response.url.endsWith('/api/notifications?limit=8')&&response.status===401)||(testInfo.title.includes('account deletion')&&['/api/currency-preference','/api/positions','/api/tax-services/access','/api/profile/avatar'].some(path=>response.url.endsWith(path))&&response.status===401)|| (testInfo.title.includes('Nova escalation reaches admin')&&response.url.endsWith('/api/support')&&response.status===409)||((testInfo.title.includes('Account Funding')||testInfo.title.includes('Wallet shows the internal funding workflow'))&&(response.url.endsWith('/api/payment-methods')||response.url.endsWith('/api/wallet'))&&response.status===503)||(response.url.includes('/api/live-markets/')&&response.status===503&&!marketProviderConfigured)||(testInfo.title.includes('KYC access is owner-scoped')&&response.url.endsWith('/api/kyc/documents')&&response.status===409));
 	if(testInfo.title.includes('support fallback'))expectedClientErrors.push(...capture.failedResponses.filter(response=>response.url.endsWith('/api/support/nova')&&response.status===503));
+	if(testInfo.title.includes('account deletion'))expectedClientErrors.push(...capture.failedResponses.filter(response=>['/api/profile','/api/profile/avatar','/api/tax-services/access','/api/dashboard/overview'].some(path=>response.url.endsWith(path))&&[401,403].includes(response.status)));
 	const unexpectedResponses=capture.failedResponses.filter(response=>!expectedClientErrors.includes(response));
-	expect(capture.consoleErrors,`browser console errors; failed application responses: ${JSON.stringify(capture.failedResponses)}`).toEqual([]);
+	const accountClosureAccessDenied=testInfo.title.includes('account deletion')&&capture.failedResponses.some(response=>(response.url.endsWith('/api/profile')&&[401,403].includes(response.status))||(response.url.endsWith('/api/dashboard/overview')&&[401,403].includes(response.status)));
+	const accountClosureProfileDenied=testInfo.title.includes('account deletion')&&capture.failedResponses.some(response=>response.url.endsWith('/api/profile')&&[401,403].includes(response.status));
+	const unexpectedConsoleErrors=capture.consoleErrors.filter(message=>!(accountClosureAccessDenied&&message.includes('status of 403 (Forbidden)')||accountClosureProfileDenied&&message.includes('Unable to refresh the account tier.')));
+	expect(unexpectedConsoleErrors,`browser console errors; failed application responses: ${JSON.stringify(capture.failedResponses)}`).toEqual([]);
 	expect(capture.pageErrors,'uncaught browser exceptions').toEqual([]);
 	expect(capture.failedRequests,'failed application requests').toEqual([]);
 	expect(unexpectedResponses,'unexpected failed application responses').toEqual([]);

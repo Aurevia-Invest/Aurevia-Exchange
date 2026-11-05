@@ -66,7 +66,7 @@
     "@axe-core/playwright": "^4.14.0",
     "@eslint/compat": "^2.1.1",
     "@eslint/js": "^10.0.1",
-    "@next/eslint-plugin-next": "14.2.35",
+    "@next/eslint-plugin-next": "16.4.5",
     "@playwright/test": "^1.64.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/bcryptjs": "2.4.6",
@@ -77,7 +77,7 @@
     "@types/react-dom": "19.3.0",
     "@types/three": "0.172.0",
     "@types/web-push": "^3.6.4",
-    "eslint": "^10.13.0",
+    "eslint": "^10.14.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.13.0",
     "pngjs": "7.0.0",
@@ -102,8 +102,6 @@
     "esbuild@0.28.2": true
   },
   "overrides": {
-    "@next/eslint-plugin-next": {
-      "glob": "10.5.0"
-    }
+    "minimatch": "^11.0.4"
   }
 }

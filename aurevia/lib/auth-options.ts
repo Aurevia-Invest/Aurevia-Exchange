@@ -31,12 +31,27 @@ function safeAuditError(error:unknown){
   const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
   return /^[A-Z0-9_]{2,32}$/.test(code)?code:error instanceof Error?error.name:'UnknownError';
 }
+function hasPrismaCode(error:unknown,code:string){
+  return !!error&&typeof error==='object'&&'code' in error&&error.code===code;
+}
+function isPrismaSchemaMismatch(error:unknown){
+  return hasPrismaCode(error,'P2021')||hasPrismaCode(error,'P2022');
+}
 function authFailureCategory(error:unknown){
   const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
   if(['P2021','P2022'].includes(code))return 'DATABASE_SCHEMA_MISMATCH';
   if(['P1001','P1002','P1017'].includes(code))return 'DATABASE_UNAVAILABLE';
   return 'AUTHENTICATION_DEPENDENCY_FAILURE';
 }
+const credentialUserSelect={
+  id:true,
+  email:true,
+  name:true,
+  passwordHash:true,
+  role:true,
+  accountMode:true,
+  status:true,
+} satisfies Prisma.UserSelect;
 export const authOptions:NextAuthOptions={
   session:{strategy:'jwt',maxAge:AUTH_SESSION_MAX_AGE_SECONDS},
   jwt:{maxAge:AUTH_SESSION_MAX_AGE_SECONDS},
@@ -77,22 +92,22 @@ export const authOptions:NextAuthOptions={
       const {isAdminUsername,lookupEmail}=resolveCredentialLookup(username,email,authConfig.adminUsername,authConfig.adminEmail,c?.adminLogin==='true');
       if(!lookupEmail){await writeLoginAudit('FAILED',undefined,undefined,'MISSING_IDENTIFIER');return null;}
       try{
-      let u=await db.user.findFirst({where:{email:{equals:lookupEmail,mode:'insensitive'}}});
+      let u=await db.user.findFirst({where:{email:{equals:lookupEmail,mode:'insensitive'}},select:credentialUserSelect});
       if((!u||u.role!==Role.ADMIN)&&c?.adminLogin==='true'&&authConfig.adminUsername&&authConfig.adminEmail&&authConfig.adminPassword?.length>=12&&matchesConfiguredAdminIdentity(username,email,authConfig.adminUsername,authConfig.adminEmail)&&matchesConfiguredAdminPassword(passwordForAuthentication,authConfig.adminPassword)){
         const configuredEmail=authConfig.adminEmail.trim().toLowerCase();
         const passwordHash=await bcrypt.hash(authConfig.adminPassword,12);
         u=await db.$transaction(async tx=>{
-          const account=await tx.user.findUnique({where:{email:configuredEmail}});
+          const account=await tx.user.findUnique({where:{email:configuredEmail},select:credentialUserSelect});
           const existingAdmin=await tx.user.findFirst({where:{role:Role.ADMIN},select:{id:true}});
           if(existingAdmin&&existingAdmin.id!==account?.id){
             if(account)return account;
-            return tx.user.update({where:{id:existingAdmin.id},data:{email:configuredEmail,passwordHash,name:authConfig.adminUsername!.trim(),status:UserStatus.ACTIVE}});
+            return tx.user.update({where:{id:existingAdmin.id},data:{email:configuredEmail,passwordHash,name:authConfig.adminUsername!.trim(),status:UserStatus.ACTIVE},select:credentialUserSelect});
           }
           if(account){
             if(account.role===Role.ADMIN)return account;
             return null;
           }
-          return tx.user.create({data:{email:configuredEmail,passwordHash,name:authConfig.adminUsername!.trim(),role:Role.ADMIN,status:UserStatus.ACTIVE}});
+          return tx.user.create({data:{email:configuredEmail,passwordHash,name:authConfig.adminUsername!.trim(),role:Role.ADMIN,status:UserStatus.ACTIVE},select:credentialUserSelect});
         },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
       }
       if(!u||u.status!=='ACTIVE'){
@@ -124,10 +139,28 @@ export const authOptions:NextAuthOptions={
       }
       if(isAdminUsername&&authenticatedUser.role!=='ADMIN'){await writeLoginAudit('FAILED',authenticatedUser.id,undefined,'ADMIN_ROLE_REQUIRED');return null;}
       const now=new Date();
-      await clearPersistentRateLimit(accountAttemptKey);
+      try{
+        await clearPersistentRateLimit(accountAttemptKey);
+      }catch(error){
+        if(!isPrismaSchemaMismatch(error))throw error;
+        console.warn('[auth] Persistent sign-in rate-limit storage is unavailable; continuing with valid credentials.',{
+          referenceId,
+          errorCode:hasPrismaCode(error,'P2021')?'P2021':'P2022',
+        });
+      }
       const sessionId=randomUUID();
       const label=sessionDeviceLabel(userAgent);
-      await db.securitySession.create({data:{userId:authenticatedUser.id,sessionHash:hashSessionId(sessionId),deviceLabel:label,userAgent,expiresAt:new Date(now.getTime()+AUTH_SESSION_MAX_AGE_SECONDS*1000)}});
+      try{
+        await db.securitySession.create({data:{userId:authenticatedUser.id,sessionHash:hashSessionId(sessionId),deviceLabel:label,userAgent,expiresAt:new Date(now.getTime()+AUTH_SESSION_MAX_AGE_SECONDS*1000)},select:{id:true}});
+      }catch(error){
+        if(!isPrismaSchemaMismatch(error))throw error;
+        const legacySession=await db.user.updateMany({where:{id:authenticatedUser.id},data:{activeSessionId:sessionId,activeSessionUpdatedAt:now}});
+        if(legacySession.count!==1)throw error;
+        console.warn('[auth] Security-session storage is unavailable; using legacy single-session storage.',{
+          referenceId,
+          errorCode:hasPrismaCode(error,'P2021')?'P2021':'P2022',
+        });
+      }
       await writeLoginAudit('SUCCESS',authenticatedUser.id,sessionId);
       return {id:authenticatedUser.id,email:authenticatedUser.email,name:authenticatedUser.name,role:authenticatedUser.role,accountMode:authenticatedUser.accountMode,sessionId};
       }catch(error){
@@ -147,28 +180,52 @@ export const authOptions:NextAuthOptions={
       if(user){token.id=user.id;token.name=user.name;token.email=user.email;token.role=user.role;token.accountMode=user.accountMode;token.sessionId=user.sessionId;}
       if(trigger==='update'&&token.id&&typeof token.sessionId==='string'){
         const currentHash=hashSessionId(token.sessionId);
-        const pending=await db.securitySession.findFirst({where:{userId:String(token.id),sessionHash:currentHash,revokedAt:null,rotationRequired:true,expiresAt:{gt:new Date()}},select:{id:true}});
-        if(pending){
+        try{
+          const pending=await db.securitySession.findFirst({where:{userId:String(token.id),sessionHash:currentHash,revokedAt:null,rotationRequired:true,expiresAt:{gt:new Date()}},select:{id:true}});
+          if(pending){
+            const rotatedId=randomUUID();
+            await db.securitySession.update({where:{id:pending.id},data:{sessionHash:hashSessionId(rotatedId),rotationRequired:false,reauthenticatedAt:new Date()}});
+            token.sessionId=rotatedId;
+          }
+        }catch(error){
+          if(!isPrismaSchemaMismatch(error))throw error;
           const rotatedId=randomUUID();
-          await db.securitySession.update({where:{id:pending.id},data:{sessionHash:hashSessionId(rotatedId),rotationRequired:false,reauthenticatedAt:new Date()}});
-          token.sessionId=rotatedId;
+          const result=await db.user.updateMany({where:{id:String(token.id),activeSessionId:token.sessionId},data:{activeSessionId:rotatedId,activeSessionUpdatedAt:new Date()}});
+          if(result.count===1)token.sessionId=rotatedId;
         }
       }
       if(token.id){
         const current=await db.user.findUnique({where:{id:String(token.id)},select:{name:true,email:true,role:true,status:true,accountMode:true,activeSessionId:true,activeSessionUpdatedAt:true}});
-        let activeSession=token.sessionId?await db.securitySession.findFirst({where:{userId:String(token.id),sessionHash:hashSessionId(token.sessionId),revokedAt:null,expiresAt:{gt:new Date()}},select:{id:true,lastActivityAt:true}}):null;
+        let activeSession: {id:string;lastActivityAt:Date}|null=null;
+        let usesLegacySession=false;
+        if(token.sessionId){
+          try{
+            activeSession=await db.securitySession.findFirst({where:{userId:String(token.id),sessionHash:hashSessionId(token.sessionId),revokedAt:null,expiresAt:{gt:new Date()}},select:{id:true,lastActivityAt:true}});
+          }catch(error){
+            if(!isPrismaSchemaMismatch(error))throw error;
+            usesLegacySession=true;
+            if(current?.activeSessionId===token.sessionId&&!isAuthSessionExpired(current.activeSessionUpdatedAt)){
+              activeSession={id:'legacy-session',lastActivityAt:current.activeSessionUpdatedAt!};
+            }
+          }
+        }
         if(!activeSession&&current?.activeSessionId&&current.activeSessionId===token.sessionId&&!isAuthSessionExpired(current.activeSessionUpdatedAt)){
           const oldTimestamp=current.activeSessionUpdatedAt!;
           try{
             activeSession=await db.securitySession.create({data:{userId:String(token.id),sessionHash:hashSessionId(token.sessionId!),createdAt:oldTimestamp,lastActivityAt:oldTimestamp,expiresAt:new Date(oldTimestamp.getTime()+AUTH_SESSION_MAX_AGE_SECONDS*1000)},select:{id:true,lastActivityAt:true}});
           }catch(error){
-            if(!(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'))throw error;
-            activeSession=await db.securitySession.findFirst({where:{userId:String(token.id),sessionHash:hashSessionId(token.sessionId!),revokedAt:null,expiresAt:{gt:new Date()}},select:{id:true,lastActivityAt:true}});
+            if(isPrismaSchemaMismatch(error)){
+              usesLegacySession=true;
+              activeSession={id:'legacy-session',lastActivityAt:oldTimestamp};
+            }else{
+              if(!(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'))throw error;
+              activeSession=await db.securitySession.findFirst({where:{userId:String(token.id),sessionHash:hashSessionId(token.sessionId!),revokedAt:null,expiresAt:{gt:new Date()}},select:{id:true,lastActivityAt:true}});
+            }
           }
         }
         if(!current||current.status!=='ACTIVE'||!activeSession){token.id='';token.name=null;token.email=null;token.role=undefined;token.accountMode=undefined;token.sessionId=undefined;}
         else{
-          if(Date.now()-activeSession.lastActivityAt.getTime()>5*60_000)await db.securitySession.updateMany({where:{id:activeSession.id,revokedAt:null},data:{lastActivityAt:new Date()}});
+          if(!usesLegacySession&&Date.now()-activeSession.lastActivityAt.getTime()>5*60_000)await db.securitySession.updateMany({where:{id:activeSession.id,revokedAt:null},data:{lastActivityAt:new Date()}});
           token.name=current.name;token.email=current.email;token.role=current.role;token.accountMode=current.accountMode;
         }
       }
@@ -194,9 +251,12 @@ export const authOptions:NextAuthOptions={
       if(sessionId){
         try{
           await db.securitySession.updateMany({where:{userId:String(userId),sessionHash:hashSessionId(sessionId),revokedAt:null},data:{revokedAt:new Date()}});
-          await db.user.updateMany({where:{id:String(userId),activeSessionId:sessionId},data:{activeSessionId:null,activeSessionUpdatedAt:null}});
+        }catch(error){
+          if(!isPrismaSchemaMismatch(error))console.warn('Unable to revoke the security session.',{errorCode:safeAuditError(error)});
         }
-        catch{console.warn('Unable to clear the active account session.');}
+        try{
+          await db.user.updateMany({where:{id:String(userId),activeSessionId:sessionId},data:{activeSessionId:null,activeSessionUpdatedAt:null}});
+        }catch(error){console.warn('Unable to clear the active account session.',{errorCode:safeAuditError(error)});}
       }
       try{
         await db.auditLog.create({data:{actorId:String(userId),action:'LOGOUT_SUCCESS',entity:'LOGIN',entityId:String(userId),metadata:{status:'SUCCESS',authMethod:'credentials',sessionRef:sessionId?createHash('sha256').update(sessionId).digest('hex').slice(0,24):null}}});

@@ -6,12 +6,15 @@ import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '../lib/auth-ses
 
 const authMocks=vi.hoisted(()=>({
 	userFindFirst:vi.fn(),
+	userFindUnique:vi.fn(),
 	userUpdateMany:vi.fn(),
 	auditCreate:vi.fn(),
 	transaction:vi.fn(),
 	consumeSecondFactor:vi.fn(),
 	securitySessionFindFirst:vi.fn(),
 	securitySessionCreate:vi.fn(),
+	securitySessionUpdate:vi.fn(),
+	securitySessionUpdateMany:vi.fn(),
 	rateLimit:vi.fn(),
 	persistentRateLimit:vi.fn(),
 	clearPersistentRateLimit:vi.fn(),
@@ -20,8 +23,8 @@ const authMocks=vi.hoisted(()=>({
 
 vi.mock('next-auth/providers/credentials',()=>({default:(configuration:unknown)=>configuration}));
 vi.mock('@/lib/db',()=>({db:{
-	user:{findFirst:authMocks.userFindFirst,updateMany:authMocks.userUpdateMany},
-	securitySession:{findFirst:authMocks.securitySessionFindFirst,create:authMocks.securitySessionCreate},
+	user:{findFirst:authMocks.userFindFirst,findUnique:authMocks.userFindUnique,updateMany:authMocks.userUpdateMany},
+	securitySession:{findFirst:authMocks.securitySessionFindFirst,create:authMocks.securitySessionCreate,update:authMocks.securitySessionUpdate,updateMany:authMocks.securitySessionUpdateMany},
 	auditLog:{create:authMocks.auditCreate},
 	$transaction:authMocks.transaction,
 }}));
@@ -48,9 +51,12 @@ import {authOptions} from '../lib/auth-options';
 beforeEach(()=>{
 	vi.clearAllMocks();
 	authMocks.userUpdateMany.mockResolvedValue({count:1});
+	authMocks.userFindUnique.mockResolvedValue(null);
 	authMocks.auditCreate.mockResolvedValue({});
 	authMocks.securitySessionFindFirst.mockResolvedValue(null);
 	authMocks.securitySessionCreate.mockResolvedValue({});
+	authMocks.securitySessionUpdate.mockResolvedValue({});
+	authMocks.securitySessionUpdateMany.mockResolvedValue({count:1});
 	authMocks.rateLimit.mockResolvedValue(undefined);
 	authMocks.persistentRateLimit.mockResolvedValue(undefined);
 	authMocks.clearPersistentRateLimit.mockResolvedValue(undefined);
@@ -108,15 +114,19 @@ describe('credentials authorization',()=>{
 
 		expect(authMocks.userFindFirst).toHaveBeenCalledWith({
 			where:{email:{equals:'legacy.user@example.invalid',mode:'insensitive'}},
+			select:{id:true,email:true,name:true,passwordHash:true,role:true,accountMode:true,status:true},
 		});
 		expect(result).toMatchObject({id:'legacy-user',email:'Legacy.User@Example.invalid'});
 		expect(authMocks.consumeSecondFactor).not.toHaveBeenCalled();
-		expect(authMocks.securitySessionCreate).toHaveBeenCalledWith({data:expect.objectContaining({
-			userId:'legacy-user',
-			sessionHash:expect.stringMatching(/^[a-f0-9]{64}$/),
-			deviceLabel:'Browser on Device',
-			expiresAt:expect.any(Date),
-		})});
+		expect(authMocks.securitySessionCreate).toHaveBeenCalledWith({
+			data:expect.objectContaining({
+				userId:'legacy-user',
+				sessionHash:expect.stringMatching(/^[a-f0-9]{64}$/),
+				deviceLabel:'Browser on Device',
+				expiresAt:expect.any(Date),
+			}),
+			select:{id:true},
+		});
 	});
 
 	it('allows password-only sign-in when optional 2FA is enabled in Security Settings',async()=>{
@@ -206,6 +216,36 @@ describe('credentials authorization',()=>{
 		}finally{
 			errorLog.mockRestore();
 		}
+	});
+
+	it.each(['P2021','P2022'])('authenticates against older schemas using the existing single-session fields (%s)',async(errorCode)=>{
+		const password='CorrectPassword42';
+		const passwordHash=await bcrypt.hash(password,4);
+		authMocks.userFindFirst.mockResolvedValue({
+			id:'legacy-user',email:'user@example.invalid',name:'User',
+			passwordHash,role:'USER',accountMode:'DEMO',status:'ACTIVE',
+		});
+		authMocks.securitySessionCreate.mockRejectedValue(Object.assign(new Error('outdated security-session schema'),{code:errorCode}));
+
+		const user=await authorize({username:'user@example.invalid',email:'user@example.invalid',password});
+
+		expect(user).toMatchObject({id:'legacy-user',email:'user@example.invalid'});
+		expect(authMocks.userUpdateMany).toHaveBeenCalledWith({
+			where:{id:'legacy-user'},
+			data:{activeSessionId:user?.sessionId,activeSessionUpdatedAt:expect.any(Date)},
+		});
+
+		authMocks.userFindUnique.mockResolvedValue({
+			name:'User',email:'user@example.invalid',role:'USER',status:'ACTIVE',accountMode:'DEMO',
+			activeSessionId:user?.sessionId,activeSessionUpdatedAt:new Date(),
+		});
+		authMocks.securitySessionFindFirst.mockRejectedValue(Object.assign(new Error('outdated security-session schema'),{code:errorCode}));
+		const jwtCallback=authOptions.callbacks?.jwt;
+		if(!jwtCallback)throw new Error('JWT callback is unavailable.');
+		const token=await jwtCallback({token:{},user} as never);
+
+		expect(token.id).toBe('legacy-user');
+		expect(token.sessionId).toBe(user?.sessionId);
 	});
 
 	it('allows valid credentials through even if a prior failed attempt exhausted the IP limit',async()=>{

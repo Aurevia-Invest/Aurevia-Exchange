@@ -61,7 +61,7 @@ export default function Login(){
 		<div className="auth-brand"><Image src="/aurevia-logo.png" alt="" width={52} height={52} priority/><span className="brand-copy"><strong>Aurevia</strong><small>EXCHANGE</small></span></div>
 		<p className="account-kicker">{translate('secureAccess')} · PRIVATE ACCOUNT ACCESS</p>
 		<h1 id="signin-title" className="auth-heading">{translate('welcomeBack')}</h1>
-		<p className="auth-subtitle">Sign in to pick up where you left off. Your account is protected with secure, encrypted access.</p>
+		<p className="auth-subtitle">Sign in to pick up where you left off. Sign-in is free; no subscription or payment method is required. Your account is protected with secure, encrypted access.</p>
 		<div className="auth-market-line" aria-hidden="true"/>
 		{registered&&<p className="mt-4 text-sm text-profit" role="status">{translate('registeredSignIn')}</p>}
 		<form onSubmit={submit} className="mt-5 space-y-4">

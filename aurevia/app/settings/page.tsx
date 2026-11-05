@@ -51,7 +51,10 @@ export default function Settings(){
 	useEffect(()=>{
 		const syncSection=()=>{
 			const hash=window.location.hash.slice(1);
-			if(hash==='profile'||hash==='security'||hash==='preferences')setSection(hash);
+			if(hash==='profile'||hash==='security'||hash==='preferences'){
+				setSection(hash);
+				setMobileHome(false);
+			}
 		};
 		syncSection();
 		window.addEventListener('hashchange',syncSection);
@@ -68,6 +71,7 @@ export default function Settings(){
 	const settingsGroups=[
 		{title:'Basic',tone:'basic',links:[
 			{label:'Account Details',description:'Your personal profile and verification',href:'/settings#profile',icon:UserRound},
+			{label:'Security',description:'Password, two-factor authentication, and active sessions',href:'/settings#security',icon:KeyRound},
 			{label:'Preferences',description:'Notification delivery preferences',href:'/settings#preferences',icon:Settings2},
 			{label:'Notifications',description:'View your account notifications',href:'/notifications',icon:Bell},
 			{label:'Applications',description:'Card applications and designs',href:'/cards',icon:CreditCard},

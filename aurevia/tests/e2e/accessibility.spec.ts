@@ -19,6 +19,13 @@ test('signup, dashboard, and admin pages pass axe accessibility checks',async({p
 	await waitForStartup(page);
 	await expectAccessible(page,'dashboard');
 
+	await page.setViewportSize({width:390,height:844});
+	await page.goto('/settings#security');
+	await waitForStartup(page);
+	await expect(page.getByRole('heading',{name:'Financial Account Security Center'})).toBeVisible();
+	await expectAccessible(page,'mobile security settings');
+
+	await page.setViewportSize({width:1440,height:900});
 	await logout(page);
 	await loginAs(page,process.env.AUREVIA_E2E_ADMIN_EMAIL!,process.env.AUREVIA_E2E_ADMIN_PASSWORD!);
 	await page.goto('/admin');

@@ -112,7 +112,7 @@ export function getMarketAssetForTradingSymbol(symbol:string){
 }
 
 export function isExternalMarketDataSource(source:string){
-  return source==='Finnhub'||source.startsWith('Alpaca');
+  return source==='Finnhub'||source.startsWith('Alpaca')||source==='Twelve Data'||source==='Alpha Vantage'||source==='Financial Modeling Prep';
 }
 
 export function filterSupportedMarketAssets<T extends {symbol:string}>(assets:T[]):T[]{

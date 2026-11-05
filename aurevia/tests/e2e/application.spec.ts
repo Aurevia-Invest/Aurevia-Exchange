@@ -625,7 +625,7 @@ test('authenticated bottom navigation stays fixed across viewports and More dest
 		for(const [name,href] of [['Dashboard','/dashboard'],['Markets','/markets'],['Trade markets','/trade'],['Portfolio','/portfolio']] as const){
 			await expect(navigation.getByRole('link',{name,exact:true})).toHaveAttribute('href',href);
 		}
-		await expect(navigation.getByRole('button',{name:'Open account navigation menu'})).toBeVisible();
+		await expect(navigation.getByRole('button',{name:'More navigation'})).toBeVisible();
 		await expect(navigation.getByRole('link',{name:'Dashboard',exact:true})).toHaveAttribute('aria-current','page');
 		await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));
 		await expect(navigation).toBeInViewport();
@@ -2778,6 +2778,24 @@ test('profile settings persist for the owner and remain inaccessible to signed-o
 	}finally{await signedOutContext.close();}
 });
 
+test('authentication session cookies are protected and sign-in requires a CSRF token',async({browser,page})=>{
+	const user=await createIsolatedDemoUser('auth-cookie-security');
+	await loginAs(page,user.email,user.password);
+	const sessionCookie=(await page.context().cookies()).find(cookie=>cookie.name.endsWith('session-token'));
+	expect(sessionCookie).toMatchObject({httpOnly:true,sameSite:'Lax',path:'/'});
+
+	const unauthenticatedContext=await browser.newContext();
+	try{
+		const response=await unauthenticatedContext.request.post('/api/auth/signin/credentials',{
+			data:{username:user.email,password:user.password},
+			maxRedirects:0,
+		});
+		expect(response.status()).toBe(302);
+		expect(response.headers().location).toContain('csrf=true');
+		expect(await (await unauthenticatedContext.request.get('/api/auth/session')).json()).not.toHaveProperty('user');
+	}finally{await unauthenticatedContext.close();}
+});
+
 test('password changes require fresh credentials and revoke other sessions',async({browser,page})=>{
 	const user=await createIsolatedDemoUser('security-password');
 	await loginAs(page,user.email,user.password);
@@ -2803,7 +2821,9 @@ test('password changes require fresh credentials and revoke other sessions',asyn
 		const incorrect=await page.request.post('/api/security/password',{data:{currentPassword:'IncorrectPassword1',newPassword:'NewStrongPassword42',confirmPassword:'NewStrongPassword42'}});
 		expect(incorrect.status()).toBe(401);
 
+		await page.setViewportSize({width:390,height:844});
 		await page.goto('/settings#security');
+		await expectNoHorizontalOverflow(page);
 		await page.getByRole('button',{name:'Change password'}).click();
 		const changeForm=page.locator('.security-center-form').first();
 		await changeForm.getByLabel('Current password').fill(user.password);
@@ -2811,6 +2831,7 @@ test('password changes require fresh credentials and revoke other sessions',asyn
 		await changeForm.getByLabel('Confirm new password',{exact:true}).fill('NewStrongPassword42');
 		await changeForm.getByRole('button',{name:'Update password'}).click();
 		await expect(page.getByRole('status').filter({hasText:'Password changed'})).toBeVisible();
+		await expectNoHorizontalOverflow(page);
 		expect((await page.request.get('/api/dashboard')).status()).toBe(200);
 		await expect.poll(async()=> (await nextDevice.request.get('/api/dashboard')).status()).toBe(401);
 
@@ -2826,27 +2847,52 @@ test('TOTP enrollment, login challenge, recovery codes, replay protection, and d
 	test.setTimeout(120_000);
 	const user=await createIsolatedDemoUser('security-totp');
 	await loginAs(page,user.email,user.password);
-	const start=await page.request.post('/api/security/totp',{data:{action:'start',password:user.password}});
-	expect(start.status()).toBe(200);
-	const enrollment=await start.json();
+	await page.setViewportSize({width:390,height:844});
+	await page.goto('/settings');
+	await waitForStartup(page);
+	await page.getByRole('link',{name:/^Security Password, two-factor authentication, and active sessions$/}).click();
+	await expect(page.getByRole('heading',{name:'Financial Account Security Center'})).toBeVisible();
+	await expectNoHorizontalOverflow(page);
+	await page.getByRole('button',{name:'Enable two-factor authentication'}).click();
+	const enrollmentForm=page.locator('.security-center-form').first();
+	await enrollmentForm.getByLabel('Current password').fill(user.password);
+	const startResponsePromise=page.waitForResponse(response=>response.url().endsWith('/api/security/totp')&&response.request().method()==='POST');
+	await enrollmentForm.getByRole('button',{name:'Continue enrollment'}).click();
+	const startResponse=await startResponsePromise;
+	expect(startResponse.status()).toBe(200);
+	const enrollment=await startResponse.json();
 	expect(enrollment.qrCode).toMatch(/^data:image\/png;base64,/);
 	expect(enrollment.manualKey).toBeTruthy();
+	await expect(enrollmentForm.getByAltText('Scan this QR code with your authenticator application')).toBeVisible();
+	await expectNoHorizontalOverflow(page);
 	expect((await page.request.get('/api/profile').then(response=>response.json())).twoFactorEnabled).toBe(false);
 	expect(JSON.stringify(await page.request.get('/api/profile').then(response=>response.json()))).not.toContain(enrollment.manualKey);
 
 	const validEnrollmentCode=await generate({secret:enrollment.manualKey});
 	let invalidEnrollmentCode=await generate({secret:generateSecret()});
 	if(invalidEnrollmentCode===validEnrollmentCode)invalidEnrollmentCode=`${(Number(invalidEnrollmentCode)+1)%1_000_000}`.padStart(6,'0');
-	const invalidConfirmation=await page.request.post('/api/security/totp',{data:{action:'confirm',password:user.password,secondFactorCode:invalidEnrollmentCode}});
+	const enrollmentCodeInput=enrollmentForm.getByLabel('Authenticator verification code');
+	await enrollmentCodeInput.fill(invalidEnrollmentCode);
+	const invalidResponsePromise=page.waitForResponse(response=>response.url().endsWith('/api/security/totp')&&response.request().method()==='POST');
+	await enrollmentForm.getByRole('button',{name:'Verify and enable'}).click();
+	const invalidConfirmation=await invalidResponsePromise;
 	expect(invalidConfirmation.status()).toBe(400);
+	await expect(page.getByRole('alert').filter({hasText:'not valid'})).toBeVisible();
 	expect((await page.request.get('/api/profile').then(response=>response.json())).twoFactorEnabled).toBe(false);
 
-	const confirmation=await page.request.post('/api/security/totp',{data:{action:'confirm',password:user.password,secondFactorCode:validEnrollmentCode}});
-	expect(confirmation.status()).toBe(200);
-	const recoveryCodes=(await confirmation.json()).recoveryCodes as string[];
+	await enrollmentCodeInput.fill(await generate({secret:enrollment.manualKey}));
+	const confirmationResponsePromise=page.waitForResponse(response=>response.url().endsWith('/api/security/totp')&&response.request().method()==='POST');
+	await enrollmentForm.getByRole('button',{name:'Verify and enable'}).click();
+	const confirmationResponse=await confirmationResponsePromise;
+	expect(confirmationResponse.status()).toBe(200);
+	const confirmation=await confirmationResponse.json();
+	const recoveryCodes=confirmation.recoveryCodes as string[];
 	expect(recoveryCodes).toHaveLength(10);
 	expect(new Set(recoveryCodes).size).toBe(10);
+	await expect(page.locator('.security-recovery-codes li code')).toHaveCount(10);
+	await expectNoHorizontalOverflow(page);
 	expect((await page.request.get('/api/profile').then(response=>response.json())).twoFactorEnabled).toBe(true);
+	await page.getByRole('button',{name:'I’ve saved my recovery codes'}).click();
 
 	const missingCodeContext=await browser.newContext();
 	const wrongCodeContext=await browser.newContext();

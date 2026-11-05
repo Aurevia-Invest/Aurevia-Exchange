@@ -90,6 +90,10 @@ export type ServerConfiguration = {
     apiKey: string;
     configured: boolean;
     finnhubApiKey: string;
+    twelveDataApiKey:string;
+    alphaVantageApiKey:string;
+    fmpApiKey:string;
+    productionLicenseConfirmed:boolean;
   };
   akedly: {
     enabled: boolean;
@@ -229,7 +233,11 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
   const alpacaConfigured = Boolean(alpacaBaseUrl && alpacaClientId && alpacaClientSecret);
   const paymentConfigured = Boolean(env('PAYMENT_PROVIDER', source) && env('PAYMENT_API_URL', source) && env('PAYMENT_API_KEY', source));
   const finnhubApiKey = env('FINNHUB_API_KEY', source);
-  const marketDataConfigured = Boolean(env('MARKET_DATA_API_URL', source) || finnhubApiKey);
+  const twelveDataApiKey=env('TWELVE_DATA_API_KEY',source);
+  const alphaVantageApiKey=env('ALPHA_VANTAGE_API_KEY',source);
+  const fmpApiKey=env('FMP_API_KEY',source);
+  const productionLicenseConfirmed=booleanEnv('MARKET_DATA_DISPLAY_LICENSES_CONFIRMED',source);
+  const marketDataConfigured = Boolean(env('MARKET_DATA_API_URL', source) || finnhubApiKey||twelveDataApiKey||alphaVantageApiKey||fmpApiKey);
   const akedly = {
     enabled: akedlyEnabledEnv(source),
     apiKey: env('AKEDLY_API_KEY', source),
@@ -331,6 +339,10 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
       apiKey: env('MARKET_DATA_API_KEY', source),
       configured: marketDataConfigured,
       finnhubApiKey,
+      twelveDataApiKey,
+      alphaVantageApiKey,
+      fmpApiKey,
+      productionLicenseConfirmed,
     },
     akedly: {
       ...akedly,
@@ -387,6 +399,12 @@ export function configurationSummary(config: ServerConfiguration) {
     },
     marketDataConfigured: config.marketData.configured,
     finnhubConfigured: Boolean(config.marketData.finnhubApiKey),
+    marketDataProviders:{
+      twelveDataConfigured:Boolean(config.marketData.twelveDataApiKey),
+      alphaVantageConfigured:Boolean(config.marketData.alphaVantageApiKey),
+      fmpConfigured:Boolean(config.marketData.fmpApiKey),
+      productionLicenseConfirmed:config.marketData.productionLicenseConfirmed,
+    },
     akedlyConfigured: config.akedly.configured,
     paymentConfigured: config.payment.configured,
   };

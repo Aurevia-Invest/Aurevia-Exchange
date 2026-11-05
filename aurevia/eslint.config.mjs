@@ -8,7 +8,7 @@ import tseslint from 'typescript-eslint';
 const sourceFiles=['**/*.{js,mjs,cjs,jsx,ts,tsx}'];
 const eslintConfig=tseslint.config(
 	{
-		ignores:['**/.next/**','**/.next-dev/**','**/.next-e2e/**','**/node_modules/**','**/coverage/**','**/playwright-report/**','**/test-results/**'],
+		ignores:['**/.next/**','**/.next-dev/**','**/.next-e2e/**','**/node_modules/**','**/coverage/**','**/playwright-report/**','**/test-results/**','**/tools/playwright/browsers/**'],
 	},
 	{...js.configs.recommended,files:['**/*.{js,mjs,cjs,jsx}']},
 	...tseslint.configs.recommended,

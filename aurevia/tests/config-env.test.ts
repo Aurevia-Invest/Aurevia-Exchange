@@ -3,6 +3,7 @@ import {
   getPublicConfiguration,
   getServerConfiguration,
   normalizeAlpacaTradingBaseUrl,
+  configurationSummary,
   validateServerConfiguration,
 } from '../lib/config/env';
 import {resolveRenderApplicationUrls} from '../lib/config/render-urls';
@@ -320,5 +321,21 @@ describe('canonical environment configuration',()=>{
     expect(config.marketData.finnhubApiKey).toBe('server-only-finnhub-test-key');
     const publicConfig=JSON.stringify(getPublicConfiguration(privateSource));
     for(const value of Object.values(privateSource))expect(publicConfig).not.toContain(value);
+  });
+
+  it('detects market-data providers without exposing their credentials',()=>{
+    const privateSource={
+      FINNHUB_API_KEY:'finnhub-secret',TWELVE_DATA_API_KEY:'twelve-secret',
+      ALPHA_VANTAGE_API_KEY:'alpha-secret',FMP_API_KEY:'fmp-secret',
+      MARKET_DATA_DISPLAY_LICENSES_CONFIRMED:'true',
+    };
+    const config=getServerConfiguration(privateSource);
+    expect(config.marketData).toMatchObject({
+      configured:true,finnhubApiKey:'finnhub-secret',twelveDataApiKey:'twelve-secret',
+      alphaVantageApiKey:'alpha-secret',fmpApiKey:'fmp-secret',productionLicenseConfirmed:true,
+    });
+    const summary=JSON.stringify(configurationSummary(config));
+    for(const value of Object.values(privateSource).slice(0,4))expect(summary).not.toContain(value);
+    expect(summary).toContain('"fmpConfigured":true');
   });
 });

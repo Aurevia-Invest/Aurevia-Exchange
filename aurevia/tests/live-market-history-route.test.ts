@@ -9,6 +9,7 @@ const mocks=vi.hoisted(()=>({
 vi.mock('@/lib/config/env',()=>({getServerConfiguration:mocks.getConfiguration}));
 vi.mock('@/lib/market-data-service',()=>({
 	getAlpacaMarketDataOptions:mocks.getAlpacaOptions,
+	getAdditionalMarketProviderKeys:()=>({twelveDataApiKey:'',alphaVantageApiKey:'',fmpApiKey:'',productionLicenseConfirmed:false}),
 	getMarketHistoryWithFallback:mocks.getHistory,
 }));
 
@@ -60,6 +61,7 @@ describe('market history route errors',()=>{
 			'ytd',
 			'server-key',
 			undefined,
+			{twelveDataApiKey:'',alphaVantageApiKey:'',fmpApiKey:'',productionLicenseConfirmed:false},
 		);
 		expect((await GET(request('invalid'),{params:Promise.resolve({symbol:'AAPL'})})).status).toBe(400);
 	});

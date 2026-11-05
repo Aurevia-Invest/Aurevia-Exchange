@@ -1,7 +1,7 @@
 import {NextResponse} from 'next/server';
 import {getMarketAsset,MarketDataError,TIMEFRAMES,type MarketHistoryDiagnostics,type TimeframeId} from '@/lib/live-market';
 import {getServerConfiguration} from '@/lib/config/env';
-import {getAlpacaMarketDataOptions,getMarketHistoryWithFallback} from '@/lib/market-data-service';
+import {getAdditionalMarketProviderKeys,getAlpacaMarketDataOptions,getMarketHistoryWithFallback} from '@/lib/market-data-service';
 
 export const dynamic='force-dynamic';
 export const revalidate=0;
@@ -14,7 +14,7 @@ export async function GET(request:Request,{params}:{params:Promise<{symbol:strin
   if(!TIMEFRAMES.some(timeframe=>timeframe.id===requested))return NextResponse.json({error:'Unsupported timeframe.'},{status:400});
   try{
     const config=getServerConfiguration();
-    const history=await getMarketHistoryWithFallback(asset,requested as TimeframeId,config.marketData.finnhubApiKey,getAlpacaMarketDataOptions(config.execution));
+    const history=await getMarketHistoryWithFallback(asset,requested as TimeframeId,config.marketData.finnhubApiKey,getAlpacaMarketDataOptions(config.execution),getAdditionalMarketProviderKeys(config.marketData));
     return NextResponse.json(history,{headers:{'Cache-Control':'public, s-maxage=15, stale-while-revalidate=30'}});
   }catch(error){
     const status=error instanceof MarketDataError?error.status:502;

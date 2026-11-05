@@ -9,7 +9,7 @@ Aurevia Exchange is a Next.js application using TypeScript, PostgreSQL, Prisma, 
 - JWT sessions with USER/ADMIN role enforcement
 - KYC profile submission, private identity-document uploads, and administrator review states
 - Profile and account settings, including password-confirmed account deletion
-- 2FA security flag
+- Authenticator-based two-factor sign-in, one-time recovery codes, and per-device session controls
 - Live dashboard with cash equity and open positions
 - Realtime market ticker
 - Trading terminal with Market, Limit and Stop orders
@@ -89,15 +89,23 @@ This expansion does not add voice processing, a document/OCR provider, external 
 
 DEMO and REAL are mutually exclusive active modes backed by separate Aurevia ledgers, balances, orders, funding requests, investments, and P/L. DEMO orders use Aurevia's internal simulator. New REAL trade orders are submitted only to Alpaca Paper Trading when paper submission is configured and enabled; there is no live-broker endpoint. Aurevia's REAL wallet remains the user-specific ledger authority, while Alpaca is a shared paper account: provider cash/equity are not user wallet funds, and only each user's confirmed, linked executions are attributed to their paper positions. REAL paper order commitments reduce that user's available trading and withdrawal balance without posting wallet debits or credits. Paper gains are not withdrawable. The optional administrator-configured Bitcoin reference address on the deposit page is display-only: Aurevia cannot receive, custody, monitor, or verify Bitcoin. Do not send cryptocurrency based on this screen. BTC withdrawals use the user's saved, encrypted Bitcoin mainnet destination; optional TXID, sender, and date/time fields are user-submitted metadata, not evidence that a transfer occurred. An administrator must separately confirm actual external processing and record the outbound TXID before a withdrawal can complete or debit the ledger. REAL BTC deposits remain subject to separate administrator review and an explicitly entered USD credit amount. Administrators can also post audited, mode-specific paper credits directly, with a printable ledger receipt. Live brokerage, payment processing, BTC custody, and automatic external money movement are not enabled. Identity eligibility remains subject to administrator review and existing per-user funding controls.
 
-Two-factor authentication is currently disabled. The legacy database flag is not treated as protection, the profile API reports it as unavailable, and attempts to enable it are rejected until enrollment, login challenges, recovery, and reauthentication are implemented.
+Authenticator-based two-factor authentication is available when the server-only `TOTP_ENCRYPTION_KEY` is configured. Settings enrollment requires a password and a valid authenticator code before activation; login challenges accept an authenticator or single-use recovery code, and TOTP replay is rejected. Legacy `twoFactorEnabled` flags are not treated as protection and are cleared by the security migration so users can enroll through Settings > Security.
 
 Akedly V2 is used only for phone verification after sign-in in the KYC flow; it is not part of account registration. A user can create an account without a phone OTP or third-party verification provider. KYC phone verification is separate from administrator review of identity documents and tier requests. Signed Akedly results are verified against the raw request body with the Svix SDK. For an unsigned V2 verification-result webhook, Aurevia uses only its attempt ID to perform a server-authenticated transaction-status lookup; unsigned event webhooks are rejected. Redirect parameters are hints, never verification evidence. The `/api/webhooks/akedly` endpoint must be configured as the pipeline's backend callback. Live provider delivery and Render configuration require controlled staging verification; repository tests do not prove provider credentials or delivery. KYC status emails use a durable outbox and generic notices; email delivery never changes KYC status. Password reset remains email-only. Customer APIs reject administrator sessions, administrator APIs use a separate role guard, and authenticated administrators are redirected to the administration console. Verified personal profile fields become read-only for two calendar months after identity approval; profile photos remain independently changeable, and users can contact support for corrections to protected identity details.
 
 ## Requirements
 
-- Node.js >=20.19 and <21, >=22.13 and <23, or 24+
+- Node.js >=22.13 and <23
 - Docker Desktop or PostgreSQL 15+
 - npm
+
+## Project-local browser tools
+
+From `aurevia/`, run `npm run tools:install` to install the locked application/dev dependencies and download Chromium into `tools/playwright/browsers/`. The `tools:verify` command prints the installed tool versions and local Chromium executable path, then launches Chromium headlessly. After a Codespaces rebuild, rerun `npm run tools:install`; the browser binary cache is intentionally ignored by Git and is restored by that command. A Codespace created from this repository also runs the install command automatically after container creation.
+
+On Linux, if the browser launch check reports missing shared libraries, run `npm run tools:install -- --with-deps` to install Playwright's documented OS packages as well as the browser. OS libraries are installed on the host/container, not stored in the repository. Browser smoke testing requires an already-running Aurevia server with its isolated/test database available: `npm run test:browser:smoke -- http://127.0.0.1:4310`. It checks the homepage in Chromium and the application's database-backed health endpoint. `npm run test:e2e:isolated` runs the full Playwright suite against its disposable local database.
+
+Browser binaries are not installed during `npm ci`, `npm run build`, or Render deployment. Keep `tools:install` and browser smoke/E2E commands for local development, Codespaces, or CI; this avoids adding browser binaries to production deployments.
 
 ## Isolated browser tests
 
@@ -105,7 +113,7 @@ Run `npm run test:e2e:isolated` with Docker available. The command starts a disp
 
 The isolated database bootstraps only the minimal Supabase Storage tables, private bucket metadata, and database roles required by the Storage-policy migration. The Playwright application process has Supabase URL/key configuration cleared, so file workflows fail closed and cannot access the shared Storage service. The isolated runner reserves distinct free loopback ports for the app and mock provider to avoid collisions with unrelated services. `npm run test:e2e` by itself continues to reject non-local or mismatched database URLs.
 
-Playwright runs with two workers. Public-route and responsive-layout checks are in a separate spec so they can run alongside the shared-fixture application suite; the latter remains sequential to prevent races against its seeded accounts.
+Playwright runs with one worker because integration tests share mutable database fixtures and authentication sessions. Public-route and responsive-layout checks are kept in a separate spec from the shared-fixture application suite.
 
 ## One-time account cleanup
 
@@ -393,8 +401,8 @@ POST /api/kyc
 Before any real-money use, add and independently verify:
 
 - Managed PostgreSQL with backups and point-in-time recovery
-- Distributed rate limiting rather than process-memory rate limiting
-- TOTP/WebAuthn 2FA with recovery codes
+- Distributed rate limiting for remaining process-local application limits (authentication verification uses atomic database-backed limits)
+- Optional WebAuthn/passkey sign-in (the compatible packages are installed but passkeys are not enabled)
 - Email/phone verification
 - Independent KYC verification provider and document malware scanning
 - AML and sanctions screening
@@ -456,7 +464,7 @@ The current source includes:
 
 ## Verification evidence
 
-A final verification run completed successfully: `npm run typecheck`; `npm test` (33 files, 166 tests); `npm run build`; `npm run test:e2e:isolated` (369 Playwright tests against disposable loopback PostgreSQL, with all 29 local migrations); `npm run lint`; `npx prisma validate`; and `npm audit --audit-level=high` (zero vulnerabilities). Vitest 4 addresses advisories in the prior test runner; Tailwind CSS 4 requires Safari 16.4+, Chrome 111+, or Firefox 128+; and the Next lint-plugin dependency tree uses ESLint's compatibility shim and a scoped patched `glob` override. Receipt image/PDF export uses a renderer that supports Tailwind's modern CSS color functions. The isolated E2E harness removed its temporary database container. No production migration or deployment was performed.
+Run verification from `aurevia/` with `npm run lint`, `npm run typecheck`, `npm test`, `npm run tools:verify`, `npm run build`, and `npm run test:e2e:isolated`. The E2E runner provisions and removes a disposable loopback-only PostgreSQL database; it clears shared database and Supabase credentials before starting the application. Chromium binaries are restored by `npm run tools:install` and remain ignored by Git.
 
 This verification does not clear production for release. The last read-only migration-status check found `20261019103000_alpaca_paper_order_account` and `20261019120000_btc_funding_and_paper_buying_power` unapplied in the configured database, while its history recorded `20261013110000_payment_method_network`, which is absent from this checkout and Git history. Reconcile that history with the database owner and review existing BTC transaction references for duplicates before considering the partial unique index; do not mark migrations applied or run SQL until the intended migration contents and production data are verified and an authorized migration plan is approved. The additional additive migration `20261027100000_alpaca_paper_execution_reconciliation` was not applied. Alpaca Paper account retrieval and order submission have not been verified with configured credentials; keep paper submission disabled until credentials, enablement, migration status, and an isolated end-to-end paper test are confirmed. Live execution remains disabled.
 
@@ -499,3 +507,12 @@ This revision incorporates the recurring issues identified during the Aurevia de
 6. Login: failed authentication shows an error and does not silently hang.
 7. Mobile: navigation opens as an overlay and content remains within the viewport.
 8. Branding: supplied Aurevia logo is loaded from the app's public assets.
+# Optional market-data providers
+
+The market-data adapters use the providers' documented HTTPS APIs through the application's existing server-side `fetch` pattern; no additional provider SDKs are needed. Finnhub and Alpaca continue to work as before. Optional fallback adapters are available for Twelve Data (stocks, forex, and crypto), Alpha Vantage (stocks), and Financial Modeling Prep (stocks). Unsupported instrument categories are not sent to these providers; exchange indices continue to use existing providers or the internal reference feed.
+
+Add provider API keys only as server environment variables. In Render, open **Dashboard → your Aurevia web service → Environment → Environment Variables**, add any of `FINNHUB_API_KEY`, `TWELVE_DATA_API_KEY`, `ALPHA_VANTAGE_API_KEY`, and `FMP_API_KEY`, then save. Do not use `NEXT_PUBLIC_*` names, source files, GitHub variables, or browser code for these credentials. After verifying the provider's plan, market-data licensing, and display rights for your intended use, set `MARKET_DATA_DISPLAY_LICENSES_CONFIRMED=true` to allow the new fallback adapters in production. Leave it false until that review is complete. Saving Render environment settings triggers a service redeploy; no deployment is performed by this repository change.
+
+The authenticated admin provider-status panel tests each configured provider with a real, server-side AAPL quote request. It reports `CONNECTED` only after a successful response, and never returns API key values. It reports `CONFIGURED`, `NOT_CONFIGURED`, `ERROR`, or `LICENSE_REVIEW_REQUIRED` otherwise. A successful test demonstrates authentication and response parsing, not subscription entitlement, licensing approval, or guaranteed ongoing availability.
+
+Provider usage is cached and rate-limited conservatively (Twelve Data: one request per 8 seconds; FMP: one per 12 seconds; Alpha Vantage: one per hour, to stay within its commonly documented 25-request/day free quota). These are per-process limits, not a shared quota coordinator across multiple Render instances. Alpha Vantage and FMP adapters supply daily history only; Twelve Data can provide supported intraday and daily intervals. Provider plans may impose stricter limits, symbol entitlements, attribution, delayed data, or licensing terms. Verify your plan before enabling production usage.

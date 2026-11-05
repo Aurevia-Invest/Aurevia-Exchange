@@ -52,6 +52,7 @@ describe('password recovery',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
 		vi.stubEnv('NEXT_PUBLIC_APP_URL','https://aurevia.test');
+		vi.stubEnv('RENDER_EXTERNAL_URL','');
 		mocks.userFindFirst.mockResolvedValue(null);
 		mocks.resetFindUnique.mockResolvedValue(null);
 		mocks.resetUpdateMany.mockResolvedValue({count:1});
@@ -175,9 +176,10 @@ describe('password recovery',()=>{
 		warning.mockRestore();
 	});
 
-	it('rejects loopback HTTP reset URLs in production',async()=>{
+	it.each(['localhost','127.0.0.1','127.0.0.2','[::1]','[::ffff:7f00:1]'])('rejects loopback HTTP reset URLs in production (%s)',async(host)=>{
 		vi.stubEnv('NODE_ENV','production');
-		vi.stubEnv('NEXT_PUBLIC_APP_URL','http://localhost:3000');
+		vi.stubEnv('NEXT_PUBLIC_APP_URL',`http://${host}:3000`);
+		vi.stubEnv('RENDER_EXTERNAL_URL','https://aurevia.onrender.com');
 		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
 
 		const response=await requestReset(request('/api/password-reset/request',{email:'person@example.invalid'}));

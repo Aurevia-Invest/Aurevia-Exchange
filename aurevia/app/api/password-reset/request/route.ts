@@ -1,4 +1,5 @@
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
+import {isIP} from 'node:net';
 import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
 import {trustedProxyClientIp} from '@/lib/request-ip';
@@ -17,7 +18,26 @@ function getClientIp(request:Request){
 	return trustedProxyClientIp(request)||'unknown';
 }
 
+function isLoopbackHostname(hostname:string){
+	const host=hostname.toLowerCase().replace(/^\[|\]$/g,'').replace(/\.$/,'');
+	if(host==='localhost'||host.endsWith('.localhost'))return true;
+	const version=isIP(host);
+	if(version===4)return Number(host.split('.')[0])===127;
+	if(version!==6)return false;
+	if(host==='::1')return true;
+	const mappedIpv4=/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
+	if(mappedIpv4)return isIP(mappedIpv4[1])===4&&Number(mappedIpv4[1].split('.')[0])===127;
+	const mappedIpv4Hex=/^::ffff:([0-9a-f]{1,4}):[0-9a-f]{1,4}$/i.exec(host);
+	return Boolean(mappedIpv4Hex&&(Number.parseInt(mappedIpv4Hex[1],16)>>>8)===127);
+}
+
+function isLoopbackOrigin(value:string){
+	try{return isLoopbackHostname(new URL(value).hostname)}catch{return false}
+}
+
 function getPasswordResetUrl(){
+	const explicitlyConfiguredOrigin=process.env.NEXT_PUBLIC_APP_URL||process.env.NEXTAUTH_URL;
+	if(process.env.NODE_ENV==='production'&&explicitlyConfiguredOrigin&&isLoopbackOrigin(explicitlyConfiguredOrigin))return null;
 	const renderUrls=resolveRenderApplicationUrls(process.env);
 	const configuredOrigin=renderUrls?.publicAppUrl||process.env.NEXT_PUBLIC_APP_URL||process.env.NEXTAUTH_URL||process.env.RENDER_EXTERNAL_URL;
 	if(!configuredOrigin)return null;
@@ -25,8 +45,8 @@ function getPasswordResetUrl(){
 		const origin=new URL(configuredOrigin);
 		const isLocalDevelopment=process.env.NODE_ENV!=='production'
 			&&origin.protocol==='http:'
-			&&['localhost','127.0.0.1','[::1]'].includes(origin.hostname);
-		if((origin.protocol!=='https:'&&!isLocalDevelopment)||origin.username||origin.password||origin.search||origin.hash)return null;
+			&&isLoopbackHostname(origin.hostname);
+		if((origin.protocol!=='https:'&&!isLocalDevelopment)||(process.env.NODE_ENV==='production'&&isLoopbackHostname(origin.hostname))||origin.username||origin.password||origin.search||origin.hash)return null;
 		return new URL('/reset-password',origin.origin);
 	}catch{
 		return null;

@@ -1,8 +1,9 @@
-import {afterEach,describe,expect,it,vi} from 'vitest';
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 vi.mock('server-only',()=>({}));
 import {AlpacaCryptoProvider,IndividualAlpacaTradingProvider,buildAlpacaCryptoClient,createIndividualTradingApiProviderFromEnvironment,getAlpacaPaperAccountHealth} from '../lib/providers/alpaca-crypto-provider';
 import {AlpacaCryptoMarketDataProvider} from '../lib/providers/alpaca-crypto.market-data';
 
+beforeEach(()=>vi.stubEnv('ALPACA_PAPER_ORDERS_ENABLED','false'));
 afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals()});
 
 describe('Alpaca crypto provider safety',()=>{
@@ -97,9 +98,15 @@ describe('Alpaca crypto provider safety',()=>{
 
 	it('distinguishes invalid paper credentials and incomplete configuration without order requests',async()=>{
 		for(const [name,value] of Object.entries({ALPACA_PROVIDER:'alpaca',ALPACA_TRADING_BASE_URL:'https://paper-api.alpaca.markets',ALPACA_API_KEY:'test-key',ALPACA_SECRET_KEY:'test-secret'}))vi.stubEnv(name,value);
+		vi.stubEnv('ALPACA_PAPER_ORDERS_ENABLED','true');
 		const fetcher=vi.fn().mockResolvedValue(new Response('{}',{status:401}));
 		vi.stubGlobal('fetch',fetcher);
-		await expect(getAlpacaPaperAccountHealth()).resolves.toMatchObject({status:'AUTHENTICATION_FAILED',connected:false,executionEnabled:false});
+		await expect(getAlpacaPaperAccountHealth()).resolves.toMatchObject({
+			status:'AUTHENTICATION_FAILED',
+			connected:false,
+			paperOrdersEnabled:true,
+			executionEnabled:false,
+		});
 
 		vi.stubEnv('ALPACA_TRADING_BASE_URL','https://api.alpaca.markets');
 		await expect(getAlpacaPaperAccountHealth()).resolves.toMatchObject({status:'MISCONFIGURED',configured:false,mode:null});

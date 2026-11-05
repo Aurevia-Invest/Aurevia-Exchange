@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "bottleneck": "^2.19.5",
+    "lru-cache": "^11.5.3",
+    "p-retry": "^9.0.0"
+  }
+}

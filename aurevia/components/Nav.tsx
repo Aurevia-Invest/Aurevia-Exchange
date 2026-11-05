@@ -243,7 +243,7 @@ export default function Nav(){
    <Link href="/markets" aria-current={active('/markets')?'page':undefined} className={active('/markets')?'is-active':''}><LineChart size={20} strokeWidth={1.8}/><span>Markets</span></Link>
    <Link href="/trade" aria-label="Trade markets" aria-current={active('/trade')?'page':undefined} className={`user-bottom-trade ${active('/trade')?'is-active':''}`}><ArrowLeftRight size={22} strokeWidth={2}/><span>Trade</span></Link>
    <Link href="/portfolio" aria-current={active('/portfolio')?'page':undefined} className={active('/portfolio')?'is-active':''}><ChartNoAxesCombined size={20} strokeWidth={1.8}/><span>Portfolio</span></Link>
-   <button type="button" className={open?'is-active':''} aria-label="Open account navigation menu" aria-expanded={open} aria-controls="user-more-menu" onClick={()=>setOpen(value=>!value)}><MoreHorizontal size={20} strokeWidth={1.8}/><span>More</span></button>
+   <button type="button" className={open?'is-active':''} aria-label={open?'Close More navigation':'More navigation'} aria-expanded={open} aria-controls="user-more-menu" onClick={()=>setOpen(value=>!value)}><MoreHorizontal size={20} strokeWidth={1.8}/><span>More</span></button>
   </nav>
   {open&&<button type="button" className="user-more-backdrop" aria-label="Close More menu" tabIndex={-1} onClick={close}/>}
   <section ref={userNavRef} id="user-more-menu" className="user-more-menu" role="dialog" aria-modal={open||undefined} aria-labelledby="user-more-title" hidden={!open}>

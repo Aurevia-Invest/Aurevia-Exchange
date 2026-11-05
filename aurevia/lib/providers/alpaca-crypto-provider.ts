@@ -536,7 +536,7 @@ export async function getAlpacaPaperAccountHealth() {
     configured,
     selected,
     mode: paperEndpoint ? 'PAPER' as const : null,
-    executionEnabled: paperOrdersEnabled,
+    executionEnabled: paperOrdersEnabled && status === 'AVAILABLE',
     paperOrdersEnabled,
     liveTradingEnabled: false as const,
     diagnosticCode,

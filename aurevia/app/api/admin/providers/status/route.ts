@@ -5,6 +5,8 @@ import {getAlpacaMarketDataOptions} from '@/lib/market-data-service';
 import {getServerConfiguration} from '@/lib/config/env';
 import {getInternalSimulationHealth} from '@/lib/providers/simulation-health';
 import {getAlpacaPaperAccountHealth} from '@/lib/providers/alpaca-crypto-provider';
+import {getAdditionalMarketProviderKeys} from '@/lib/market-data-service';
+import {getMarketProviderReadiness} from '@/lib/market-data/provider-manager';
 
 export const dynamic='force-dynamic';
 
@@ -45,11 +47,12 @@ export async function GET(){
 		await requireAdmin();
 		const configuration=getServerConfiguration();
 		const alpacaData=getAlpacaMarketDataOptions(configuration.execution);
-		const [health,marketProvider,alpacaPaperAccount,historicalData]=await Promise.all([
+		const [health,marketProvider,alpacaPaperAccount,historicalData,additionalProviders]=await Promise.all([
 			getInternalSimulationHealth(true),
 			getLiveMarketProviderStatus(configuration.marketData.finnhubApiKey,alpacaData),
 			getAlpacaPaperAccountHealth(),
 			historicalDataHealth(configuration.marketData.finnhubApiKey,alpacaData),
+			getMarketProviderReadiness(getAdditionalMarketProviderKeys(configuration.marketData)),
 		]);
 		return NextResponse.json({
 			checkedAt:health.checkedAt,
@@ -62,6 +65,7 @@ export async function GET(){
 				alpacaStatus:marketProvider.alpacaStatus,
 				fallbackProvider:marketProvider.fallbackProvider,
 				historicalData,
+				additionalProviders,
 				usedForOrderExecution:false,
 			},
 			identity:{status:'ADMIN_REVIEW_ONLY',adminReviewAvailable:'AVAILABLE',externalVerification:'DISABLED'},

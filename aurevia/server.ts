@@ -20,6 +20,14 @@ if(renderApplicationUrls){
 }
 const dev=process.env.NODE_ENV!=='production';
 const port=Number(process.env.PORT||3000);
+if(dev){
+	const localAppUrl=`http://localhost:${port}`;
+	if((process.env.NEXTAUTH_URL&&process.env.NEXTAUTH_URL!==localAppUrl)||(process.env.NEXT_PUBLIC_APP_URL&&process.env.NEXT_PUBLIC_APP_URL!==localAppUrl)){
+		console.warn('Using local application URLs in development; ignoring configured URLs.');
+	}
+	process.env.NEXTAUTH_URL=localAppUrl;
+	process.env.NEXT_PUBLIC_APP_URL=localAppUrl;
+}
 if(!process.env.NEXTAUTH_SECRET){
 	if(!dev){
 		console.error('Missing required production configuration: NEXTAUTH_SECRET.');

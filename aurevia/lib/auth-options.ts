@@ -63,7 +63,7 @@ export const authOptions:NextAuthOptions={
           }});
         }catch(error){console.warn(`Login audit write failed (${safeAuditError(error)}).`)}
       };
-      try{rateLimit(`credential-login:${ipAddress||'unknown'}`,20,15*60_000)}catch{await writeLoginAudit('FAILED',undefined,undefined,'RATE_LIMITED');return null}
+      const ipAttemptKey=`credential-login:${ipAddress||'unknown'}`;
       const serverConfig=getServerConfiguration();
       const authConfig=serverConfig.auth;
       const {isAdminUsername,lookupEmail}=resolveCredentialLookup(username,email,authConfig.adminUsername,authConfig.adminEmail,c?.adminLogin==='true');
@@ -87,21 +87,31 @@ export const authOptions:NextAuthOptions={
         },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
       }
       if(!u||u.status!=='ACTIVE'){
+        try{rateLimit(ipAttemptKey,20,15*60_000)}catch{
+          await writeLoginAudit('FAILED',u?.id,undefined,'RATE_LIMITED');
+          return null;
+        }
         await writeLoginAudit('FAILED',u?.id,undefined,!u?'ACCOUNT_NOT_FOUND':'ACCOUNT_INACTIVE');
         return null;
       }
       const accountAttemptKey=`credential-login-account:${u.id}`;
-      try{await persistentRateLimit(accountAttemptKey,12,15*60_000)}catch(error){
-        if(!(error instanceof RateLimitError))throw error;
-        await writeLoginAudit('FAILED',u.id,undefined,'RATE_LIMITED');
-        try{await createNotification(db,{userId:u.id,type:NotificationType.SECURITY,title:'Suspicious sign-in attempts',message:'Repeated unsuccessful sign-in attempts were detected. If you do not recognize this activity, change your password and review active sessions.',dedupeKey:`security:${u.id}:login-rate-limited:${Math.floor(Date.now()/900_000)}`,actionUrl:'/settings#security'});}catch{console.warn('Unable to persist authentication security notification.')}
-        return null;
-      }
       const usesConfiguredAdminPassword=!!authConfig.adminEmail&&lookupEmail.toLowerCase()===authConfig.adminEmail.toLowerCase();
       const ok=usesConfiguredAdminPassword
         ?matchesConfiguredAdminPassword(password,authConfig.adminPassword)
         :await bcrypt.compare(password,u.passwordHash);
-      if(!ok){await writeLoginAudit('FAILED',u.id,undefined,'INVALID_CREDENTIALS');return null;}
+      if(!ok){
+        try{
+          rateLimit(ipAttemptKey,20,15*60_000);
+          await persistentRateLimit(accountAttemptKey,12,15*60_000);
+        }catch(error){
+          if(!(error instanceof RateLimitError))throw error;
+          await writeLoginAudit('FAILED',u.id,undefined,'RATE_LIMITED');
+          try{await createNotification(db,{userId:u.id,type:NotificationType.SECURITY,title:'Suspicious sign-in attempts',message:'Repeated unsuccessful sign-in attempts were detected. If you do not recognize this activity, change your password and review active sessions.',dedupeKey:`security:${u.id}:login-rate-limited:${Math.floor(Date.now()/900_000)}`,actionUrl:'/settings#security'});}catch{console.warn('Unable to persist authentication security notification.')}
+          return null;
+        }
+        await writeLoginAudit('FAILED',u.id,undefined,'INVALID_CREDENTIALS');
+        return null;
+      }
       if(isAdminUsername&&u.role!=='ADMIN'){await writeLoginAudit('FAILED',u.id,undefined,'ADMIN_ROLE_REQUIRED');return null;}
       const now=new Date();
       await clearPersistentRateLimit(accountAttemptKey);

@@ -10,6 +10,9 @@ const authMocks=vi.hoisted(()=>({
 	auditCreate:vi.fn(),
 	securitySessionFindFirst:vi.fn(),
 	securitySessionCreate:vi.fn(),
+	rateLimit:vi.fn(),
+	persistentRateLimit:vi.fn(),
+	clearPersistentRateLimit:vi.fn(),
 }));
 
 vi.mock('next-auth/providers/credentials',()=>({default:(configuration:unknown)=>configuration}));
@@ -19,8 +22,15 @@ vi.mock('@/lib/db',()=>({db:{
 	auditLog:{create:authMocks.auditCreate},
 }}));
 vi.mock('@/lib/notifications',()=>({createNotification:vi.fn()}));
-vi.mock('@/lib/rate-limit',()=>({rateLimit:vi.fn(),clearRateLimit:vi.fn()}));
-vi.mock('@/lib/security-rate-limit',()=>({persistentRateLimit:vi.fn(),clearPersistentRateLimit:vi.fn()}));
+vi.mock('@/lib/rate-limit',()=>({
+	rateLimit:authMocks.rateLimit,
+	clearRateLimit:vi.fn(),
+	RateLimitError:class extends Error{constructor(){super('RATE_LIMITED')}},
+}));
+vi.mock('@/lib/security-rate-limit',()=>({
+	persistentRateLimit:authMocks.persistentRateLimit,
+	clearPersistentRateLimit:authMocks.clearPersistentRateLimit,
+}));
 vi.mock('@/lib/config/env',()=>({getServerConfiguration:()=>({auth:{
 	adminUsername:'administrator',
 	adminEmail:'admin@example.invalid',
@@ -35,6 +45,9 @@ beforeEach(()=>{
 	authMocks.auditCreate.mockResolvedValue({});
 	authMocks.securitySessionFindFirst.mockResolvedValue(null);
 	authMocks.securitySessionCreate.mockResolvedValue({});
+	authMocks.rateLimit.mockResolvedValue(undefined);
+	authMocks.persistentRateLimit.mockResolvedValue(undefined);
+	authMocks.clearPersistentRateLimit.mockResolvedValue(undefined);
 });
 
 async function authorize(credentials:Record<string,string>){
@@ -112,9 +125,43 @@ describe('credentials authorization',()=>{
 			userId:'mfa-user',
 			expiresAt:expect.any(Date),
 		})});
+		expect(authMocks.rateLimit).not.toHaveBeenCalled();
+		expect(authMocks.persistentRateLimit).not.toHaveBeenCalled();
+		expect(authMocks.clearPersistentRateLimit).toHaveBeenCalledWith('credential-login-account:mfa-user');
 		expect(authOptions.providers[0]).toMatchObject({
 			credentials:expect.not.objectContaining({secondFactorCode:expect.anything()}),
 		});
+	});
+
+	it('counts only incorrect passwords toward sign-in rate limits',async()=>{
+		authMocks.userFindFirst.mockResolvedValue({
+			id:'user-1',email:'user@example.invalid',name:'User',
+			passwordHash:await bcrypt.hash('CorrectPassword42',4),role:'USER',accountMode:'DEMO',status:'ACTIVE',
+			activeSessionId:null,activeSessionUpdatedAt:null,
+		});
+
+		await expect(authorize({username:'user@example.invalid',email:'user@example.invalid',password:'WrongPassword42'})).resolves.toBeNull();
+
+		expect(authMocks.rateLimit).toHaveBeenCalledWith('credential-login:unknown',20,15*60_000);
+		expect(authMocks.persistentRateLimit).toHaveBeenCalledWith('credential-login-account:user-1',12,15*60_000);
+		expect(authMocks.securitySessionCreate).not.toHaveBeenCalled();
+	});
+
+	it('allows valid credentials through even if a prior failed attempt exhausted the IP limit',async()=>{
+		const password='CorrectPassword42';
+		authMocks.rateLimit.mockImplementation(()=>{throw new Error('RATE_LIMITED')});
+		authMocks.persistentRateLimit.mockRejectedValue(new Error('RATE_LIMITED'));
+		authMocks.userFindFirst.mockResolvedValue({
+			id:'user-1',email:'user@example.invalid',name:'User',
+			passwordHash:await bcrypt.hash(password,4),role:'USER',accountMode:'DEMO',status:'ACTIVE',
+			activeSessionId:null,activeSessionUpdatedAt:null,
+		});
+
+		await expect(authorize({username:'user@example.invalid',email:'user@example.invalid',password})).resolves.toMatchObject({id:'user-1'});
+
+		expect(authMocks.rateLimit).not.toHaveBeenCalled();
+		expect(authMocks.persistentRateLimit).not.toHaveBeenCalled();
+		expect(authMocks.securitySessionCreate).toHaveBeenCalledOnce();
 	});
 });
 

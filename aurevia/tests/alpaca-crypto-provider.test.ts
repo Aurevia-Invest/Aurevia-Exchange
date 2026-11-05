@@ -24,6 +24,7 @@ describe('Alpaca crypto provider safety',()=>{
 			ALPACA_PROVIDER:'alpaca',
 			ALPACA_BASE_URL:'https://paper-api.alpaca.markets/v2',
 			ALPACA_API_KEY:'test-key',
+			ALPACA_SECRET_KEY:'',
 			ALPACA_API_SECRET:'test-secret',
 			REAL_EXECUTION_ENABLED:'false',
 		}))vi.stubEnv(name,value);
@@ -73,6 +74,7 @@ describe('Alpaca crypto provider safety',()=>{
 			ALPACA_PROVIDER:'alpaca',
 			ALPACA_BASE_URL:'https://paper-api.alpaca.markets/v2',
 			ALPACA_API_KEY:'test-key',
+			ALPACA_SECRET_KEY:'',
 			ALPACA_API_SECRET:'test-secret',
 			REAL_EXECUTION_ENABLED:'false',
 		}))vi.stubEnv(name,value);

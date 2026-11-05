@@ -45,8 +45,10 @@ export default function Login(){
 			const result=await signIn('credentials',{username:identifier,email:identifier,password,redirect:false});
 			if(result?.ok){
 				await update();router.replace(callbackUrl);router.refresh();
+			}else if(result?.error==='CredentialsSignin'){
+				setError('Email address or password is incorrect.');
 			}else{
-				setError('Email/username or password is incorrect.');
+				setError(translate('unableAuth'));
 			}
 		}catch{setError(translate('unableAuth'))}
 		finally{setBusy(false);}

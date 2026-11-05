@@ -35,7 +35,7 @@ const timeframes:Array<{value:PortfolioTimeframe;label:string}>=[
 	{value:'1Y',label:'1Y'},
 	{value:'ALL',label:'All'},
 ];
-const categoryColors=['#c9a45f','#829bb1','#79a990','#b4a178','#9eabb8','#d2ba82'];
+const categoryColors=['var(--theme-accent)','var(--theme-chart-2)','var(--theme-positive)','var(--theme-chart-3)','var(--theme-chart-4)','var(--theme-chart-5)'];
 
 function money(value:string|number|null|undefined){return value===null||value===undefined?'—':formatUsd(value);}
 function fundingAmount(value:string,currency:string){
@@ -45,11 +45,11 @@ function signed(value:string|number|null|undefined){if(value===null||value===und
 function percentage(value:string|number|null|undefined){if(value===null||value===undefined)return 'Unavailable';const number=Number(value);return `${number>=0?'+':''}${number.toFixed(2)}%`;}
 function categoryColor(category:string,index:number){
 	const normalized=category.toLowerCase();
-	if(normalized.includes('crypto'))return '#c9a45f';
-	if(normalized.includes('equity')||normalized.includes('share'))return '#829bb1';
-	if(normalized.includes('gold'))return '#d2ba82';
-	if(normalized.includes('silver'))return '#9eabb8';
-	if(normalized.includes('cash'))return '#79a990';
+	if(normalized.includes('crypto'))return 'var(--theme-accent)';
+	if(normalized.includes('equity')||normalized.includes('share'))return 'var(--theme-chart-2)';
+	if(normalized.includes('gold'))return 'var(--theme-chart-3)';
+	if(normalized.includes('silver'))return 'var(--theme-chart-5)';
+	if(normalized.includes('cash'))return 'var(--theme-positive)';
 	return categoryColors[index%categoryColors.length];
 }
 function AssetIcon({category,name}:{category:string;name:string}){
@@ -178,12 +178,12 @@ export default function PortfolioExperience(){
 						{timeframes.map(item=><button type="button" key={item.value} className={timeframe===item.value?'is-active':''} aria-pressed={timeframe===item.value} onClick={()=>setTimeframe(item.value)}>{item.label}</button>)}
 					</div>
 					{performance.length>1?<div className="portfolio-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={performance} margin={{left:4,right:12,top:8,bottom:2}}>
-						<defs><linearGradient id="portfolioValueFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#d4a72c" stopOpacity={0.24}/><stop offset="100%" stopColor="#d4a72c" stopOpacity={0}/></linearGradient></defs>
-						<CartesianGrid stroke="rgba(218,225,216,.08)" vertical={false}/>
-						<XAxis dataKey="snapshotBucket" tickFormatter={value=>new Date(value).toLocaleDateString(undefined,{month:'short',day:'numeric'})} tick={{fill:'#92a096',fontSize:10}} axisLine={false} tickLine={false} minTickGap={24}/>
-						<YAxis width={78} tickFormatter={value=>formatUsd(Number(value))} tick={{fill:'#92a096',fontSize:10}} axisLine={false} tickLine={false}/>
-						<Tooltip content={<ChartTooltip/>} cursor={{stroke:'rgba(0,230,118,.35)',strokeDasharray:'4 4'}}/>
-						<Area type="monotone" dataKey="totalValue" stroke="#d4a72c" strokeWidth={2.5} fill="url(#portfolioValueFill)" activeDot={{r:4,fill:'#e8cc78',stroke:'#07110e',strokeWidth:2}}/>
+						<defs><linearGradient id="portfolioValueFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--theme-accent)" stopOpacity={0.24}/><stop offset="100%" stopColor="var(--theme-accent)" stopOpacity={0}/></linearGradient></defs>
+						<CartesianGrid stroke="var(--theme-chart-grid)" vertical={false}/>
+						<XAxis dataKey="snapshotBucket" tickFormatter={value=>new Date(value).toLocaleDateString(undefined,{month:'short',day:'numeric'})} tick={{fill:'var(--theme-chart-label)',fontSize:10}} axisLine={false} tickLine={false} minTickGap={24}/>
+						<YAxis width={78} tickFormatter={value=>formatUsd(Number(value))} tick={{fill:'var(--theme-chart-label)',fontSize:10}} axisLine={false} tickLine={false}/>
+						<Tooltip content={<ChartTooltip/>} cursor={{stroke:'var(--theme-positive)',strokeDasharray:'4 4'}}/>
+						<Area type="monotone" dataKey="totalValue" stroke="var(--theme-accent)" strokeWidth={2.5} fill="url(#portfolioValueFill)" activeDot={{r:4,fill:'var(--theme-accent)',stroke:'var(--theme-page)',strokeWidth:2}}/>
 					</AreaChart></ResponsiveContainer></div>:<p className="account-empty">{performance.length?'More than one recorded snapshot is needed to show a performance line.':'Recorded performance will appear after snapshots have been captured.'}</p>}
 					{performance.length>1&&<p className="portfolio-period-note">Showing {new Date(performance[0].snapshotBucket).toLocaleDateString()} – {new Date(performance[performance.length-1].snapshotBucket).toLocaleDateString()} from saved account snapshots.</p>}
 				</section>

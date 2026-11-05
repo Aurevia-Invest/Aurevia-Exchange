@@ -23,7 +23,7 @@ export default function AboutMe(){
 			</section>
 			<section className="account-panel card p-5" aria-labelledby="theme-policy-title">
 				<div className="account-panel-title"><div><h2 id="theme-policy-title">Theme</h2><p className="account-panel-subtitle">Choose the appearance used across the platform.</p></div><Palette size={18} className="gold" aria-hidden="true"/></div>
-				<div className="mt-4 flex flex-wrap items-center justify-between gap-4"><p className="text-sm leading-6 muted">Your light or dark theme is saved in this browser and applied across Aurevia Exchange.</p><ThemeToggle/></div>
+				<div className="mt-4 flex flex-wrap items-center justify-between gap-4"><p className="text-sm leading-6 muted">Your account theme is applied across Aurevia and syncs across devices.</p><ThemeToggle/></div>
 			</section>
 			<section className="account-panel card p-5" aria-labelledby="platform-policy-title">
 				<div className="account-panel-title"><div><h2 id="platform-policy-title">Platform policies</h2><p className="account-panel-subtitle">Read the broader platform terms and account information.</p></div><ShieldCheck size={18} className="gold" aria-hidden="true"/></div>

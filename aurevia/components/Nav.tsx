@@ -7,6 +7,7 @@ import {ArrowLeft,ArrowLeftRight,ArrowRight,Award,Bell,BookOpen,Bot,BriefcaseBus
 import {useEffect,useRef,useState} from 'react';
 import NotificationBell from '@/components/NotificationBell';
 import LanguageSelector from '@/components/LanguageSelector';
+import ThemeToggle from '@/components/ThemeToggle';
 import ProfileAvatar from '@/components/ProfileAvatar';
 import AccountTierBadge from '@/components/AccountTierBadge';
 import {useAccountTier} from '@/components/useAccountTier';
@@ -249,6 +250,7 @@ export default function Nav(){
   <section ref={userNavRef} id="user-more-menu" className="user-more-menu" role="dialog" aria-modal={open||undefined} aria-labelledby="user-more-title" hidden={!open}>
    <header className="user-more-heading"><div><span>ACCOUNT NAVIGATION</span><h2 id="user-more-title">More</h2></div><button type="button" className="user-more-close" aria-label="Close More menu" onClick={close}><X size={18}/></button></header>
    <div className="user-more-profile"><ProfileAvatar className="user-topbar-avatar" size={36} alt="Your profile picture"/><span><b>{data.user.name||data.user.email}</b><AccountTierBadge tier={tierLabel}/></span><Link href="/settings#profile" onClick={close}>Profile</Link></div>
+   <div className="user-more-theme"><span>Appearance</span><ThemeToggle/></div>
    <div className="user-more-groups">{visibleMoreMenuGroups.map(group=><section className="user-more-group" key={group.title} aria-label={group.title}><h3>{group.title}</h3>{group.links.map(({href,label,icon:Icon})=><Link href={href} key={href} aria-current={active(href)?'page':undefined} onClick={close}><Icon size={17} strokeWidth={1.7}/><span>{label}</span></Link>)}</section>)}
     {currentMode!=='DEMO'&&<section className="user-more-group" aria-label="Additional account pages"><h3>Additional</h3><Link href="/tax-services" aria-current={active('/tax-services')?'page':undefined} onClick={close}><FileText size={17}/><span>Tax services</span></Link></section>}
    </div>
@@ -298,6 +300,10 @@ export default function Nav(){
       <Link href="/support" onClick={close} aria-current={active('/support')?'page':undefined}>{translate('support')}</Link>
       <a className="nav-contact" href="tel:+12105047697" onClick={close}><PhoneCall size={16} aria-hidden="true"/><span><b>Call Support</b><small>+1 (210) 504-7697</small></span></a>
       <a className="nav-contact" href="mailto:aureviainvest@gmail.com" onClick={close}><Mail size={16} aria-hidden="true"/><span><b>Email</b><small>aureviainvest@gmail.com</small></span></a>
+     </section>
+     <section className="nav-menu-group nav-theme-selector" aria-label="Appearance">
+      <h2 className="nav-menu-section">APPEARANCE</h2>
+      <ThemeToggle/>
      </section>
      {status==='authenticated'&&data?.user&&<div className="nav-menu-tools">
       <div className="mode-switch-wrap">

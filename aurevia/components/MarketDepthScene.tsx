@@ -4,8 +4,9 @@ import {Canvas,useFrame,useThree} from '@react-three/fiber';
 import {useMemo,useRef} from 'react';
 import {ExtrudeGeometry,Path,Shape} from 'three';
 import type {Group} from 'three';
+import {useTheme} from '@/lib/theme-context';
 
-function AureviaEmblem(){
+function AureviaEmblem({premium}:{premium:boolean}){
 	const emblem=useRef<Group>(null);
 	const geometry=useMemo(()=>{
 		const shape=new Shape();
@@ -40,20 +41,20 @@ function AureviaEmblem(){
 
 	return <group ref={emblem} position={[0,0,.2]}>
 		<mesh geometry={geometry} castShadow receiveShadow>
-			<meshPhysicalMaterial color="#e2c47f" emissive="#754d14" emissiveIntensity={.36} metalness={.58} roughness={.24} clearcoat={.55} clearcoatRoughness={.28}/>
+			<meshPhysicalMaterial color={premium?'#9c7945':'#e2c47f'} emissive={premium?'#593d1a':'#754d14'} emissiveIntensity={.36} metalness={.58} roughness={.24} clearcoat={.55} clearcoatRoughness={.28}/>
 		</mesh>
 		<mesh rotation={[.72,.2,.16]}>
 			<torusGeometry args={[1.62,.012,5,96]}/>
-			<meshBasicMaterial color="#e0c99e" transparent opacity={.42}/>
+			<meshBasicMaterial color={premium?'#9c7945':'#e0c99e'} transparent opacity={.42}/>
 		</mesh>
 		<mesh rotation={[1.16,-.42,.45]}>
 			<torusGeometry args={[1.8,.008,4,96]}/>
-			<meshBasicMaterial color="#91b6a0" transparent opacity={.3}/>
+			<meshBasicMaterial color={premium?'#527887':'#91b6a0'} transparent opacity={.3}/>
 		</mesh>
 	</group>;
 }
 
-function MarketModel(){
+function MarketModel({premium}:{premium:boolean}){
 	const model=useRef<Group>(null);
 	const {viewport}=useThree();
 	const nodes=useMemo(()=>Array.from({length:24},(_,index)=>{
@@ -74,15 +75,17 @@ function MarketModel(){
 	});
 
 	return <group ref={model} position={[viewport.width*(compact?.48:.45),baseY,-1.5]} scale={compact?.58:.72}>
-		<AureviaEmblem/>
+		<AureviaEmblem premium={premium}/>
 		{nodes.map((position,index)=><mesh position={position} key={index}>
 			<sphereGeometry args={[index%5===0?.045:.026,8,8]}/>
-			<meshBasicMaterial color={index%5===0?'#e0c99e':'#8fb39a'} transparent opacity={index%5===0?.72:.48} depthWrite={false}/>
+			<meshBasicMaterial color={index%5===0?(premium?'#9c7945':'#e0c99e'):(premium?'#16865b':'#8fb39a')} transparent opacity={index%5===0?.72:.48} depthWrite={false}/>
 		</mesh>)}
 	</group>;
 }
 
 export default function MarketDepthScene({className=''}:{className?:string}){
+	const {theme}=useTheme();
+	const premium=theme==='premium-dashboard';
 	return <Canvas
 		className={`market-depth-canvas ${className}`}
 		aria-hidden="true"
@@ -91,8 +94,8 @@ export default function MarketDepthScene({className=''}:{className?:string}){
 		gl={{alpha:true,antialias:false,powerPreference:'low-power'}}
 		fallback={<div className={`market-depth-fallback ${className}`} aria-hidden="true"><span className="market-depth-fallback-mark">A<i>↑</i></span></div>}>
 		<ambientLight intensity={.48}/>
-		<pointLight position={[2,3,5]} intensity={3.5} color="#f0d596"/>
-		<pointLight position={[-4,-2,3]} intensity={1.4} color="#5e9d76"/>
-		<MarketModel/>
+		<pointLight position={[2,3,5]} intensity={3.5} color={premium?'#9c7945':'#f0d596'}/>
+		<pointLight position={[-4,-2,3]} intensity={1.4} color={premium?'#527887':'#5e9d76'}/>
+		<MarketModel premium={premium}/>
 	</Canvas>;
 }

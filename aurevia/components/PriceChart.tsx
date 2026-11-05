@@ -3,6 +3,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {CandlestickSeries,ColorType,createChart,type IChartApi,type ISeriesApi,type UTCTimestamp} from 'lightweight-charts';
 import {updateChartCandle,type ChartCandle} from '@/lib/chart-candles';
+import {readChartTheme} from '@/lib/chart-theme';
 
 type CandleSeries=ISeriesApi<'Candlestick'>;
 type CandleRow={ts?:string;time?:number;open:string|number;high:string|number;low:string|number;close:string|number;volume?:string|number|null};
@@ -20,20 +21,33 @@ export default function PriceChart({price,instrumentId,assetId,limit=500,running
 
 	useEffect(()=>{
 		if(!host.current)return;
+		const palette=readChartTheme();
 		const instance=createChart(host.current,{
 			autoSize:true,
-			layout:{background:{type:ColorType.Solid,color:'transparent'},textColor:'#82918a',fontFamily:'Avenir Next, Segoe UI, sans-serif',fontSize:11},
-			grid:{vertLines:{color:'rgba(130,145,138,.08)'},horzLines:{color:'rgba(130,145,138,.08)'}},
-			rightPriceScale:{borderColor:'rgba(130,145,138,.16)'},
-			timeScale:{borderColor:'rgba(130,145,138,.16)',timeVisible:true,secondsVisible:true},
+			layout:{background:{type:ColorType.Solid,color:'transparent'},textColor:palette.label,fontFamily:'Avenir Next, Segoe UI, sans-serif',fontSize:11},
+			grid:{vertLines:{color:palette.grid},horzLines:{color:palette.grid}},
+			rightPriceScale:{borderColor:palette.border},
+			timeScale:{borderColor:palette.border,timeVisible:true,secondsVisible:true},
 			localization:{priceFormatter:(value:number)=>value.toLocaleString(undefined,{maximumFractionDigits:value<10?6:2})},
 		});
 		const candleSeries=instance.addSeries(CandlestickSeries,{
-			upColor:'#31c48d',downColor:'#e15b64',borderVisible:false,wickUpColor:'#31c48d',wickDownColor:'#e15b64',
+			upColor:palette.positive,downColor:palette.negative,borderVisible:false,wickUpColor:palette.positive,wickDownColor:palette.negative,
 		});
 		chart.current=instance;
 		series.current=candleSeries;
+		const updateTheme=()=>{
+			const next=readChartTheme();
+			instance.applyOptions({
+				layout:{textColor:next.label},
+				grid:{vertLines:{color:next.grid},horzLines:{color:next.grid}},
+				rightPriceScale:{borderColor:next.border},
+				timeScale:{borderColor:next.border},
+			});
+			candleSeries.applyOptions({upColor:next.positive,downColor:next.negative,wickUpColor:next.positive,wickDownColor:next.negative});
+		};
+		window.addEventListener('aurevia-theme-change',updateTheme);
 		return()=>{
+			window.removeEventListener('aurevia-theme-change',updateTheme);
 			instance.remove();
 			chart.current=null;
 			series.current=null;

@@ -1,0 +1,383 @@
+html[data-theme-name="forest-green"]{
+	color-scheme:dark;
+	--theme-page:#07110D;
+	--theme-page-secondary:#0B1711;
+	--theme-surface:#122019;
+	--theme-surface-elevated:#18271E;
+	--theme-text:#F3F4ED;
+	--theme-text-secondary:#A1AFA4;
+	--theme-text-muted:#829188;
+	--theme-border:rgba(198,211,198,.16);
+	--theme-divider:rgba(198,211,198,.11);
+	--theme-accent:#C5A45F;
+	--theme-accent-hover:#D4B576;
+	--theme-accent-soft:rgba(197,164,95,.12);
+	--theme-positive:#34D399;
+	--theme-negative:#F87171;
+	--theme-warning:#E8BE68;
+	--theme-info:#86B9C1;
+	--theme-button:#C5A45F;
+	--theme-button-text:#10160F;
+	--theme-control:#09150F;
+	--theme-focus:rgba(212,167,44,.55);
+	--theme-nav:rgba(7,17,13,.94);
+	--theme-nav-text:#E5EBE5;
+	--theme-table:rgba(18,32,25,.86);
+	--theme-table-hover:rgba(197,164,95,.08);
+	--theme-dialog:#122019;
+	--theme-popover:#101B15;
+	--theme-chart-grid:rgba(161,175,164,.12);
+	--theme-chart-label:#A1AFA4;
+	--theme-chart-2:#86B9C1;
+	--theme-chart-3:#B59BD5;
+	--theme-chart-4:#F19A82;
+	--theme-chart-5:#A1AFA4;
+	--theme-skeleton:rgba(161,175,164,.12);
+	--theme-disabled:#718078;
+	--theme-selected:rgba(197,164,95,.16);
+	--theme-shadow:0 16px 42px rgba(0,0,0,.24);
+	--theme-scrollbar:#33483B;
+	--color-ink:var(--theme-page);
+	--color-panel:var(--theme-surface-elevated);
+	--color-muted:var(--theme-text-secondary);
+	--color-text-primary:var(--theme-text);
+	--color-gold:var(--theme-accent);
+	--color-profit:var(--theme-positive);
+	--color-loss:var(--theme-negative);
+	--color-border:var(--theme-border);
+	--color-surface:var(--theme-surface);
+	--color-surface-raised:var(--theme-surface-elevated);
+	--color-focus:var(--theme-focus);
+}
+
+html[data-theme-name="premium-dashboard"]{
+	color-scheme:light;
+	--theme-page:#F7F8F5;
+	--theme-page-secondary:#EFF2ED;
+	--theme-surface:#FFFFFF;
+	--theme-surface-elevated:#FAFBF8;
+	--theme-text:#17251D;
+	--theme-text-secondary:#647168;
+	--theme-text-muted:#77847B;
+	--theme-border:rgba(23,37,29,.12);
+	--theme-divider:rgba(23,37,29,.09);
+	--theme-accent:#9C7945;
+	--theme-accent-hover:#805F32;
+	--theme-accent-soft:rgba(156,121,69,.10);
+	--theme-positive:#16865B;
+	--theme-negative:#C94D4D;
+	--theme-warning:#946B22;
+	--theme-info:#527887;
+	--theme-button:#9C7945;
+	--theme-button-text:#FFFFFF;
+	--theme-control:#FFFFFF;
+	--theme-focus:rgba(156,121,69,.45);
+	--theme-nav:rgba(255,255,255,.96);
+	--theme-nav-text:#26372C;
+	--theme-table:#FFFFFF;
+	--theme-table-hover:#F5F6F1;
+	--theme-dialog:#FFFFFF;
+	--theme-popover:#FFFFFF;
+	--theme-chart-grid:rgba(23,37,29,.11);
+	--theme-chart-label:#647168;
+	--theme-chart-2:#527887;
+	--theme-chart-3:#80629B;
+	--theme-chart-4:#A65E52;
+	--theme-chart-5:#7D877C;
+	--theme-skeleton:rgba(23,37,29,.08);
+	--theme-disabled:#89938C;
+	--theme-selected:rgba(156,121,69,.12);
+	--theme-shadow:0 12px 32px rgba(23,37,29,.07);
+	--theme-scrollbar:#C5CDC4;
+	--color-ink:var(--theme-page);
+	--color-panel:var(--theme-surface);
+	--color-muted:var(--theme-text-secondary);
+	--color-text-primary:var(--theme-text);
+	--color-gold:var(--theme-accent);
+	--color-profit:var(--theme-positive);
+	--color-loss:var(--theme-negative);
+	--color-border:var(--theme-border);
+	--color-surface:var(--theme-surface);
+	--color-surface-raised:var(--theme-surface-elevated);
+	--color-focus:var(--theme-focus);
+}
+
+html[data-theme-name]{
+	background:var(--theme-page);
+	scrollbar-color:var(--theme-scrollbar) var(--theme-page-secondary);
+}
+html[data-theme-name] body{background:var(--theme-page);color:var(--theme-text)}
+html[data-theme-name] ::selection{background:var(--theme-selected);color:var(--theme-text)}
+html[data-theme-name] :is(a,button,input,select,textarea,summary):focus-visible{outline-color:var(--theme-focus)}
+html[data-theme-name] :is(.card,.account-panel,.account-card,.user-dashboard-panel,.user-market-card,.admin-panel,.admin-metric-card,.admin-quick-actions){
+	border-color:var(--theme-border);
+	background:var(--theme-surface);
+	color:var(--theme-text);
+	box-shadow:var(--theme-shadow);
+}
+html[data-theme-name] :is(.auth-card,.waitlist-card,.country-picker-dialog,.dialog-panel,.drawer-panel){
+	border-color:var(--theme-border);
+	background:var(--theme-dialog);
+	color:var(--theme-text);
+	box-shadow:var(--theme-shadow);
+}
+html[data-theme-name] :is(.account-page,.admin-main,.admin-content,.admin-dashboard){color:var(--theme-text)}
+html[data-theme-name] :is(.account-page h1,.account-page h2,.account-page h3,.account-page h4,.admin-main h1,.admin-main h2,.admin-main h3,.admin-main h4,.admin-panel h1,.admin-panel h2,.admin-panel h3){color:var(--theme-text)}
+html[data-theme-name] :is(.account-page .muted,.account-panel-subtitle,.account-heading p,.admin-panel p,.admin-panel td,.admin-panel th,.admin-metric-top,.admin-metric-bottom){color:var(--theme-text-secondary)}
+html[data-theme-name] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea,.input,.auth-input,.country-selector-trigger){
+	border-color:var(--theme-border);
+	background-color:var(--theme-control);
+	color:var(--theme-text);
+}
+html[data-theme-name] :is(input[type="date"],input[type="datetime-local"],input[type="time"]){color-scheme:inherit}
+html[data-theme-name] :is(input,textarea)::placeholder{color:var(--theme-text-muted)}
+html[data-theme-name] :is(.site-nav,.site-nav-user-shell,.user-topbar,.user-bottom-navigation,.admin-sidebar,.admin-topbar){
+	border-color:var(--theme-border);
+	background:var(--theme-nav);
+	color:var(--theme-text);
+}
+html[data-theme-name] :is(.brand,.nav-links a,.nav-links button,.user-topbar-identity b,.user-topbar-identity small,.admin-profile-copy b,.admin-topbar-heading>b){color:var(--theme-nav-text)}
+html[data-theme-name] :is(.nav-links a:hover,.nav-links button:hover,.nav-links a[aria-current="page"],.user-bottom-navigation a.is-active,.admin-command-group a[aria-current="page"]){
+	background:var(--theme-selected);
+	color:var(--theme-text);
+}
+html[data-theme-name] :is(.dropdown-panel,.admin-search-results,.user-market-results,.floating-support-panel,.admin-approval-dialog,.admin-modal,.modal-content){
+	border-color:var(--theme-border);
+	background:var(--theme-popover);
+	color:var(--theme-text);
+	box-shadow:var(--theme-shadow);
+}
+html[data-theme-name] :is(table,.admin-table,.admin-dashboard-table){background:var(--theme-table);color:var(--theme-text)}
+html[data-theme-name] :is(th,td,.admin-dashboard-table th,.admin-dashboard-table td){border-color:var(--theme-divider);color:var(--theme-text-secondary)}
+html[data-theme-name] :is(tbody tr:hover,.admin-dashboard-table tbody tr:hover){background:var(--theme-table-hover)}
+html[data-theme-name] :is(.btn-primary,.nav-cta,.admin-primary-action){border-color:var(--theme-accent);background:var(--theme-button);color:var(--theme-button-text)}
+html[data-theme-name] :is(.text-profit,.admin-metric-change){color:var(--theme-positive)}
+html[data-theme-name] :is(.text-loss,.admin-metric-change.is-down){color:var(--theme-negative)}
+html[data-theme-name] :is(.admin-empty-state,.account-empty,.empty-state,.loading-state){color:var(--theme-text-secondary)}
+html[data-theme-name] :is(.skeleton,.loading-skeleton){background:var(--theme-skeleton)}
+html[data-theme-name] :is(.admin-shell-chrome,.admin-main,.admin-content,.admin-dashboard){background:var(--theme-page)}
+html[data-theme-name] :is(.page-loading,.page-transition-loading){background:var(--theme-page);color:var(--theme-text)}
+html[data-theme-name] main[class~="bg-black"]{background-color:var(--theme-page)}
+html[data-theme-name] [class*="text-white/"],
+html[data-theme-name] [class*="text-slate-"],
+html[data-theme-name] [class*="text-gray-"],
+html[data-theme-name] [class*="text-zinc-"],
+html[data-theme-name] [class*="text-neutral-"]{color:var(--theme-text-secondary)}
+html[data-theme-name] [class~="text-white"],
+html[data-theme-name] [class~="text-slate-50"],
+html[data-theme-name] [class~="text-slate-100"],
+html[data-theme-name] [class~="text-slate-200"],
+html[data-theme-name] [class~="text-gray-50"],
+html[data-theme-name] [class~="text-gray-100"],
+html[data-theme-name] [class~="text-gray-200"]{color:var(--theme-text)}
+html[data-theme-name] [class~="bg-white"],
+html[data-theme-name] [class*="bg-white/"],
+html[data-theme-name] [class*="bg-slate-"],
+html[data-theme-name] [class*="bg-gray-"],
+html[data-theme-name] [class*="bg-zinc-"],
+html[data-theme-name] [class*="bg-neutral-"]{background-color:var(--theme-surface-elevated)}
+html[data-theme-name] [class*="border-white/"],
+html[data-theme-name] [class*="border-slate-"],
+html[data-theme-name] [class*="border-gray-"],
+html[data-theme-name] [class*="border-zinc-"],
+html[data-theme-name] [class*="border-neutral-"]{border-color:var(--theme-border)}
+html[data-theme-name] [class*="divide-white/"]>:not([hidden])~:not([hidden]){border-color:var(--theme-divider)}
+html[data-theme-name] [class~="bg-gold"][class~="text-black"]{color:var(--theme-button-text)}
+html[data-theme-name="premium-dashboard"] .startup-screen{
+	background:radial-gradient(circle at center,rgba(156,121,69,.11),transparent 40%),var(--theme-page);
+	color:var(--theme-text);
+}
+html[data-theme-name="premium-dashboard"] :is(.startup-card p,.page-loading p,.page-transition-loading p){color:var(--theme-text-secondary)}
+html[data-theme-name="premium-dashboard"] .startup-track{background:var(--theme-page-secondary)}
+html[data-theme-name="premium-dashboard"] .scene-depth{
+	background:radial-gradient(ellipse at 72% 36%,rgba(156,121,69,.08),transparent 42%),var(--theme-page);
+}
+html[data-theme-name="premium-dashboard"] .home-hero:before{
+	background:radial-gradient(ellipse at 77% 42%,rgba(156,121,69,.08),transparent 42%),linear-gradient(120deg,#F7F8F5 2%,#EFF2ED 55%,#F7F8F5);
+}
+html[data-theme-name="premium-dashboard"] :is(.experience-section,.preview-section){
+	border-color:var(--theme-border);
+	background:linear-gradient(110deg,var(--theme-page),var(--theme-page-secondary) 53%,var(--theme-page));
+}
+html[data-theme-name] .admin-scope{width:100%;min-width:0;max-width:100%}
+html[data-theme-name] .admin-main{min-width:0}
+html[data-theme-name] .admin-main :is(.table-wrap,.table-container,.admin-table-wrap){max-width:100%;overflow-x:auto}
+html[data-theme-name] .admin-sidebar{box-shadow:var(--theme-shadow)}
+html[data-theme-name] .admin-command-group a,
+html[data-theme-name] .admin-sidebar-logout,
+html[data-theme-name] .admin-topbar-icon{color:var(--theme-text-secondary)}
+html[data-theme-name] .admin-metric-card>strong,
+html[data-theme-name] .admin-user-link b,
+html[data-theme-name] .admin-chart-totals b{color:var(--theme-text)}
+html[data-theme-name] .admin-chart-gridline{stroke:var(--theme-chart-grid)}
+html[data-theme-name] .admin-chart-label{fill:var(--theme-chart-label)}
+html[data-theme-name] .admin-chart-deposits{stroke:var(--theme-accent)}
+html[data-theme-name] .admin-chart-withdrawals{stroke:var(--theme-info)}
+html[data-theme-name] .live-market-page{
+	--lm-bg:var(--theme-page);
+	--lm-panel:var(--theme-surface);
+	--lm-panel-soft:var(--theme-surface-elevated);
+	--lm-line:var(--theme-border);
+	--lm-muted:var(--theme-text-secondary);
+	--lm-text:var(--theme-text);
+	--lm-cyan:var(--theme-accent);
+	--lm-up:var(--theme-positive);
+	--lm-down:var(--theme-negative);
+	background:var(--theme-page);
+	color:var(--theme-text);
+}
+html[data-theme-name] .live-market-page :is(.live-ticker,.live-source-status,.live-sidebar,.live-chart-card,.live-right-card,.live-comparison-card,.live-movers-group,.live-symbol-picker,.live-icon-button,.live-watchlist-controls select,.live-mobile-list-button){
+	border-color:var(--theme-border);
+	background:var(--theme-surface);
+	color:var(--theme-text);
+}
+html[data-theme-name] .live-market-page :is(.live-market-heading h1,.live-sidebar-heading h2,.live-section-title h2,.live-movers-group h2){color:var(--theme-text)}
+html[data-theme-name] .live-market-page :is(.live-market-heading>span,.live-market-heading p,.live-sidebar-heading>div>span,.live-section-title>div>span,.live-watch-main small,.live-muted,.live-empty-watchlist,.live-source-status small){color:var(--theme-text-secondary)}
+html[data-theme-name] .live-market-page :is(.live-ticker-item:hover,.live-ticker-item.is-active,.live-watch-row:hover,.live-watch-row.is-selected,.live-mover:hover){background:var(--theme-selected)}
+html[data-theme-name] .live-market-page :is(.live-chart-card,.live-right-card,.live-sidebar,.live-comparison-card,.live-movers-group){box-shadow:var(--theme-shadow)}
+html[data-theme-name] .live-market-page .live-symbol-picker button{color:var(--theme-text-secondary)}
+html[data-theme-name] .live-market-page .live-symbol-picker button:hover{color:var(--theme-text)}
+html[data-theme-name] .live-market-page .live-sparkline.is-up polyline{stroke:var(--theme-positive)}
+html[data-theme-name] .live-market-page .live-sparkline.is-down polyline{stroke:var(--theme-negative)}
+html[data-theme-name] :is(.portfolio-tooltip,.chart-tooltip){
+	border-color:var(--theme-border);
+	background:var(--theme-popover);
+	color:var(--theme-text);
+}
+html[data-theme-name] :is(.community-summary-card,.community-card,.community-loan-form,.community-eligibility-card){
+	border-color:var(--theme-border);
+	background:var(--theme-surface);
+	color:var(--theme-text);
+	box-shadow:var(--theme-shadow);
+}
+html[data-theme-name] :is(.community-section-heading h2,.community-card h3,.community-summary-card>strong){color:var(--theme-text)}
+html[data-theme-name] :is(.community-finance-heading p,.community-section-copy,.community-card>p,.community-summary-card>small){color:var(--theme-text-secondary)}
+html[data-theme-name] .community-summary-card--balance{background:linear-gradient(130deg,var(--theme-page-secondary),var(--theme-surface-elevated));color:var(--theme-text)}
+html[data-theme-name] .community-summary-card--balance>span,
+html[data-theme-name] .community-summary-card--balance>strong,
+html[data-theme-name] .community-summary-card--balance>small,
+html[data-theme-name] .community-summary-card--balance>small a{color:var(--theme-text)}
+html[data-theme-name] .theme-toggle{
+	display:inline-flex;
+	align-items:center;
+	gap:3px;
+	padding:3px;
+	border:1px solid var(--theme-border);
+	border-radius:8px;
+	background:var(--theme-surface-elevated);
+	color:var(--theme-text-secondary);
+}
+html[data-theme-name] .theme-toggle-option{
+	display:inline-flex;
+	min-height:32px;
+	align-items:center;
+	justify-content:center;
+	gap:6px;
+	padding:5px 9px;
+	border:1px solid transparent;
+	border-radius:6px;
+	background:transparent;
+	color:var(--theme-text-secondary);
+	font-size:11px;
+	font-weight:650;
+	white-space:nowrap;
+	cursor:pointer;
+}
+html[data-theme-name] .theme-toggle-option[aria-pressed="true"]{
+	border-color:var(--theme-border);
+	background:var(--theme-surface);
+	color:var(--theme-text);
+	box-shadow:0 2px 6px rgba(0,0,0,.08);
+}
+html[data-theme-name] .theme-toggle-option[aria-pressed="true"] svg{color:var(--theme-accent)}
+html[data-theme-name] .theme-toggle-option:disabled{color:var(--theme-disabled);cursor:wait}
+.theme-toggle-status,.theme-toggle-error{flex-basis:100%;font-size:11px}
+.theme-toggle-error{color:var(--theme-negative)}
+html[data-theme-name] .theme-toggle-error{color:var(--theme-negative)}
+.theme-toggle{flex-wrap:wrap}
+.settings-appearance-control .theme-toggle{max-width:100%}
+.settings-appearance-control{align-items:flex-start}
+.user-more-theme{display:grid;gap:8px;padding:12px 16px;border-top:1px solid var(--theme-divider)}
+.user-more-theme>span{color:var(--theme-text-secondary);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.admin-theme-preference{display:none}
+@media(max-width:640px){
+	html[data-theme-name] .theme-toggle-option{min-height:36px;padding:5px 7px;font-size:10px}
+	.settings-appearance-control .theme-toggle{width:100%}
+	.settings-appearance-control .theme-toggle-option{flex:1}
+	.admin-topbar .theme-toggle-option{padding-inline:6px}
+}
+@media(max-width:1279px){
+	html[data-theme-name] .admin-shell-chrome{--admin-sidebar-width:0px}
+	html[data-theme-name] .admin-sidebar{
+		width:min(280px,86vw);
+		transform:translateX(-105%);
+		transition:transform .2s ease;
+	}
+	html[data-theme-name] .admin-sidebar.is-open{transform:translateX(0)}
+	html[data-theme-name] .admin-sidebar-backdrop{
+		position:fixed;
+		inset:0;
+		z-index:101;
+		display:block;
+		border:0;
+		background:rgba(0,0,0,.54);
+	}
+	html[data-theme-name] .admin-topbar{left:0;gap:12px;padding-inline:clamp(12px,2vw,24px)}
+	html[data-theme-name] .admin-menu-button{
+		display:grid;
+		width:38px;
+		height:38px;
+		flex:none;
+		place-items:center;
+		padding:0;
+		border:1px solid var(--theme-border);
+		border-radius:6px;
+		background:var(--theme-surface);
+		color:var(--theme-text);
+	}
+	html[data-theme-name] body:has(.admin-shell-chrome) main,
+	html[data-theme-name] body:has(.admin-shell-chrome) main.account-page{
+		width:100%;
+		max-width:none;
+		margin:0;
+		padding:98px clamp(16px,3vw,34px) 40px;
+	}
+	html[data-theme-name] .admin-theme-preference{
+		display:grid;
+		flex-basis:100%;
+		gap:8px;
+		padding-top:10px;
+		border-top:1px solid var(--theme-divider);
+	}
+	html[data-theme-name] .admin-theme-preference>span{
+		color:var(--theme-text-secondary);
+		font-size:10px;
+		font-weight:700;
+		letter-spacing:.08em;
+		text-transform:uppercase;
+	}
+	html[data-theme-name] .admin-theme-preference .theme-toggle{width:100%}
+	html[data-theme-name] .admin-theme-preference .theme-toggle-option{flex:1}
+	html[data-theme-name] .admin-topbar-meta>.theme-toggle{display:none}
+}
+@media(max-width:760px){
+	html[data-theme-name] .admin-topbar{min-height:0;flex-wrap:wrap;gap:7px;padding:8px 10px}
+	html[data-theme-name] .admin-topbar-heading{min-width:0;flex:1;gap:2px}
+	html[data-theme-name] .admin-topbar-heading>span{display:none}
+	html[data-theme-name] .admin-topbar-heading>b{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}
+	html[data-theme-name] .admin-back-button{min-height:36px;padding:0 8px}
+	html[data-theme-name] .admin-back-button span{display:none}
+	html[data-theme-name] .admin-topbar-meta{flex:none;gap:5px;margin-left:auto}
+	html[data-theme-name] .admin-clock,
+	html[data-theme-name] .admin-topbar-profile{display:none}
+	html[data-theme-name] .admin-global-search{order:5;width:100%;flex:1 0 100%;min-height:36px;margin:0}
+	html[data-theme-name] body:has(.admin-shell-chrome) main,
+	html[data-theme-name] body:has(.admin-shell-chrome) main.account-page{padding:108px 12px 30px}
+	html[data-theme-name] .admin-sidebar-footer{flex-wrap:wrap}
+}
+@media(prefers-reduced-motion:reduce){
+	html[data-theme-name] .admin-sidebar{transition:none}
+}
+@media(prefers-reduced-motion:reduce){
+	html[data-theme-name] *,html[data-theme-name] *::before,html[data-theme-name] *::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}
+}

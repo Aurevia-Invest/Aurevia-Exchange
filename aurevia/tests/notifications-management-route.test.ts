@@ -4,6 +4,7 @@ const mocks=vi.hoisted(()=>({
 	requireUser:vi.fn(),
 	userFindUnique:vi.fn(),
 	notificationFindMany:vi.fn(),
+	notificationFindFirst:vi.fn(),
 	notificationUpdateMany:vi.fn(),
 	notificationDeleteMany:vi.fn(),
 	notificationCount:vi.fn(),
@@ -13,12 +14,12 @@ const mocks=vi.hoisted(()=>({
 vi.mock('@/lib/auth',()=>({requireUser:mocks.requireUser}));
 vi.mock('@/lib/db',()=>({db:{
 	user:{findUnique:mocks.userFindUnique},
-	notification:{findMany:mocks.notificationFindMany,updateMany:mocks.notificationUpdateMany,deleteMany:mocks.notificationDeleteMany,count:mocks.notificationCount},
+	notification:{findMany:mocks.notificationFindMany,findFirst:mocks.notificationFindFirst,updateMany:mocks.notificationUpdateMany,deleteMany:mocks.notificationDeleteMany,count:mocks.notificationCount},
 	activityVisibilityPreference:{deleteMany:mocks.visibilityDeleteMany},
 	$transaction:mocks.transaction,
 }}));
 
-import {DELETE,PATCH} from '@/app/api/notifications/route';
+import {DELETE,GET,PATCH} from '@/app/api/notifications/route';
 
 const req=(method:string,body:unknown)=>new Request('https://aurevia.test/api/notifications',{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 
@@ -26,7 +27,8 @@ beforeEach(()=>{
 	vi.clearAllMocks();
 	mocks.requireUser.mockResolvedValue({id:'owner-1'});
 	mocks.userFindUnique.mockResolvedValue({accountMode:'DEMO',status:'ACTIVE'});
-	mocks.notificationFindMany.mockResolvedValue([{id:'notice-1'}]);
+	mocks.notificationFindMany.mockResolvedValue([{id:'notice-1',title:'Account update',message:'An update is available.',isRead:false,pushOutbox:[]}]);
+	mocks.notificationFindFirst.mockResolvedValue(null);
 	mocks.notificationUpdateMany.mockResolvedValue({count:1});
 	mocks.notificationDeleteMany.mockResolvedValue({count:1});
 	mocks.notificationCount.mockResolvedValue(0);
@@ -38,6 +40,16 @@ beforeEach(()=>{
 });
 
 describe('notification retention controls',()=>{
+	it('returns the active account mode with mode-scoped notification results',async()=>{
+		mocks.userFindUnique.mockResolvedValueOnce({accountMode:'REAL',status:'ACTIVE'});
+		const response=await GET(new Request('https://aurevia.test/api/notifications?limit=8'));
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({accountMode:'REAL',notifications:[{id:'notice-1'}]});
+		expect(mocks.notificationFindMany).toHaveBeenCalledWith(expect.objectContaining({
+			where:expect.objectContaining({userId:'owner-1',OR:[{accountMode:'REAL'},{accountMode:null}]}),
+		}));
+	});
+
 	it('archives a notification only when it belongs to the authenticated user',async()=>{
 		const response=await PATCH(req('PATCH',{action:'archive',id:'notice-1'}));
 		expect(response.status).toBe(200);

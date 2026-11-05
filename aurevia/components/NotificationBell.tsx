@@ -5,9 +5,10 @@ import {useSession} from 'next-auth/react';
 import {useRouter} from 'next/navigation';
 import {Activity,Bell,CheckCheck,ChevronRight,CircleDollarSign,Info,LifeBuoy,RefreshCw,ShieldCheck,UserRound,WalletCards} from 'lucide-react';
 import {useLocale} from '@/lib/i18n-context';
+import {observeNotificationBatch,playNotificationSoundOnce} from '@/lib/notification-sounds';
 
 type NotificationItem={id:string;type:string;title:string;message:string;isRead:boolean;createdAt:string;actionUrl:string|null};
-type NotificationResponse={notifications:NotificationItem[];unreadCount:number};
+type NotificationResponse={accountMode?:'DEMO'|'REAL';notifications:NotificationItem[];unreadCount:number};
 
 const iconByType:Record<string,typeof Bell>={ACCOUNT:UserRound,SECURITY:ShieldCheck,KYC:ShieldCheck,DEPOSIT:CircleDollarSign,WITHDRAWAL:WalletCards,TRADE:Activity,MARKET:Activity,SUPPORT:LifeBuoy,SYSTEM:Info};
 
@@ -17,6 +18,8 @@ export default function NotificationBell(){
 	const {translate}=useLocale();
 	const panelRef=useRef<HTMLDivElement>(null);
 	const notificationChannel=useRef<BroadcastChannel|null>(null);
+	const observedByScope=useRef(new Map<string,Set<string>>());
+	const latestRequest=useRef(0);
 	const [open,setOpen]=useState(false);
 	const [notifications,setNotifications]=useState<NotificationItem[]>([]);
 	const [unreadCount,setUnreadCount]=useState(0);
@@ -24,19 +27,33 @@ export default function NotificationBell(){
 	const [error,setError]=useState('');
 	const [busy,setBusy]=useState(false);
 	const userId=session?.user?.id;
+	const accountMode=session?.user?.accountMode||'UNKNOWN';
+	const activeAccountMode=useRef(accountMode);
 
 	const load=useCallback(async(showLoading=false)=>{
 		if(status!=='authenticated'){setLoading(false);return;}
+		const requestId=++latestRequest.current;
 		if(showLoading)setLoading(true);
 		try{
-			const response=await fetch('/api/notifications?limit=8',{cache:'no-store'});
-			if(response.status===401){setNotifications([]);setUnreadCount(0);setError('');setOpen(false);return;}
+			const response=await fetch('/api/notifications?limit=100',{cache:'no-store'});
+			if(response.status===401){
+				if(requestId===latestRequest.current){setNotifications([]);setUnreadCount(0);setError('');setOpen(false);}
+				return;
+			}
 			if(!response.ok)throw new Error('Unable to load notifications.');
 			const result:NotificationResponse=await response.json();
-			setNotifications(result.notifications);setUnreadCount(result.unreadCount);setError('');
-		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to load notifications.');}
-		finally{if(showLoading)setLoading(false);}
-	},[status]);
+			if(requestId!==latestRequest.current)return;
+			const responseMode=result.accountMode||accountMode;
+			const responseScope=`${userId||''}:${responseMode}`;
+			activeAccountMode.current=responseMode;
+			const newNotifications=observeNotificationBatch(observedByScope.current,responseScope,result.notifications);
+			if(userId&&document.visibilityState==='visible'){
+				for(const item of newNotifications)void playNotificationSoundOnce(item,userId,responseMode,notificationChannel.current);
+			}
+			setNotifications(result.notifications.slice(0,8));setUnreadCount(result.unreadCount);setError('');
+		}catch(exception){if(requestId===latestRequest.current)setError(exception instanceof Error?exception.message:'Unable to load notifications.');}
+		finally{if(requestId===latestRequest.current&&showLoading)setLoading(false);}
+	},[accountMode,status,userId]);
 
 	useEffect(()=>{
 		if(status!=='authenticated')return;
@@ -47,7 +64,13 @@ export default function NotificationBell(){
 		const refresh=()=>{if(document.visibilityState==='visible')void load()};
 		const channel=typeof BroadcastChannel==='undefined'||!userId?null:new BroadcastChannel(`aurevia-notifications:${userId}`);
 		notificationChannel.current=channel;
-		if(channel)channel.onmessage=refresh;
+		if(channel)channel.onmessage=event=>{
+			if(event.data?.type==='sound-played'&&event.data.accountMode===activeAccountMode.current&&typeof event.data.notificationId==='string'){
+				observedByScope.current.get(`${userId||''}:${activeAccountMode.current}`)?.add(event.data.notificationId);
+				return;
+			}
+			refresh();
+		};
 		void load(true);
 		const interval=window.setInterval(refresh,30_000);
 		window.addEventListener('aurevia:notifications',refresh);
@@ -61,7 +84,7 @@ export default function NotificationBell(){
 			channel?.close();
 			if(notificationChannel.current===channel)notificationChannel.current=null;
 		};
-	},[load,status,userId]);
+	},[accountMode,load,status,userId]);
 
 	function announceNotificationChange(){
 		window.dispatchEvent(new Event('aurevia:notifications'));

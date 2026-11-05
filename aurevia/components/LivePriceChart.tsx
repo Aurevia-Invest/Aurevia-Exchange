@@ -3,6 +3,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {CandlestickSeries,ColorType,createChart,HistogramSeries,type IChartApi,type ISeriesApi,type UTCTimestamp} from 'lightweight-charts';
 import type {MarketCandle,MarketQuote,TimeframeId} from '@/lib/live-market';
+import {readChartTheme} from '@/lib/chart-theme';
 
 type CandleSeries=ISeriesApi<'Candlestick'>;
 type VolumeSeries=ISeriesApi<'Histogram'>;
@@ -17,20 +18,24 @@ export default function LivePriceChart({candles,quote,timeframe,loading,error,ru
   const [hovered,setHovered]=useState<MarketCandle|null>(null);
   const [currentCandle,setCurrentCandle]=useState<MarketCandle|null>(null);
   const currentCandleRef=useRef<MarketCandle|null>(null);
+  const candlesRef=useRef(candles);
   const quotePrice=quote?.price;
   const quoteVolume=quote?.volume;
 
+  useEffect(()=>{candlesRef.current=candles},[candles]);
+
   useEffect(()=>{
     if(!host.current)return;
+    const palette=readChartTheme();
     const chart=createChart(host.current,{
       autoSize:true,
-      layout:{background:{type:ColorType.Solid,color:'#07131c'},textColor:'#8499a5',fontFamily:'Avenir Next, Segoe UI, sans-serif',fontSize:11},
-      grid:{vertLines:{color:'rgba(122,156,171,.08)'},horzLines:{color:'rgba(122,156,171,.08)'}},
-      crosshair:{vertLine:{color:'rgba(119,195,205,.5)',labelBackgroundColor:'#177d83'},horzLine:{color:'rgba(119,195,205,.5)',labelBackgroundColor:'#177d83'}},
-      rightPriceScale:{borderColor:'rgba(122,156,171,.16)'},timeScale:{borderColor:'rgba(122,156,171,.16)',timeVisible:true,secondsVisible:true},
+      layout:{background:{type:ColorType.Solid,color:'transparent'},textColor:palette.label,fontFamily:'Avenir Next, Segoe UI, sans-serif',fontSize:11},
+      grid:{vertLines:{color:palette.grid},horzLines:{color:palette.grid}},
+      crosshair:{vertLine:{color:palette.accent,labelBackgroundColor:palette.accent},horzLine:{color:palette.accent,labelBackgroundColor:palette.accent}},
+      rightPriceScale:{borderColor:palette.border},timeScale:{borderColor:palette.border,timeVisible:true,secondsVisible:true},
       localization:{priceFormatter:(value:number)=>value.toLocaleString(undefined,{maximumFractionDigits:value<10?5:2})},
     });
-    const candlesApi=chart.addSeries(CandlestickSeries,{upColor:'#33c7a2',downColor:'#f06f76',borderVisible:false,wickUpColor:'#33c7a2',wickDownColor:'#f06f76'});
+    const candlesApi=chart.addSeries(CandlestickSeries,{upColor:palette.positive,downColor:palette.negative,borderVisible:false,wickUpColor:palette.positive,wickDownColor:palette.negative});
     const volumeApi=chart.addSeries(HistogramSeries,{priceFormat:{type:'volume'},priceScaleId:'volume',lastValueVisible:false,priceLineVisible:false});
     chart.priceScale('volume').applyOptions({scaleMargins:{top:.82,bottom:0},visible:false});
     const crosshairHandler=(param:Parameters<typeof chart.subscribeCrosshairMove>[0] extends (arg:infer T)=>void?T:never)=>{
@@ -41,13 +46,26 @@ export default function LivePriceChart({candles,quote,timeframe,loading,error,ru
     };
     chart.subscribeCrosshairMove(crosshairHandler);
     chartRef.current=chart;candleSeries.current=candlesApi;volumeSeries.current=volumeApi;
+    const updateTheme=()=>{
+      const next=readChartTheme();
+      chart.applyOptions({
+        layout:{textColor:next.label},
+        grid:{vertLines:{color:next.grid},horzLines:{color:next.grid}},
+        crosshair:{vertLine:{color:next.accent,labelBackgroundColor:next.accent},horzLine:{color:next.accent,labelBackgroundColor:next.accent}},
+        rightPriceScale:{borderColor:next.border},timeScale:{borderColor:next.border},
+      });
+      candlesApi.applyOptions({upColor:next.positive,downColor:next.negative,wickUpColor:next.positive,wickDownColor:next.negative});
+      volumeApi.setData(candlesRef.current.flatMap(candle=>candle.volume===null?[]:[{time:candle.time as UTCTimestamp,value:candle.volume,color:candle.close>=candle.open?next.positiveFill:next.negativeFill}]));
+    };
+    window.addEventListener('aurevia-theme-change',updateTheme);
     const observer=new ResizeObserver(entries=>{const width=entries[0]?.contentRect.width;if(width)chart.applyOptions({width});});
     observer.observe(host.current);
-    return()=>{observer.disconnect();chart.unsubscribeCrosshairMove(crosshairHandler);chart.remove();chartRef.current=null;candleSeries.current=null;volumeSeries.current=null;};
+    return()=>{observer.disconnect();window.removeEventListener('aurevia-theme-change',updateTheme);chart.unsubscribeCrosshairMove(crosshairHandler);chart.remove();chartRef.current=null;candleSeries.current=null;volumeSeries.current=null;};
   },[]);
 
   useEffect(()=>{
     if(!candleSeries.current||!volumeSeries.current)return;
+    candlesRef.current=candles;
     if(!candles.length){
       candleSeries.current.setData([]);
       volumeSeries.current.setData([]);
@@ -57,7 +75,8 @@ export default function LivePriceChart({candles,quote,timeframe,loading,error,ru
       return;
     }
     candleSeries.current.setData(candles.map(({time,open,high,low,close})=>({time:time as UTCTimestamp,open,high,low,close})));
-    volumeSeries.current.setData(candles.flatMap(candle=>candle.volume===null?[]:[{time:candle.time as UTCTimestamp,value:candle.volume,color:candle.close>=candle.open?'rgba(51,199,162,.32)':'rgba(240,111,118,.32)'}]));
+    const palette=readChartTheme();
+    volumeSeries.current.setData(candles.flatMap(candle=>candle.volume===null?[]:[{time:candle.time as UTCTimestamp,value:candle.volume,color:candle.close>=candle.open?palette.positiveFill:palette.negativeFill}]));
     currentCandleRef.current=candles[candles.length-1];
     setCurrentCandle(currentCandleRef.current);
     if(!hasFit.current||currentTimeframe.current!==timeframe){chartRef.current?.timeScale().fitContent();hasFit.current=true;currentTimeframe.current=timeframe;}
@@ -72,7 +91,10 @@ export default function LivePriceChart({candles,quote,timeframe,loading,error,ru
     currentCandleRef.current=updated;
     setCurrentCandle(updated);
     const volume=quoteVolume??latest.volume;
-    if(volume!==null)volumeSeries.current.update({time,value:volume,color:updated.close>=updated.open?'rgba(51,199,162,.32)':'rgba(240,111,118,.32)'});
+    if(volume!==null){
+      const palette=readChartTheme();
+      volumeSeries.current.update({time,value:volume,color:updated.close>=updated.open?palette.positiveFill:palette.negativeFill});
+    }
   },[candles,quotePrice,quoteVolume]);
 
   useEffect(()=>{

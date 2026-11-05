@@ -184,6 +184,7 @@ export default function AdminNav(){
 			<div className="admin-sidebar-footer">
 				<ProfileAvatar className="admin-profile-avatar" size={34} alt="Administrator profile picture"/>
 				<span className="admin-profile-copy"><b>{data?.user?.name||'Administrator'}</b><small>ADMINISTRATOR</small></span>
+				<div className="admin-theme-preference"><span>Appearance</span><ThemeToggle/></div>
 				<button type="button" className="admin-sidebar-logout" disabled={!isAdmin||loggingOut} onClick={()=>void logout()} aria-label="Sign out" title="Sign out"><LogOut size={16}/></button>
 			</div>
 		</aside>

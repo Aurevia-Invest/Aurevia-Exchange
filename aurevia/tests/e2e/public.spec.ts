@@ -1,4 +1,5 @@
 import {test,expect,expectNoHorizontalOverflow,loginAs,waitForStartup} from './fixtures';
+import {concreteRoutePath,fallbackRoutes,publicRoutes,themes} from './theme-route-inventory';
 
 const viewports=[
 	{width:320,height:800},
@@ -15,7 +16,7 @@ const viewports=[
 	{width:1920,height:1080},
 ];
 
-const publicRoutes=['/','/login','/register','/markets','/stories','/client-stories','/about','/education','/support','/waitlist','/terms','/privacy','/risk-disclosure','/forgot-password','/reset-password','/admin/login'];
+const appOrigin=process.env.AUREVIA_E2E_APP_URL||'http://127.0.0.1:4310';
 
 function fixture(name:string){
 	const value=process.env[`AUREVIA_E2E_${name}`];
@@ -26,19 +27,36 @@ function fixture(name:string){
 test.describe('public routes and responsive layout',()=>{
 	for(const viewport of viewports){
 		test(`public routes render without horizontal overflow at ${viewport.width}x${viewport.height}`,async({page})=>{
+			test.setTimeout(300_000);
 			await page.setViewportSize(viewport);
-			for(const route of publicRoutes){
-				const response=await page.goto(route);
-				expect(response?.status(),route).toBe(200);
-				await expect(page.locator('h1').first(),route).toBeVisible();
-				if(route==='/admin/login')await expect(page.locator('.admin-login-card')).toBeVisible();
-				if(route==='/markets')await expect(page.getByRole('heading',{name:'Markets',exact:true})).toBeVisible();
-				if(route==='/support')await expect(page.getByRole('heading',{name:'Nova AI',exact:true})).toBeVisible();
-				if(route==='/register'){
-					await expect(page.getByRole('radio',{name:/DEMO ACCOUNT/})).toBeVisible();
-					await expect(page.getByRole('radio',{name:/REAL ACCOUNT/})).toBeVisible();
+			for(const theme of themes){
+				await page.context().addCookies([{name:'aurevia-anonymous-theme',value:theme,url:appOrigin}]);
+				for(const route of publicRoutes){
+					await test.step(`${route} in ${theme}`,async()=>{
+						const path=concreteRoutePath(route);
+						const response=await page.goto(path);
+						expect(response?.status(),route).toBe(200);
+						await expect(page.locator('html'),`${route} (${theme})`).toHaveAttribute('data-theme-name',theme);
+						await expect(page.locator('h1').first(),route).toBeVisible();
+						if(route==='/admin/login')await expect(page.locator('.admin-login-card')).toBeVisible();
+						if(route==='/markets')await expect(page.getByRole('heading',{name:'Markets',exact:true})).toBeVisible();
+						if(route==='/support')await expect(page.getByRole('heading',{name:'Nova AI',exact:true})).toBeVisible();
+						if(route==='/register'){
+							await expect(page.getByRole('radio',{name:/DEMO ACCOUNT/})).toBeVisible();
+							await expect(page.getByRole('radio',{name:/REAL ACCOUNT/})).toBeVisible();
+						}
+						await expectNoHorizontalOverflow(page);
+					});
 				}
-				await expectNoHorizontalOverflow(page);
+				for(const route of fallbackRoutes){
+					await test.step(`${route} fallback in ${theme}`,async()=>{
+						const response=await page.goto(route);
+						expect(response?.status(),route).toBe(404);
+						await expect(page.locator('html'),`${route} (${theme})`).toHaveAttribute('data-theme-name',theme);
+						await expect(page.getByRole('heading',{name:'404'})).toBeVisible();
+						await expectNoHorizontalOverflow(page);
+					});
+				}
 			}
 		});
 	}
@@ -128,18 +146,24 @@ test('homepage clearly labels stock and crypto trading modes',async({page})=>{
 	await expect(crypto).toContainText('Alpaca sandbox routing');
 });
 
-test('site theme preference switches globally and persists across navigation',async({page})=>{
+test('site theme preference switches globally and persists across navigation and devices',async({browser,page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await page.goto('/about-me');
-	const themeToggle=page.getByRole('button',{name:'Switch to light mode'});
+	const themeToggle=page.getByRole('button',{name:'Premium Dashboard'});
 	await themeToggle.click();
-	await expect(page.locator('html')).toHaveAttribute('data-theme','light');
-	await expect(page.locator('body')).toHaveCSS('background-color','rgb(249, 251, 253)');
+	await expect(page.locator('html')).toHaveAttribute('data-theme-name','premium-dashboard');
+	await expect(page.locator('body')).toHaveCSS('background-color','rgb(247, 248, 245)');
 	await page.goto('/dashboard');
-	await expect(page.locator('html')).toHaveAttribute('data-theme','light');
-	await page.goto('/about-me');
-	await page.getByRole('button',{name:'Switch to dark mode'}).click();
-	await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
+	await expect(page.locator('html')).toHaveAttribute('data-theme-name','premium-dashboard');
+	const secondDevice=await browser.newContext({viewport:{width:390,height:844}});
+	try{
+		const secondPage=await secondDevice.newPage();
+		await loginAs(secondPage,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+		await secondPage.goto('/about-me');
+		await expect(secondPage.locator('html')).toHaveAttribute('data-theme-name','premium-dashboard');
+		await secondPage.getByRole('button',{name:'Forest Green'}).click();
+		await expect(secondPage.locator('html')).toHaveAttribute('data-theme-name','forest-green');
+	}finally{await secondDevice.close();}
 });
 
 test('public disclosures distinguish sandbox order routing and internal wallet funds',async({page})=>{

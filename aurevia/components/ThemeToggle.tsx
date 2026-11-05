@@ -1,55 +1,18 @@
 'use client';
 
-import {useEffect,useState} from 'react';
-import {Moon,Sun} from 'lucide-react';
-
-type Theme='dark'|'light';
-const themeKey='aurevia-theme';
-const themeChangeEvent='aurevia-theme-change';
-
-function applyTheme(theme:Theme){
-	document.documentElement.dataset.theme=theme;
-	document.documentElement.style.colorScheme=theme;
-	const themeColor=document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-	if(themeColor)themeColor.content=theme==='light'?'#f9fbfd':'#07110d';
-	window.dispatchEvent(new CustomEvent(themeChangeEvent,{detail:theme}));
-}
+import {Check} from 'lucide-react';
+import {useTheme} from '@/lib/theme-context';
 
 export default function ThemeToggle(){
-	const [theme,setTheme]=useState<Theme>('dark');
-
-	useEffect(()=>{
-		const saved=localStorage.getItem(themeKey);
-		const initial=saved==='light'?'light':'dark';
-		setTheme(initial);
-		applyTheme(initial);
-		const onThemeChange=(event:Event)=>{
-			if(!(event instanceof CustomEvent))return;
-			const next=event.detail==='light'?'light':'dark';
-			setTheme(next);
-		};
-		const onStorage=(event:StorageEvent)=>{
-			if(event.key!==themeKey)return;
-			const next=event.newValue==='light'?'light':'dark';
-			setTheme(next);
-			applyTheme(next);
-		};
-		window.addEventListener(themeChangeEvent,onThemeChange);
-		window.addEventListener('storage',onStorage);
-		return()=>{
-			window.removeEventListener(themeChangeEvent,onThemeChange);
-			window.removeEventListener('storage',onStorage);
-		};
-	},[]);
-
-	function toggle(){
-		const next=theme==='dark'?'light':'dark';
-		setTheme(next);
-		applyTheme(next);
-		try{localStorage.setItem(themeKey,next)}catch(error){console.error('Theme preference could not be saved.',error instanceof Error?error.name:'UnknownError')}
-	}
-
-	const nextLabel=theme==='dark'?'Switch to light mode':'Switch to dark mode';
-	const Icon=theme==='dark'?Sun:Moon;
-	return <button type="button" className="theme-toggle" onClick={toggle} aria-label={nextLabel} title={nextLabel}><Icon size={16} aria-hidden="true"/><span>{theme==='dark'?'Light':'Dark'}</span></button>;
+	const {theme,selectTheme,isSaving,isReady,error}=useTheme();
+	return <div className="theme-toggle" role="group" aria-label="Color theme">
+		<button type="button" className="theme-toggle-option" aria-pressed={theme==='forest-green'} disabled={!isReady||isSaving} onClick={()=>void selectTheme('forest-green')}>
+			<span>Forest Green</span>{theme==='forest-green'&&<Check size={14} aria-hidden="true"/>}
+		</button>
+		<button type="button" className="theme-toggle-option" aria-pressed={theme==='premium-dashboard'} disabled={!isReady||isSaving} onClick={()=>void selectTheme('premium-dashboard')}>
+			<span>Premium Dashboard</span>{theme==='premium-dashboard'&&<Check size={14} aria-hidden="true"/>}
+		</button>
+		{isSaving&&<span className="theme-toggle-status" role="status">Saving theme…</span>}
+		{error&&<span className="theme-toggle-error" role="alert">{error}</span>}
+	</div>;
 }

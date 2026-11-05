@@ -27,7 +27,7 @@ export async function GET(req:Request){
 			db.notification.count({where:{...modeWhere,isRead:false}}),
 			db.notification.findFirst({where:{...modeWhere,isRead:false,archivedAt:null},orderBy:{createdAt:'desc'},select:{createdAt:true}}),
 		]);
-		return NextResponse.json(jsonSafe({notifications:notifications.map(({pushOutbox,...notification})=>({...notification,title:removeSimulatedLabels(notification.title),message:removeSimulatedLabels(notification.message),canDelete:notification.isRead&&!pushOutbox})),unreadCount,latestUnreadAt:latestUnread?.createdAt??null}),{headers:{'Cache-Control':'private, no-store'}});
+		return NextResponse.json(jsonSafe({accountMode:account.accountMode,notifications:notifications.map(({pushOutbox,...notification})=>({...notification,title:removeSimulatedLabels(notification.title),message:removeSimulatedLabels(notification.message),canDelete:notification.isRead&&!pushOutbox})),unreadCount,latestUnreadAt:latestUnread?.createdAt??null}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
 		if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});

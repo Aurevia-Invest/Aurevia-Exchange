@@ -1,0 +1,4 @@
+CREATE TYPE "ApplicationTheme" AS ENUM ('FOREST_GREEN', 'PREMIUM_DASHBOARD');
+
+ALTER TABLE "User"
+ADD COLUMN "preferredTheme" "ApplicationTheme" NOT NULL DEFAULT 'FOREST_GREEN';

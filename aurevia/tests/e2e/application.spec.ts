@@ -10,6 +10,7 @@ import {balance as ledgerBalance,initializeDemoAccount,initializePaperAccount,po
 import {deleteAccountData} from '../../lib/account-deletion';
 import {settleMaturedSimulatedInvestments} from '../../lib/demo-investment-settlement';
 import {SIMULATED_BTC_ADDRESS_SETTING} from '../../lib/config/simulated-bitcoin-address';
+import {adminRoutes,authenticatedRoutes,concreteRoutePath,themes} from './theme-route-inventory';
 
 const viewports=[
 	{width:320,height:800},
@@ -26,8 +27,6 @@ const viewports=[
 	{width:1920,height:1080},
 ];
 
-const authenticatedRoutes=['/dashboard','/trade','/markets','/portfolio','/orders','/investments','/broadcasts','/wallet','/wallet/transactions','/wallet/convert','/kyc','/tier','/settings','/support','/notifications','/activity','/education','/news','/stories','/client-stories','/community','/cards','/cards/apply'];
-const adminRoutes=['/admin/login','/admin','/admin/activity','/admin/approved-deposits','/admin/approved-withdrawals','/admin/audit-logs','/admin/broadcasts','/admin/cards','/admin/command-center','/admin/community','/admin/content','/admin/deleted-items','/admin/investments','/admin/kyc','/admin/markets','/admin/nova','/admin/operations','/admin/payments','/admin/positions','/admin/providers','/admin/receipts','/admin/sessions','/admin/settings','/admin/settlements','/admin/stories','/admin/support','/admin/tax-services','/admin/tiers','/admin/users','/admin/verified-accounts','/admin/waitlist'];
 const appOrigin=process.env.AUREVIA_E2E_APP_URL||'http://127.0.0.1:4310';
 
 async function revealSupportChat(page:Page){
@@ -1107,16 +1106,26 @@ test('multiple sessions can be reviewed and other sessions revoked server-side',
 
 for(const viewport of viewports){
 	test(`authenticated routes render without horizontal overflow at ${viewport.width}x${viewport.height}`,async({page})=>{
+		test.setTimeout(300_000);
 		await page.setViewportSize(viewport);
 		await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
-		for(const route of authenticatedRoutes){
-			const response=await page.goto(route);
-			expect(response?.status(),route).toBe(200);
-			await expect(page.locator('main').first(),route).toBeVisible();
-			if(await page.locator('h1:visible').count())await expect(page.locator('h1:visible').first(),route).toBeVisible();
-			if(route==='/dashboard'&&viewport.width<=640)await expect(page.locator('.mobile-home-greeting'),route).toBeVisible();
-			await expectNoHorizontalOverflow(page);
+		for(const theme of themes){
+			const save=await page.request.patch('/api/theme-preference',{data:{theme}});
+			expect(save.status(),'account theme preference').toBe(200);
+			for(const route of authenticatedRoutes){
+				await test.step(`${route} in ${theme}`,async()=>{
+					const path=concreteRoutePath(route);
+					const response=await page.goto(path);
+					expect(response?.status(),route).toBe(200);
+					await expect(page.locator('html'),`${route} (${theme})`).toHaveAttribute('data-theme-name',theme);
+					await expect(page.locator('main').first(),route).toBeVisible();
+					if(await page.locator('h1:visible').count())await expect(page.locator('h1:visible').first(),route).toBeVisible();
+					if(route==='/dashboard'&&viewport.width<=640)await expect(page.locator('.mobile-home-greeting'),route).toBeVisible();
+					await expectNoHorizontalOverflow(page);
+				});
+			}
 		}
+		await page.request.patch('/api/theme-preference',{data:{theme:'forest-green'}});
 	});
 }
 
@@ -1190,6 +1199,7 @@ test('account-mode changes initialize and isolate wallet, trade, history, and su
 	const realExecutionNote='When enabled, REAL account orders route through the Alpaca sandbox. Status reflects provider confirmation; confirmed fills are recorded in the Aurevia ledger.';
 	await expect(dashboardRealOverview.getByText('Trade confidently with Aurevia. Manage your orders, monitor execution status, and track your account balance, portfolio performance, and available funds from one secure trading dashboard. Deposits and withdrawals are subject to account verification and approval.',{exact:true})).toBeVisible();
 	for(const viewport of [{width:375,height:812},{width:1440,height:900}]){
+		test.setTimeout(300_000);
 		await page.setViewportSize(viewport);
 		await expect(dashboardRealOverview).toBeVisible();
 		await expect(dashboardRealOverview.getByText(realExecutionNote,{exact:true})).toBeVisible();
@@ -2222,18 +2232,32 @@ for(const viewport of viewports){
 		if(viewport.width>=1280)await expectNoHorizontalOverflow(page);
 
 		await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
-		for(const route of adminRoutes.filter(path=>path!=='/admin/login')){
-			const response=await page.goto(route);
-			expect(response?.status(),route).toBe(200);
-			await expect(page.locator('main').first(),route).toBeVisible();
-			if(await page.locator('h1:visible').count())await expect(page.locator('h1:visible').first(),route).toBeVisible();
-			await expect(page.getByRole('navigation',{name:'Administrator navigation'}).getByRole('link',{name:'CRM Dashboard',exact:true}),route).toBeVisible();
-			await expect(page.locator('.admin-nav-loading'),route).toHaveCount(0);
-			await expect(page.locator('.admin-scope'),route).toBeVisible();
-			expect(await page.locator('.admin-scope').evaluate(element=>getComputedStyle(element).minWidth),route).toBe('1280px');
-			await expect(page.getByRole('button',{name:'Open admin menu'}),route).toBeHidden();
-			await expect(page.getByRole('navigation',{name:'Administrator navigation'}).getByRole('link',{name:'CRM Dashboard',exact:true}),route).toBeVisible();
-			if(viewport.width>=1280)await expectNoHorizontalOverflow(page);
+		for(const theme of themes){
+			const save=await page.request.patch('/api/theme-preference',{data:{theme}});
+			expect(save.status(),'administrator theme preference').toBe(200);
+			for(const route of adminRoutes){
+				await test.step(`${route} in ${theme}`,async()=>{
+					const path=concreteRoutePath(route);
+					const response=await page.goto(path);
+					expect(response?.status(),route).toBe(200);
+					await expect(page.locator('html'),`${route} (${theme})`).toHaveAttribute('data-theme-name',theme);
+					await expect(page.locator('main').first(),route).toBeVisible();
+					if(await page.locator('h1:visible').count())await expect(page.locator('h1:visible').first(),route).toBeVisible();
+					await expect(page.getByRole('navigation',{name:'Administrator navigation'}).getByRole('link',{name:'CRM Dashboard',exact:true}),route).toBeVisible();
+					await expect(page.locator('.admin-nav-loading'),route).toHaveCount(0);
+					await expect(page.locator('.admin-scope'),route).toBeVisible();
+					expect(await page.locator('.admin-scope').evaluate(element=>getComputedStyle(element).minWidth),route).toBe('0px');
+					if(viewport.width<1280)await expect(page.getByRole('button',{name:'Open admin menu'}),route).toBeVisible();
+					else await expect(page.getByRole('button',{name:'Open admin menu'}),route).toBeHidden();
+					await expectNoHorizontalOverflow(page);
+				});
+			}
+		}
+		await page.request.patch('/api/theme-preference',{data:{theme:'forest-green'}});
+		if(viewport.width<1280){
+			await page.getByRole('button',{name:'Open admin menu'}).click();
+			await expect(page.getByRole('button',{name:'Close admin menu'})).toBeVisible();
+			await page.getByRole('button',{name:'Close admin menu'}).click();
 		}
 	});
 }
@@ -2952,17 +2976,73 @@ test('browser notification settings explain denied permission without prompting 
 	await page.getByRole('link',{name:/Preferences/}).click();
 	await waitForStartup(page);
 	await expect(page.getByRole('heading',{name:'Appearance'})).toBeVisible();
-	await page.getByRole('button',{name:'Switch to light mode'}).last().click();
-	await expect(page.locator('html')).toHaveAttribute('data-theme','light');
-	await expect(page.locator('body')).toHaveCSS('background-color','rgb(249, 251, 253)');
-	await expect(page.getByRole('button',{name:'Switch to dark mode'})).toHaveCount(1);
-	await page.getByRole('button',{name:'Switch to dark mode'}).last().click();
-	await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
-	await expect(page.locator('body')).toHaveCSS('background-color','rgb(11, 15, 26)');
+	await page.getByRole('button',{name:'Premium Dashboard'}).last().click();
+	await expect(page.locator('html')).toHaveAttribute('data-theme-name','premium-dashboard');
+	await expect(page.locator('body')).toHaveCSS('background-color','rgb(247, 248, 245)');
+	await expect(page.getByRole('button',{name:'Forest Green'})).toHaveCount(1);
+	await page.getByRole('button',{name:'Forest Green'}).last().click();
+	await expect(page.locator('html')).toHaveAttribute('data-theme-name','forest-green');
+	await expect(page.locator('body')).toHaveCSS('background-color','rgb(7, 17, 13)');
 	await expect(page.getByRole('heading',{name:'Browser notifications'})).toBeVisible();
 	await expect(page.getByText('Permission: Blocked')).toBeVisible();
 	await expect(page.getByText(/Aurevia cannot prompt again/)).toBeVisible();
 	await expect(page.getByRole('button',{name:'Enable notifications'})).toBeDisabled();
+	await expectNoHorizontalOverflow(page);
+});
+
+test('theme preferences are account-isolated and load on a second device',async({browser})=>{
+	const accountA=await createIsolatedDemoUser('theme-account-a');
+	const accountB=await createIsolatedDemoUser('theme-account-b');
+	const firstDevice=await browser.newContext();
+	const secondDevice=await browser.newContext();
+	try{
+		const firstPage=await firstDevice.newPage();
+		await loginAs(firstPage,accountA.email,accountA.password);
+		const saved=await firstPage.request.patch('/api/theme-preference',{data:{theme:'premium-dashboard'}});
+		expect(saved.status()).toBe(200);
+		expect(await saved.json()).toMatchObject({theme:'premium-dashboard'});
+
+		const secondPage=await secondDevice.newPage();
+		await loginAs(secondPage,accountA.email,accountA.password);
+		await secondPage.goto('/about-me');
+		await expect(secondPage.locator('html')).toHaveAttribute('data-theme-name','premium-dashboard');
+		expect(await secondPage.request.get('/api/theme-preference').then(response=>response.json())).toMatchObject({theme:'premium-dashboard'});
+
+		await logout(secondPage);
+		await loginAs(secondPage,accountB.email,accountB.password);
+		await secondPage.goto('/about-me');
+		await expect(secondPage.locator('html')).toHaveAttribute('data-theme-name','forest-green');
+		expect(await secondPage.request.get('/api/theme-preference').then(response=>response.json())).toMatchObject({theme:'forest-green'});
+	}finally{
+		await firstDevice.close();
+		await secondDevice.close();
+	}
+});
+
+test('notification sound preferences stay device-local, previewable, and persistent across tabs',async({page})=>{
+	const settingsUser=await createIsolatedDemoUser('notification-sounds');
+	await loginAs(page,settingsUser.email,settingsUser.password);
+	await page.setViewportSize({width:390,height:844});
+	await page.goto('/settings#preferences');
+	await waitForStartup(page);
+	const master=page.getByRole('checkbox',{name:/Enable notification sounds/});
+	await expect(master).not.toBeChecked();
+	await master.check();
+	const session=await page.request.get('/api/auth/session').then(response=>response.json());
+	const settingsKey=`aurevia.notification-sounds.v1.${encodeURIComponent(session.user.id)}`;
+	await expect.poll(()=>page.evaluate(key=>JSON.parse(localStorage.getItem(key)||'null')?.enabled,settingsKey)).toBe(true);
+	await page.getByRole('button',{name:'Preview Order filled sound'}).click();
+	await expect(page.getByRole('status').filter({hasText:'Order filled preview played.'})).toBeVisible();
+	const secondTab=await page.context().newPage();
+	try{
+		await secondTab.goto('/settings#preferences');
+		await waitForStartup(secondTab);
+		await expect(secondTab.getByRole('checkbox',{name:/Enable notification sounds/})).toBeChecked();
+		await expect(secondTab.locator('.notification-sound-category-list')).toBeVisible();
+		await page.getByRole('button',{name:'Restore defaults'}).click();
+		await expect(master).not.toBeChecked();
+		await expect.poll(()=>page.evaluate(key=>JSON.parse(localStorage.getItem(key)||'null')?.volume,settingsKey)).toBe(0.45);
+	}finally{await secondTab.close()}
 	await expectNoHorizontalOverflow(page);
 });
 

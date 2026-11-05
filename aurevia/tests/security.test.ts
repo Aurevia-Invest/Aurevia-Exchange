@@ -8,15 +8,18 @@ const mocks=vi.hoisted(()=>({
 	securityRecoveryFindMany:vi.fn(),
 	securityRecoveryUpdateMany:vi.fn(),
 	userUpdateMany:vi.fn(),
+	userFindUnique:vi.fn(),
+	securityRateLimitDeleteMany:vi.fn(),
 }));
 
 vi.mock('@/lib/db',()=>({db:{
 	$queryRaw:mocks.queryRaw,
-	securityRateLimit:{deleteMany:vi.fn()},
+	user:{findUnique:mocks.userFindUnique},
+	securityRateLimit:{deleteMany:mocks.securityRateLimitDeleteMany},
 }}));
 vi.mock('@/lib/notifications',()=>({createNotification:vi.fn()}));
 
-import {consumeSecondFactor} from '@/lib/security-auth';
+import {consumeSecondFactor,verifyAccountCredentials} from '@/lib/security-auth';
 import {encryptTotpSecret,createRecoveryCode,decryptTotpSecret,hashSessionId,verifyRecoveryCode,verifyTotp} from '@/lib/security';
 import {persistentRateLimit} from '@/lib/security-rate-limit';
 
@@ -61,6 +64,19 @@ describe('security cryptography',()=>{
 		expect(await verifyRecoveryCode(code.toLowerCase(),hash)).toBe(true);
 		expect(await verifyRecoveryCode(code,hash)).toBe(true);
 		expect(await verifyRecoveryCode('AAAAAAAA-AAAAAAAA',hash)).toBe(false);
+	});
+
+	it('allows password verification for sensitive actions without a second-factor code',async()=>{
+		mocks.queryRaw.mockResolvedValue([{count:1,resetAt:new Date(Date.now()+60_000)}]);
+		mocks.userFindUnique.mockResolvedValue({
+			id:'user-1',
+			status:'ACTIVE',
+			passwordHash:await bcrypt.hash('StrongPassword42',4),
+			twoFactorEnabled:true,
+			totpSecretEncrypted:encryptTotpSecret(generateSecret()),
+		});
+
+		await expect(verifyAccountCredentials({userId:'user-1',password:'StrongPassword42'})).resolves.toBe(true);
 	});
 
 	it('stores only hashed security rate-limit keys and enforces the returned bucket count',async()=>{

@@ -71,7 +71,6 @@ export default function SecurityCenter({email,twoFactorEnabled:initialTwoFactorE
 	const [currentPassword,setCurrentPassword]=useState('');
 	const [newPassword,setNewPassword]=useState('');
 	const [confirmPassword,setConfirmPassword]=useState('');
-	const [passwordCode,setPasswordCode]=useState('');
 	const [totpExpanded,setTotpExpanded]=useState(false);
 	const [totpPassword,setTotpPassword]=useState('');
 	const [totpCode,setTotpCode]=useState('');
@@ -79,7 +78,6 @@ export default function SecurityCenter({email,twoFactorEnabled:initialTwoFactorE
 	const [recoveryCodes,setRecoveryCodes]=useState<string[]>([]);
 	const [sessionAction,setSessionAction]=useState<SessionAction|null>(null);
 	const [sessionPassword,setSessionPassword]=useState('');
-	const [sessionCode,setSessionCode]=useState('');
 
 	const loadSessions=useCallback(async()=>{
 		setLoadingSessions(true);
@@ -99,11 +97,11 @@ export default function SecurityCenter({email,twoFactorEnabled:initialTwoFactorE
 		event.preventDefault();
 		setBusy(true);setError('');setMessage('');
 		try{
-			const response=await fetch('/api/security/password',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({currentPassword,newPassword,confirmPassword,secondFactorCode:passwordCode})});
+			const response=await fetch('/api/security/password',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({currentPassword,newPassword,confirmPassword})});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to change your password.');
 			await update();
-			setCurrentPassword('');setNewPassword('');setConfirmPassword('');setPasswordCode('');
+			setCurrentPassword('');setNewPassword('');setConfirmPassword('');
 			setPasswordExpanded(false);setMessage(result.message||'Password changed successfully.');
 			await loadSessions();
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to change your password.');}
@@ -125,7 +123,7 @@ export default function SecurityCenter({email,twoFactorEnabled:initialTwoFactorE
 		event.preventDefault();
 		setBusy(true);setError('');setMessage('');
 		try{
-			const response=await fetch('/api/security/totp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:totpSetup?'confirm':'disable',password:totpPassword,secondFactorCode:totpCode})});
+			const response=await fetch('/api/security/totp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:totpSetup?'confirm':'disable',password:totpPassword,...(totpSetup?{secondFactorCode:totpCode}:{})})});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to update two-factor security.');
 			setTwoFactorEnabled(Boolean(result.enabled));
@@ -139,7 +137,7 @@ export default function SecurityCenter({email,twoFactorEnabled:initialTwoFactorE
 	}
 
 	function startSessionAction(action:SessionAction['action'],sessionId?:string){
-		setSessionAction({action,sessionId});setSessionPassword('');setSessionCode('');setError('');setMessage('');
+		setSessionAction({action,sessionId});setSessionPassword('');setError('');setMessage('');
 	}
 
 	async function submitSessionAction(event:FormEvent<HTMLFormElement>){
@@ -147,10 +145,10 @@ export default function SecurityCenter({email,twoFactorEnabled:initialTwoFactorE
 		if(!sessionAction)return;
 		setBusy(true);setError('');setMessage('');
 		try{
-			const response=await fetch('/api/security/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...sessionAction,password:sessionPassword,secondFactorCode:sessionCode})});
+			const response=await fetch('/api/security/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...sessionAction,password:sessionPassword})});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to update active sessions.');
-			setSessionAction(null);setSessionPassword('');setSessionCode('');
+			setSessionAction(null);setSessionPassword('');
 			setMessage('Active sessions updated.');
 			if(result.currentRevoked)await signOut({callbackUrl:'/login'});
 			else await loadSessions();
@@ -174,14 +172,13 @@ export default function SecurityCenter({email,twoFactorEnabled:initialTwoFactorE
 				<PasswordInput label="New password" value={newPassword} onChange={setNewPassword} autoComplete="new-password"/>
 				<div className="security-password-strength" role="status" aria-label={`Password strength: ${passwordStrength.label}`}><span><i style={{width:`${passwordStrength.score*20}%`}}/></span><b>{passwordStrength.label}</b></div>
 				<PasswordInput label="Confirm new password" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password"/>
-				{twoFactorEnabled&&<label className="account-label">Authenticator or recovery code<input className="input" autoComplete="one-time-code" maxLength={64} value={passwordCode} onChange={event=>setPasswordCode(event.target.value)} required/></label>}
 				<p className="text-xs muted">Password must be at least 10 characters and include an uppercase letter, a lowercase letter, and a number.</p>
 				<div className="flex flex-wrap gap-2"><button className="btn bg-gold text-black" type="submit" disabled={busy}>{busy?'Updating…':'Update password'}</button><button className="btn bg-white/5" type="button" disabled={busy} onClick={()=>setPasswordExpanded(false)}>Cancel</button></div>
 			</form>}
 		</article>
 
 		<article className="security-center-card">
-			<div className="security-center-row"><span className="security-center-icon"><GoldShieldIcon/></span><div className="security-center-copy"><b>Two-Factor Authentication</b><p>{twoFactorEnabled?'Authenticator verification is required for subsequent sign-ins.':'Add a time-based authenticator code to password sign-in.'}</p></div><span className={`status-pill ${twoFactorEnabled?'security-status-enabled':''}`}>{twoFactorEnabled?'ENABLED':'DISABLED'}</span></div>
+			<div className="security-center-row"><span className="security-center-icon"><GoldShieldIcon/></span><div className="security-center-copy"><b>Two-Factor Authentication</b><p>{twoFactorEnabled?'Authenticator verification is required when signing in from an unrecognized device.':'Add an authenticator for verification when signing in from an unrecognized device.'}</p></div><span className={`status-pill ${twoFactorEnabled?'security-status-enabled':''}`}>{twoFactorEnabled?'ENABLED':'DISABLED'}</span></div>
 			{!twoFactorAvailable&&<p className="security-center-unavailable" role="status">Authenticator setup is unavailable until the server-side TOTP encryption key is configured.</p>}
 			{twoFactorAvailable&&!totpExpanded&&!recoveryCodes.length&&<button className="security-center-action" type="button" disabled={busy} onClick={()=>{setTotpExpanded(true);setTotpSetup(null);setTotpPassword('');setTotpCode('')}}>{twoFactorEnabled?'Disable two-factor authentication':'Enable two-factor authentication'}</button>}
 			{totpExpanded&&<form className="security-center-form" onSubmit={event=>void updateTotp(event)}>
@@ -189,7 +186,7 @@ export default function SecurityCenter({email,twoFactorEnabled:initialTwoFactorE
 				{!twoFactorEnabled&&!totpSetup&&<p className="text-xs muted">You will scan an authenticator QR code and verify one code before protection is enabled.</p>}
 				{!totpSetup&&!twoFactorEnabled&&<div className="flex flex-wrap gap-2"><button className="btn bg-gold text-black" type="button" disabled={busy||!totpPassword} onClick={()=>void beginTotpEnrollment()}>{busy?'Preparing…':'Continue enrollment'}</button><button className="btn bg-white/5" type="button" disabled={busy} onClick={()=>setTotpExpanded(false)}>Cancel</button></div>}
 				{totpSetup&&<><div className="security-center-qr"><Image src={totpSetup.qrCode} width={176} height={176} unoptimized alt="Scan this QR code with your authenticator application"/><p>Scan the QR code in a compatible authenticator app, or enter this setup key manually:</p><code>{totpSetup.manualKey}</code><small>This enrollment expires in 10 minutes. Keep the setup key private.</small></div><label className="account-label">Authenticator verification code<input className="input" autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={totpCode} onChange={event=>setTotpCode(event.target.value)} required/></label><div className="flex flex-wrap gap-2"><button className="btn bg-gold text-black" type="submit" disabled={busy||!totpPassword||totpCode.length!==6}>{busy?'Verifying…':'Verify and enable'}</button><button className="btn bg-white/5" type="button" disabled={busy} onClick={()=>{setTotpSetup(null);setTotpExpanded(false)}}>Cancel</button></div></>}
-				{twoFactorEnabled&&<><label className="account-label">Authenticator or recovery code<input className="input" autoComplete="one-time-code" maxLength={64} value={totpCode} onChange={event=>setTotpCode(event.target.value)} required/></label><p className="text-xs muted">Disabling two-factor protection requires your current password and an authenticator or unused recovery code.</p><div className="flex flex-wrap gap-2"><button className="btn bg-loss text-black" type="submit" disabled={busy||!totpPassword||!totpCode}>{busy?'Verifying…':'Disable two-factor authentication'}</button><button className="btn bg-white/5" type="button" disabled={busy} onClick={()=>setTotpExpanded(false)}>Cancel</button></div></>}
+				{twoFactorEnabled&&<><p className="text-xs muted">Disabling two-factor protection requires your current password.</p><div className="flex flex-wrap gap-2"><button className="btn bg-loss text-black" type="submit" disabled={busy||!totpPassword}>{busy?'Updating…':'Disable two-factor authentication'}</button><button className="btn bg-white/5" type="button" disabled={busy} onClick={()=>setTotpExpanded(false)}>Cancel</button></div></>}
 			</form>}
 			{recoveryCodes.length>0&&<div className="security-recovery-codes" role="alert"><b>Save these one-time recovery codes now</b><p>Each code works once. They will not be shown again.</p><ul>{recoveryCodes.map(code=><li key={code}><code>{code}</code></li>)}</ul><button className="btn bg-gold text-black" type="button" onClick={()=>{setRecoveryCodes([]);setTotpExpanded(false)}}>I’ve saved my recovery codes</button></div>}
 		</article>
@@ -199,9 +196,8 @@ export default function SecurityCenter({email,twoFactorEnabled:initialTwoFactorE
 			{loadingSessions?<p className="security-center-empty" role="status">Loading active sessions…</p>:sessions.length===0?<p className="security-center-empty">No active sessions are currently listed.</p>:<ul className="security-session-list">{sessions.map(activeSession=><li key={activeSession.id}><div><b>{activeSession.deviceLabel||'Unknown device'}{activeSession.current&&<span className="security-current-badge">CURRENT</span>}</b><small>Created {new Date(activeSession.createdAt).toLocaleString()}</small><small>Last activity {new Date(activeSession.lastActivityAt).toLocaleString()}</small></div><div className="security-session-actions">{!activeSession.current&&<button type="button" className="icon-action" aria-label={`Revoke ${activeSession.deviceLabel||'session'}`} onClick={()=>startSessionAction('revoke-session',activeSession.id)}><Trash2 size={15}/></button>}{activeSession.current&&<span className="muted text-xs">This device</span>}</div></li>)}</ul>}
 			{sessions.length>0&&<div className="security-center-session-buttons"><button type="button" className="btn bg-white/5" disabled={busy||activeCount<2} onClick={()=>startSessionAction('logout-others')}><LogOut size={15}/> Log out other sessions</button><button type="button" className="btn bg-loss text-black" disabled={busy} onClick={()=>startSessionAction('logout-all')}><LogOut size={15}/> Log out all devices</button></div>}
 			{sessionAction&&<form className="security-center-form security-session-reauth" onSubmit={event=>void submitSessionAction(event)}>
-				<p className="text-sm">{needsSessionConfirmation?'Confirm this session change with your current password and, if enabled, your authenticator or recovery code.':'Verify your identity before revoking this session.'}</p>
+				<p className="text-sm">{needsSessionConfirmation?'Confirm this session change with your current password.':'Verify your identity before revoking this session.'}</p>
 				<PasswordInput label="Current password" value={sessionPassword} onChange={setSessionPassword}/>
-				{twoFactorEnabled&&<label className="account-label">Authenticator or recovery code<input className="input" autoComplete="one-time-code" maxLength={64} value={sessionCode} onChange={event=>setSessionCode(event.target.value)} required/></label>}
 				<div className="flex flex-wrap gap-2"><button className="btn bg-gold text-black" type="submit" disabled={busy||!sessionPassword}>{busy?'Verifying…':needsSessionConfirmation?'Confirm session change':'Revoke session'}</button><button className="btn bg-white/5" type="button" disabled={busy} onClick={()=>setSessionAction(null)}>Cancel</button></div>
 			</form>}
 		</article>

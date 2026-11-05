@@ -47,7 +47,6 @@ export async function consumeSecondFactor(tx:SecurityTransaction,input:{
 export async function verifyAccountCredentials(input:{
 	userId:string;
 	password:string;
-	secondFactorCode:string;
 	sessionHash?:string;
 	markRecentForWithdrawal?:boolean;
 }){
@@ -59,16 +58,6 @@ export async function verifyAccountCredentials(input:{
 	}
 	const account=await dbUserForVerification(input.userId);
 	if(!account||account.status!=='ACTIVE'||!await bcrypt.compare(input.password,account.passwordHash))return false;
-	if(account.twoFactorEnabled){
-		if(!input.secondFactorCode||!account.totpSecretEncrypted)return false;
-		const valid=await dbTransaction(tx=>consumeSecondFactor(tx,{
-			userId:account.id,
-			secretEncrypted:account.totpSecretEncrypted,
-			lastTotpCounter:account.lastTotpCounter,
-			code:input.secondFactorCode,
-		}));
-		if(!valid)return false;
-	}
 	if(input.sessionHash&&input.markRecentForWithdrawal&&await dbSessionReauthenticated(input.userId,input.sessionHash,true)!==1)return false;
 	await clearPersistentRateLimit(rateLimitKey);
 	return true;
@@ -85,12 +74,8 @@ async function recordRateLimitNotification(userId:string){
 
 async function dbUserForVerification(userId:string){
 	return db.user.findUnique({where:{id:userId},select:{
-		id:true,status:true,passwordHash:true,twoFactorEnabled:true,totpSecretEncrypted:true,lastTotpCounter:true,
+		id:true,status:true,passwordHash:true,
 	}});
-}
-
-async function dbTransaction<T>(operation:(tx:SecurityTransaction)=>Promise<T>){
-	return db.$transaction(operation,{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
 }
 
 async function dbSessionReauthenticated(userId:string,sessionHash:string,markRecent:boolean){

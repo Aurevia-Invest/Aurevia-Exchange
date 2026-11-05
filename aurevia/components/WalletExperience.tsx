@@ -110,7 +110,6 @@ export default function WalletExperience(){
 	const [balanceVisible,setBalanceVisible]=useState(true);
 	const [submitting,setSubmitting]=useState(false);
 	const [reauthPassword,setReauthPassword]=useState('');
-	const [reauthCode,setReauthCode]=useState('');
 	const currencyPreferenceInitialized=useRef(false);
 	const latestRequest=useRef(0);
 	const [idempotencyKey,setIdempotencyKey]=useState('');
@@ -273,7 +272,7 @@ export default function WalletExperience(){
 		const key=idempotencyKey&&keyFingerprint===fingerprint?idempotencyKey:window.crypto.randomUUID();setIdempotencyKey(key);setKeyFingerprint(fingerprint);
 		try{
 			if(type==='WITHDRAWAL'){
-				const reauthResponse=await fetch('/api/security/reauth',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:reauthPassword,secondFactorCode:reauthCode})});
+				const reauthResponse=await fetch('/api/security/reauth',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:reauthPassword})});
 				const reauthResult=await reauthResponse.json();
 				if(!reauthResponse.ok)throw new Error(reauthResult.error||'Verify your identity before requesting a withdrawal.');
 			}
@@ -293,7 +292,7 @@ export default function WalletExperience(){
 			if(!response.ok)throw new Error(result.error||'Unable to submit this request.');
 			setSubmittedReceipt(result as FundingRecord);
 			setMessage(response.status===200?`Request ${result.id} already exists with status ${String(result.status).replaceAll('_',' ')}. No new request was created.`:`Request ${result.id} submitted for administrator review. The ledger has not been posted.`);
-			setAmount('');setTransactionReference('');setNote('');setProofFile(null);setIdempotencyKey('');setKeyFingerprint('');setConfirming(false);setReauthPassword('');setReauthCode('');
+			setAmount('');setTransactionReference('');setNote('');setProofFile(null);setIdempotencyKey('');setKeyFingerprint('');setConfirming(false);setReauthPassword('');
 			await load();
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to submit this request.');}
 		finally{setSubmitting(false);}
@@ -457,7 +456,7 @@ export default function WalletExperience(){
 					{!availableMethods.length&&!manualRealFunding&&<div className="account-empty" role="status">{methodLoadError||translate('noDepositMethods',{type:type.toLowerCase()})}</div>}
 					{type==='DEPOSIT'&&<section className="account-callout account-mode-notice" aria-label="Administrator review information"><div><h3 className="font-semibold">Administrator Review</h3><p className="mt-1">Status: Pending Administrator Review. If approved, a 10% fee is deducted from the requested amount and the remaining 90% is credited to the internal USD ledger. Aurevia does not receive, process, or independently verify external funds.</p></div></section>}
 					{confirming&&(selectedMethod||manualRealFunding)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),'USD')} from the REAL account. {type==='WITHDRAWAL'?`Selected destination: ${withdrawalDestinationLabel||'saved destination'}. Gross withdrawal: ${money(withdrawalAmounts.grossCents/100,'USD')}. Estimated net payout: ${money(withdrawalAmounts.netCents/100,'USD')} after the ${WITHDRAWAL_COMMISSION_PERCENT}% commission of ${money(withdrawalAmounts.feeCents/100,'USD')}. Eligible requests are ${money(MIN_REAL_WITHDRAWAL_USD,'USD')}–${money(MAX_REAL_WITHDRAWAL_USD,'USD')} and must leave ${money(REQUIRED_REAL_WITHDRAWAL_RESERVE_USD,'USD')} available after other reservations. The amount is reserved for review; the commission is recorded only after an administrator confirms the actual payout. No separate BTC payment is required.`:`If approved, the 10% fee is ${money(Math.round(Number(amount||0)*10)/100,'USD')} and the estimated net ledger credit is ${money(Math.max(0,Number(amount||0)-Math.round(Number(amount||0)*10)/100),'USD')}. This is an internal ledger request only; no external payment occurs.`} <Link className="text-link" href="/about-me">View withdrawal policy</Link></p>
-						{type==='WITHDRAWAL'&&<div className="mt-3 grid max-w-xl gap-3"><p className="text-xs leading-5 muted">For your protection, verify your current password and, if enabled, your authenticator or recovery code. This verification is required again for each withdrawal.</p><label className="account-label">Current password<input className="input" type="password" autoComplete="current-password" maxLength={128} value={reauthPassword} onChange={event=>setReauthPassword(event.target.value)} required/></label><label className="account-label">Authenticator or recovery code (if enabled)<input className="input" autoComplete="one-time-code" maxLength={64} value={reauthCode} onChange={event=>setReauthCode(event.target.value)}/></label></div>}
+						{type==='WITHDRAWAL'&&<div className="mt-3 grid max-w-xl gap-3"><p className="text-xs leading-5 muted">For your protection, verify your current password before submitting each withdrawal request.</p><label className="account-label">Current password<input className="input" type="password" autoComplete="current-password" maxLength={128} value={reauthPassword} onChange={event=>setReauthPassword(event.target.value)} required/></label></div>}
 						<div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting||(type==='WITHDRAWAL'&&!reauthPassword)} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" disabled={submitting} onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
 					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError))||(type==='WITHDRAWAL'&&(realWithdrawalKycBlocked||realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null||availableBalance<=0))}>{type==='DEPOSIT'?'Submit internal credit request':'Submit internal withdrawal request'}</button>}
 				</form>

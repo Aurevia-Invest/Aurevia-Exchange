@@ -9,6 +9,7 @@ const mocks=vi.hoisted(()=>({
 	txResetCreate:vi.fn(),
 	txUserUpdate:vi.fn(),
 	txSecuritySessionUpdateMany:vi.fn(),
+	txTrustedDeviceUpdateMany:vi.fn(),
 	txAuditCreate:vi.fn(),
 	transaction:vi.fn(),
 	isEmailConfigured:vi.fn(),
@@ -60,11 +61,13 @@ describe('password recovery',()=>{
 		mocks.txResetCreate.mockResolvedValue({});
 		mocks.txUserUpdate.mockResolvedValue({id:'user-1'});
 		mocks.txSecuritySessionUpdateMany.mockResolvedValue({count:0});
+		mocks.txTrustedDeviceUpdateMany.mockResolvedValue({count:0});
 		mocks.txAuditCreate.mockResolvedValue({});
 		mocks.transaction.mockImplementation(async(callback)=>callback({
 			passwordResetToken:{updateMany:mocks.txResetUpdateMany,create:mocks.txResetCreate},
 			user:{update:mocks.txUserUpdate},
 			securitySession:{updateMany:mocks.txSecuritySessionUpdateMany},
+			trustedDevice:{updateMany:mocks.txTrustedDeviceUpdateMany},
 			auditLog:{create:mocks.txAuditCreate},
 		}));
 		mocks.isEmailConfigured.mockReturnValue(true);

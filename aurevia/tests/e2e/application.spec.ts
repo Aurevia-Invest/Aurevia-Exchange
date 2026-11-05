@@ -69,8 +69,12 @@ async function loginWithSecondFactor(page:Page,email:string,password:string,code
 	await waitForStartup(page);
 	await page.getByLabel('Email address').fill(email);
 	await page.getByLabel('Password',{exact:true}).fill(password);
-	await page.getByLabel('Authenticator or recovery code').fill(code);
 	await page.getByRole('button',{name:'Sign in'}).click();
+	await expect(page.getByRole('alert')).toBeVisible();
+	if(code){
+		await page.getByLabel('New-device verification code (email or authenticator)').fill(code);
+		await page.getByRole('button',{name:'Sign in'}).click();
+	}
 }
 
 function depositPostOptions(idempotencyKey:string,payload:Record<string,unknown>){
@@ -2929,7 +2933,7 @@ test('TOTP enrollment, login challenge, recovery codes, replay protection, and d
 		await expect(reusePage).toHaveURL(/\/login/);
 		await expect(reusePage.getByRole('alert')).toBeVisible();
 
-		const disable=await page.request.post('/api/security/totp',{data:{action:'disable',password:user.password,secondFactorCode:recoveryCodes[1]}});
+		const disable=await page.request.post('/api/security/totp',{data:{action:'disable',password:user.password}});
 		expect(disable.status()).toBe(200);
 		expect(await page.request.get('/api/profile').then(response=>response.json())).toMatchObject({twoFactorEnabled:false});
 		await expect.poll(async()=> (await totpPage.request.get('/api/dashboard')).status()).toBe(401);

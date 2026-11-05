@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 
 const mocks=vi.hoisted(()=>({
 	userFindFirst:vi.fn(),
+	trustedDeviceCreate:vi.fn(),
 	transaction:vi.fn(),
 	createAccount:vi.fn(),
 	waitlistUpdateMany:vi.fn(),
@@ -22,6 +23,7 @@ const mocks=vi.hoisted(()=>({
 
 vi.mock('@/lib/db',()=>({db:{
 	user:{findFirst:mocks.userFindFirst},
+	trustedDevice:{create:mocks.trustedDeviceCreate},
 	waitlistEntry:{updateMany:mocks.waitlistUpdateMany},
 	$transaction:mocks.transaction,
 }}));
@@ -60,6 +62,7 @@ describe('immediate registration',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
 		mocks.userFindFirst.mockResolvedValue(null);
+		mocks.trustedDeviceCreate.mockResolvedValue({});
 		mocks.trustedProxyClientIp.mockReturnValue('192.0.2.5');
 		mocks.rateLimit.mockReturnValue(undefined);
 		mocks.createAccount.mockResolvedValue({id:'user-1'});
@@ -90,7 +93,13 @@ describe('immediate registration',()=>{
 			termsAcceptedAt:expect.any(Date),
 		}));
 		expect(mocks.createAccount.mock.calls[0][1].passwordHash).not.toBe(payload.password);
-		expect(response.headers.get('set-cookie')).toBeNull();
+		expect(response.headers.get('set-cookie')).toContain('aurevia_trusted_device=');
+		expect(response.headers.get('set-cookie')).toContain('HttpOnly');
+		expect(mocks.trustedDeviceCreate).toHaveBeenCalledWith({data:expect.objectContaining({
+			userId:'user-1',
+			tokenHash:expect.stringMatching(/^[a-f0-9]{64}$/),
+			expiresAt:expect.any(Date),
+		})});
 		expect(mocks.rateLimit).toHaveBeenCalledWith('register:192.0.2.5',5,600_000);
 		expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function),{
 			isolationLevel:Prisma.TransactionIsolationLevel.ReadCommitted,
@@ -149,6 +158,7 @@ describe('immediate registration',()=>{
 
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({created:false,accountMatched:true,email:payload.email});
+		expect(response.headers.get('set-cookie')).toBeNull();
 		expect(mocks.userFindFirst).toHaveBeenCalledWith({
 			where:{email:{equals:payload.email,mode:'insensitive'}},
 			select:{email:true,passwordHash:true,status:true},

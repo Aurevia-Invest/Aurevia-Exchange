@@ -30,7 +30,7 @@ export async function POST(request:Request){
 		if(action==='start'&&currentAccount.twoFactorEnabled)return NextResponse.json({error:'Two-factor authentication is already enabled.'},{status:409});
 		if(action==='confirm'&&currentAccount.twoFactorEnabled)return NextResponse.json({error:'Two-factor authentication is already enabled.'},{status:409});
 		if(action==='disable'&&!currentAccount.twoFactorEnabled)return NextResponse.json({error:'Two-factor authentication is not enabled.'},{status:409});
-		if(!await verifyAccountCredentials({userId:user.id,password,secondFactorCode,sessionHash:user.sessionHash}))return NextResponse.json({error:'Current password or authenticator code is incorrect.'},{status:401});
+		if(!await verifyAccountCredentials({userId:user.id,password,sessionHash:user.sessionHash}))return NextResponse.json({error:'Current password is incorrect.'},{status:401});
 
 		if(action==='start'){
 			const account=await db.user.findUnique({where:{id:user.id},select:{email:true}});

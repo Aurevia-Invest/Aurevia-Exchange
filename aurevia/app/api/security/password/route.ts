@@ -7,12 +7,12 @@ import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {verifyAccountCredentials} from '@/lib/security-auth';
 import {sendSecurityEmail} from '@/lib/security-notifications';
+import {readTrustedDeviceToken,trustedDeviceTokenHash} from '@/lib/trusted-device';
 
 const schema=z.object({
 	currentPassword:z.string().min(1).max(128),
 	newPassword:z.string().min(10).max(128).regex(/[a-z]/).regex(/[A-Z]/).regex(/[0-9]/),
 	confirmPassword:z.string().min(1).max(128),
-	secondFactorCode:z.string().max(64).optional().default(''),
 });
 
 export async function POST(request:Request){
@@ -20,17 +20,22 @@ export async function POST(request:Request){
 		const user=await requireUser();
 		const parsed=schema.safeParse(await request.json());
 		if(!parsed.success)return NextResponse.json({error:'Use a password of at least 10 characters with uppercase, lowercase, and a number.'},{status:400});
-		const {currentPassword,newPassword,confirmPassword,secondFactorCode}=parsed.data;
+		const {currentPassword,newPassword,confirmPassword}=parsed.data;
 		if(newPassword!==confirmPassword)return NextResponse.json({error:'New password and confirmation do not match.'},{status:400});
 		if(newPassword===currentPassword)return NextResponse.json({error:'Choose a new password different from your current password.'},{status:400});
-		if(!await verifyAccountCredentials({userId:user.id,password:currentPassword,secondFactorCode,sessionHash:user.sessionHash}))return NextResponse.json({error:'Current password or authenticator code is incorrect.'},{status:401});
+		if(!await verifyAccountCredentials({userId:user.id,password:currentPassword,sessionHash:user.sessionHash}))return NextResponse.json({error:'Current password is incorrect.'},{status:401});
 		const passwordHash=await bcrypt.hash(newPassword,12);
 		const currentSessionHash=user.sessionHash;
+		const trustedToken=readTrustedDeviceToken(request.headers.get('cookie'));
 		await db.$transaction(async tx=>{
 			const now=new Date();
 			await tx.user.update({where:{id:user.id},data:{passwordHash,activeSessionId:null,activeSessionUpdatedAt:null}});
 			await tx.securitySession.updateMany({where:{userId:user.id,revokedAt:null,sessionHash:{not:currentSessionHash}},data:{revokedAt:now}});
 			await tx.securitySession.updateMany({where:{userId:user.id,sessionHash:currentSessionHash,revokedAt:null},data:{rotationRequired:true,reauthenticatedAt:null,lastActivityAt:now}});
+			await tx.trustedDevice.updateMany({
+				where:{userId:user.id,revokedAt:null,...(trustedToken?{tokenHash:{not:trustedDeviceTokenHash(trustedToken)}}:{})},
+				data:{revokedAt:now},
+			});
 			await createNotification(tx,{
 				userId:user.id,
 				type:NotificationType.SECURITY,

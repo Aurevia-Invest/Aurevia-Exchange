@@ -6,12 +6,12 @@ import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {verifyAccountCredentials} from '@/lib/security-auth';
 import {sendSecurityEmail} from '@/lib/security-notifications';
+import {readTrustedDeviceToken,trustedDeviceTokenHash} from '@/lib/trusted-device';
 
 const schema=z.object({
 	action:z.enum(['revoke-session','logout-others','logout-all']),
 	sessionId:z.string().optional(),
 	password:z.string().min(1).max(128),
-	secondFactorCode:z.string().max(64).optional().default(''),
 });
 
 export async function GET(){
@@ -37,10 +37,11 @@ export async function POST(request:Request){
 		const user=await requireUser();
 		const parsed=schema.safeParse(await request.json());
 		if(!parsed.success)return NextResponse.json({error:'Session security request is invalid.'},{status:400});
-		const {action,sessionId,password,secondFactorCode}=parsed.data;
+		const {action,sessionId,password}=parsed.data;
 		if(action==='revoke-session'&&!sessionId)return NextResponse.json({error:'Select a session to revoke.'},{status:400});
-		if(!await verifyAccountCredentials({userId:user.id,password,secondFactorCode,sessionHash:user.sessionHash}))return NextResponse.json({error:'Current password or authenticator code is incorrect.'},{status:401});
+		if(!await verifyAccountCredentials({userId:user.id,password,sessionHash:user.sessionHash}))return NextResponse.json({error:'Current password is incorrect.'},{status:401});
 		const currentHash=user.sessionHash;
+		const trustedToken=readTrustedDeviceToken(request.headers.get('cookie'));
 		const now=new Date();
 		let currentRevoked=false;
 		await db.$transaction(async tx=>{
@@ -52,6 +53,10 @@ export async function POST(request:Request){
 			}else{
 				const where=action==='logout-others'?{userId:user.id,revokedAt:null,sessionHash:{not:currentHash}}:{userId:user.id,revokedAt:null};
 				await tx.securitySession.updateMany({where,data:{revokedAt:now}});
+				await tx.trustedDevice.updateMany({
+					where:{userId:user.id,revokedAt:null,...(action==='logout-others'&&trustedToken?{tokenHash:{not:trustedDeviceTokenHash(trustedToken)}}:{})},
+					data:{revokedAt:now},
+				});
 				currentRevoked=action==='logout-all';
 				if(action==='logout-all')await tx.user.update({where:{id:user.id},data:{activeSessionId:null,activeSessionUpdatedAt:null}});
 			}

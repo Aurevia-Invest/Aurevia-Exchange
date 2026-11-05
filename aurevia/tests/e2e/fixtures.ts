@@ -1,5 +1,7 @@
 import {expect,test as base,Page} from '@playwright/test';
-import {randomInt} from 'node:crypto';
+import {PrismaClient} from '@prisma/client';
+import {randomBytes,randomInt} from 'node:crypto';
+import {TRUSTED_DEVICE_COOKIE,TRUSTED_DEVICE_MAX_AGE_SECONDS,trustedDeviceTokenHash} from '@/lib/trusted-device';
 
 type RuntimeCapture={consoleErrors:string[];pageErrors:string[];failedRequests:string[];failedResponses:Array<{url:string;status:number}>};
 const marketProviderConfigured=!process.env.AUREVIA_E2E_DATABASE_URL&&Boolean(
@@ -8,6 +10,10 @@ const marketProviderConfigured=!process.env.AUREVIA_E2E_DATABASE_URL&&Boolean(
 );
 const appOrigin=process.env.AUREVIA_E2E_APP_URL||'http://127.0.0.1:4310';
 const credentialCallback='**/api/auth/callback/credentials**';
+const e2eDatabaseUrl=process.env.AUREVIA_E2E_DATABASE_URL;
+const e2eDb=e2eDatabaseUrl?new PrismaClient({datasourceUrl:e2eDatabaseUrl}):null;
+
+base.afterAll(async()=>{await e2eDb?.$disconnect()});
 
 function isolatedLoginIp(){
 	return `198.18.${randomInt(0,256)}.${randomInt(1,255)}`;
@@ -32,7 +38,34 @@ export async function waitForStartup(page:Page){
 	await expect(page.locator('.scene-content > div[inert]')).toHaveCount(0);
 }
 
-export async function loginAs(page:Page,email:string,password:string){
+async function seedTrustedDevice(page:Page,email:string){
+	if(!e2eDb||!e2eDatabaseUrl)throw new Error('Refusing to seed a trusted device without the isolated E2E database.');
+	const target=new URL(e2eDatabaseUrl);
+	const databaseName=decodeURIComponent(target.pathname.replace(/^\/+/,''));
+	if(!['localhost','127.0.0.1','::1'].includes(target.hostname)||!['postgresql:','postgres:'].includes(target.protocol)||!/_e2e$/i.test(databaseName))throw new Error('Refusing to seed a trusted device outside the isolated E2E database.');
+	const user=await e2eDb.user.findFirst({where:{email:{equals:email,mode:'insensitive'}},select:{id:true}});
+	if(!user)throw new Error('Unable to find the isolated E2E login user.');
+	const token=randomBytes(32).toString('base64url');
+	await e2eDb.trustedDevice.create({data:{
+		userId:user.id,
+		tokenHash:trustedDeviceTokenHash(token),
+		deviceLabel:'Playwright test device',
+		userAgent:'Playwright E2E',
+		expiresAt:new Date(Date.now()+TRUSTED_DEVICE_MAX_AGE_SECONDS*1000),
+	}});
+	await page.context().addCookies([{
+		name:TRUSTED_DEVICE_COOKIE,
+		value:token,
+		url:appOrigin,
+		httpOnly:true,
+		secure:true,
+		sameSite:'Lax',
+		expires:Math.floor(Date.now()/1000)+TRUSTED_DEVICE_MAX_AGE_SECONDS,
+	}]);
+}
+
+export async function loginAs(page:Page,email:string,password:string,options:{trustedDevice?:boolean}={}){
+	if(options.trustedDevice!==false)await seedTrustedDevice(page,email);
 	const loginIp=isolatedLoginIp();
 	const addIsolatedLoginIp=(route:import('@playwright/test').Route)=>route.continue({headers:{...route.request().headers(),'x-forwarded-for':loginIp}});
 	const administrator=email.toLowerCase()===process.env.AUREVIA_E2E_ADMIN_EMAIL?.toLowerCase();

@@ -5,19 +5,18 @@ import {verifyAccountCredentials} from '@/lib/security-auth';
 
 const schema=z.object({
 	password:z.string().min(1).max(128),
-	secondFactorCode:z.string().max(64).optional().default(''),
 });
 
 export async function POST(request:Request){
 	try{
 		const user=await requireUser();
 		const parsed=schema.safeParse(await request.json());
-		if(!parsed.success)return NextResponse.json({error:'Enter your current password and verification code.'},{status:400});
+		if(!parsed.success)return NextResponse.json({error:'Enter your current password.'},{status:400});
 		const verified=await verifyAccountCredentials({...parsed.data,userId:user.id,sessionHash:user.sessionHash,markRecentForWithdrawal:true});
-		if(!verified)return NextResponse.json({error:'Current password or authenticator code is incorrect.'},{status:401});
+		if(!verified)return NextResponse.json({error:'Current password is incorrect.'},{status:401});
 		return NextResponse.json({ok:true,expiresAt:new Date(Date.now()+5*60_000).toISOString()},{headers:{'Cache-Control':'no-store'}});
 	}catch(error){
-		if(error instanceof ZodError)return NextResponse.json({error:'Enter your current password and verification code.'},{status:400});
+		if(error instanceof ZodError)return NextResponse.json({error:'Enter your current password.'},{status:400});
 		if(error instanceof SyntaxError)return NextResponse.json({error:'Verification details must be valid JSON.'},{status:400});
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
 		if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});

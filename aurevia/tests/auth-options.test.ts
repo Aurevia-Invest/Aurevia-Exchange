@@ -15,6 +15,7 @@ const authMocks=vi.hoisted(()=>({
 	rateLimit:vi.fn(),
 	persistentRateLimit:vi.fn(),
 	clearPersistentRateLimit:vi.fn(),
+	akedlyAssertConfigured:vi.fn(()=>{throw new Error('AKEDLY_PROVIDER_UNAVAILABLE')}),
 }));
 
 vi.mock('next-auth/providers/credentials',()=>({default:(configuration:unknown)=>configuration}));
@@ -26,6 +27,7 @@ vi.mock('@/lib/db',()=>({db:{
 }}));
 vi.mock('@/lib/notifications',()=>({createNotification:vi.fn()}));
 vi.mock('@/lib/security-auth',()=>({consumeSecondFactor:authMocks.consumeSecondFactor}));
+vi.mock('@/lib/akedly',()=>({assertAkedlyConfigured:authMocks.akedlyAssertConfigured}));
 vi.mock('@/lib/rate-limit',()=>({
 	rateLimit:authMocks.rateLimit,
 	clearRateLimit:vi.fn(),
@@ -132,6 +134,19 @@ describe('credentials authorization',()=>{
 		expect(authMocks.securitySessionCreate).toHaveBeenCalledOnce();
 	});
 
+	it('allows an ordinary password sign-in when Akedly is unavailable',async()=>{
+		const password='CorrectPassword42';
+		authMocks.userFindFirst.mockResolvedValue({
+			id:'user-1',email:'user@example.invalid',name:'User',
+			passwordHash:await bcrypt.hash(password,4),role:'USER',accountMode:'DEMO',status:'ACTIVE',
+			activeSessionId:null,activeSessionUpdatedAt:null,
+		});
+
+		await expect(authorize({username:'user@example.invalid',email:'user@example.invalid',password})).resolves.toMatchObject({id:'user-1'});
+		expect(authMocks.akedlyAssertConfigured).not.toHaveBeenCalled();
+		expect(authMocks.securitySessionCreate).toHaveBeenCalledOnce();
+	});
+
 	it('accepts a correct password with leading or trailing spaces',async()=>{
 		const password=' CorrectPassword42 ';
 		authMocks.userFindFirst.mockResolvedValue({
@@ -156,6 +171,41 @@ describe('credentials authorization',()=>{
 		expect(authMocks.rateLimit).toHaveBeenCalledWith('credential-login:unknown',20,15*60_000);
 		expect(authMocks.persistentRateLimit).toHaveBeenCalledWith('credential-login-account:user-1',12,15*60_000);
 		expect(authMocks.securitySessionCreate).not.toHaveBeenCalled();
+	});
+
+	it('rejects a nonexistent account without creating a session',async()=>{
+		authMocks.userFindFirst.mockResolvedValue(null);
+
+		await expect(authorize({
+			username:'missing@example.invalid',
+			email:'missing@example.invalid',
+			password:'CorrectPassword42',
+		})).resolves.toBeNull();
+
+		expect(authMocks.securitySessionCreate).not.toHaveBeenCalled();
+	});
+
+	it('returns a safe reference for database outages and logs only categorized diagnostics',async()=>{
+		const databaseError=Object.assign(new Error('sensitive database exception detail'),{code:'P2022'});
+		authMocks.userFindFirst.mockRejectedValue(databaseError);
+		const errorLog=vi.spyOn(console,'error').mockImplementation(()=>{});
+
+		try{
+			await expect(authorize({
+				username:'user@example.invalid',
+				email:'user@example.invalid',
+				password:'CorrectPassword42',
+			})).rejects.toThrow(/^AUTHENTICATION_SERVICE_UNAVAILABLE:[0-9a-f-]{36}$/i);
+			expect(errorLog).toHaveBeenCalledWith('[auth] Credential authorization failed.',expect.objectContaining({
+				category:'DATABASE_SCHEMA_MISMATCH',
+				errorCode:'P2022',
+				errorName:'Error',
+				referenceId:expect.stringMatching(/^[0-9a-f-]{36}$/i),
+			}));
+			expect(JSON.stringify(errorLog.mock.calls)).not.toContain('sensitive database exception detail');
+		}finally{
+			errorLog.mockRestore();
+		}
 	});
 
 	it('allows valid credentials through even if a prior failed attempt exhausted the IP limit',async()=>{

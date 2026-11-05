@@ -67,6 +67,23 @@ describe('Akedly webhook route',()=>{
 		expect(mocks.reconcile).not.toHaveBeenCalled();
 	});
 
+	it('accepts the Standard Webhooks header aliases supported by Svix',async()=>{
+		const request=signedRequest(result());
+		const response=await POST(new Request(request.url,{
+			method:'POST',
+			headers:{
+				'content-type':'application/json',
+				'webhook-id':request.headers.get('svix-id')!,
+				'webhook-timestamp':request.headers.get('svix-timestamp')!,
+				'webhook-signature':request.headers.get('svix-signature')!,
+			},
+			body:JSON.stringify(result()),
+		}));
+
+		expect(response.status).toBe(200);
+		expect(mocks.complete).toHaveBeenCalledWith('attempt_1234567890',result(),'webhook');
+	});
+
 	it('rejects invalid signatures without processing the callback',async()=>{
 		const request=signedRequest(result());
 		const headers=new Headers(request.headers);
@@ -104,23 +121,69 @@ describe('Akedly webhook route',()=>{
 		expect(mocks.complete).not.toHaveBeenCalled();
 	});
 
-	it('rejects unsigned event webhooks and incomplete signature headers',async()=>{
-		const unsignedEvent=await POST(new Request('https://aurevia.test/api/webhooks/akedly',{
+	it('rejects unsigned event webhooks',async()=>{
+		const response=await POST(new Request('https://aurevia.test/api/webhooks/akedly',{
 			method:'POST',
 			headers:{'content-type':'application/json'},
 			body:JSON.stringify({eventType:'otp.channels.sent'}),
 		}));
-		const partialSignature=await POST(new Request('https://aurevia.test/api/webhooks/akedly',{
-			method:'POST',
-			headers:{'content-type':'application/json','svix-id':'msg_123456789'},
-			body:JSON.stringify(result()),
-		}));
 
-		expect(unsignedEvent.status).toBe(401);
-		expect(partialSignature.status).toBe(401);
+		expect(response.status).toBe(401);
 		expect(mocks.complete).not.toHaveBeenCalled();
 		expect(mocks.reconcile).not.toHaveBeenCalled();
 	});
+
+	it.each(['svix-id','svix-timestamp','svix-signature'])(
+		'reconciles an unsigned result if the %s signature header is missing',
+		async missingHeader=>{
+			const request=signedRequest(result());
+			const headers=new Headers(request.headers);
+			headers.delete(missingHeader);
+			const partialRequest=new Request(request.url,{method:'POST',headers,body:JSON.stringify(result())});
+			const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+
+			const response=await POST(partialRequest);
+
+			expect(response.status).toBe(200);
+			expect(mocks.reconcile).toHaveBeenCalledWith('attempt_1234567890');
+			expect(mocks.complete).not.toHaveBeenCalled();
+			expect(warning).toHaveBeenCalledWith(
+				'[akedly-webhook] Signature headers are incomplete.',
+				expect.objectContaining({
+					endpoint:'/api/webhooks/akedly',
+					failureCode:'INCOMPLETE_SIGNATURE_HEADERS',
+					presentHeaders:expect.any(Array),
+					missingHeaders:[missingHeader],
+				}),
+			);
+			expect(JSON.stringify(warning.mock.calls)).not.toContain(request.headers.get('svix-signature'));
+			warning.mockRestore();
+		},
+	);
+
+	it('rejects events with incomplete signature headers and logs only header names',async()=>{
+		const request=signedRequest({eventType:'otp.channels.sent'});
+		const headers=new Headers(request.headers);
+		headers.delete('svix-id');
+		const partialRequest=new Request(request.url,{method:'POST',headers,body:JSON.stringify({eventType:'otp.channels.sent'})});
+		const warning=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+
+		const response=await POST(partialRequest);
+
+		expect(response.status).toBe(401);
+		expect(mocks.complete).not.toHaveBeenCalled();
+		expect(mocks.reconcile).not.toHaveBeenCalled();
+		expect(warning).toHaveBeenCalledWith(
+			'[akedly-webhook] Signature headers are incomplete.',
+			expect.objectContaining({
+				presentHeaders:['svix-timestamp','svix-signature'],
+				missingHeaders:['svix-id'],
+			}),
+		);
+		expect(JSON.stringify(warning.mock.calls)).not.toContain(request.headers.get('svix-signature'));
+		warning.mockRestore();
+	});
+
 	it('rate limits webhook requests before processing events',async()=>{
 		mocks.rateLimit.mockImplementation(()=>{throw new Error('RATE_LIMITED')});
 		const response=await POST(signedRequest(result()));

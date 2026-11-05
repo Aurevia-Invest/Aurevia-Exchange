@@ -47,6 +47,9 @@ export default function Login(){
 				await update();router.replace(callbackUrl);router.refresh();
 			}else if(result?.error==='CredentialsSignin'){
 				setError('Email address or password is incorrect.');
+			}else if(result?.error?.startsWith('AUTHENTICATION_SERVICE_UNAVAILABLE:')){
+				const referenceId=result.error.slice('AUTHENTICATION_SERVICE_UNAVAILABLE:'.length);
+				setError(/^[0-9a-f-]{36}$/i.test(referenceId)?`${translate('unableAuth')} Reference ID: ${referenceId}`:translate('unableAuth'));
 			}else{
 				setError(translate('unableAuth'));
 			}

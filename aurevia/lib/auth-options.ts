@@ -31,6 +31,12 @@ function safeAuditError(error:unknown){
   const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
   return /^[A-Z0-9_]{2,32}$/.test(code)?code:error instanceof Error?error.name:'UnknownError';
 }
+function authFailureCategory(error:unknown){
+  const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
+  if(['P2021','P2022'].includes(code))return 'DATABASE_SCHEMA_MISMATCH';
+  if(['P1001','P1002','P1017'].includes(code))return 'DATABASE_UNAVAILABLE';
+  return 'AUTHENTICATION_DEPENDENCY_FAILURE';
+}
 export const authOptions:NextAuthOptions={
   session:{strategy:'jwt',maxAge:AUTH_SESSION_MAX_AGE_SECONDS},
   jwt:{maxAge:AUTH_SESSION_MAX_AGE_SECONDS},
@@ -44,6 +50,7 @@ export const authOptions:NextAuthOptions={
       adminLogin:{label:'Administrator sign-in',type:'text'},
     },
     async authorize(c,request){
+      const referenceId=randomUUID();
       const password=c?.password;
       if(!password)return null;
       const username=(c?.username||'').trim();
@@ -69,6 +76,7 @@ export const authOptions:NextAuthOptions={
       const authConfig=serverConfig.auth;
       const {isAdminUsername,lookupEmail}=resolveCredentialLookup(username,email,authConfig.adminUsername,authConfig.adminEmail,c?.adminLogin==='true');
       if(!lookupEmail){await writeLoginAudit('FAILED',undefined,undefined,'MISSING_IDENTIFIER');return null;}
+      try{
       let u=await db.user.findFirst({where:{email:{equals:lookupEmail,mode:'insensitive'}}});
       if((!u||u.role!==Role.ADMIN)&&c?.adminLogin==='true'&&authConfig.adminUsername&&authConfig.adminEmail&&authConfig.adminPassword?.length>=12&&matchesConfiguredAdminIdentity(username,email,authConfig.adminUsername,authConfig.adminEmail)&&matchesConfiguredAdminPassword(passwordForAuthentication,authConfig.adminPassword)){
         const configuredEmail=authConfig.adminEmail.trim().toLowerCase();
@@ -122,6 +130,16 @@ export const authOptions:NextAuthOptions={
       await db.securitySession.create({data:{userId:authenticatedUser.id,sessionHash:hashSessionId(sessionId),deviceLabel:label,userAgent,expiresAt:new Date(now.getTime()+AUTH_SESSION_MAX_AGE_SECONDS*1000)}});
       await writeLoginAudit('SUCCESS',authenticatedUser.id,sessionId);
       return {id:authenticatedUser.id,email:authenticatedUser.email,name:authenticatedUser.name,role:authenticatedUser.role,accountMode:authenticatedUser.accountMode,sessionId};
+      }catch(error){
+        const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
+        console.error('[auth] Credential authorization failed.',{
+          referenceId,
+          category:authFailureCategory(error),
+          errorName:error instanceof Error?error.name:'UnknownError',
+          ...(/^[A-Z0-9_]{2,32}$/.test(code)?{errorCode:code}:{}),
+        });
+        throw new Error(`AUTHENTICATION_SERVICE_UNAVAILABLE:${referenceId}`);
+      }
     }
   })],
   callbacks:{
@@ -143,7 +161,10 @@ export const authOptions:NextAuthOptions={
           const oldTimestamp=current.activeSessionUpdatedAt!;
           try{
             activeSession=await db.securitySession.create({data:{userId:String(token.id),sessionHash:hashSessionId(token.sessionId!),createdAt:oldTimestamp,lastActivityAt:oldTimestamp,expiresAt:new Date(oldTimestamp.getTime()+AUTH_SESSION_MAX_AGE_SECONDS*1000)},select:{id:true,lastActivityAt:true}});
-          }catch{activeSession=await db.securitySession.findFirst({where:{userId:String(token.id),sessionHash:hashSessionId(token.sessionId!),revokedAt:null,expiresAt:{gt:new Date()}},select:{id:true,lastActivityAt:true}});}
+          }catch(error){
+            if(!(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'))throw error;
+            activeSession=await db.securitySession.findFirst({where:{userId:String(token.id),sessionHash:hashSessionId(token.sessionId!),revokedAt:null,expiresAt:{gt:new Date()}},select:{id:true,lastActivityAt:true}});
+          }
         }
         if(!current||current.status!=='ACTIVE'||!activeSession){token.id='';token.name=null;token.email=null;token.role=undefined;token.accountMode=undefined;token.sessionId=undefined;}
         else{

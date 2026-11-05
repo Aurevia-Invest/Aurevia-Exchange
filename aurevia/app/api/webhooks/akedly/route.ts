@@ -16,21 +16,17 @@ export async function POST(request:Request){
 	}
 	if(!akedlyIsConfigured())return NextResponse.json({error:'Akedly webhook verification is not configured.'},{status:503});
 	const headers=Object.fromEntries(request.headers.entries());
-	const signature=headers['svix-signature']||headers['webhook-signature'];
-	const messageId=headers['svix-id']||headers['webhook-id'];
-	const timestamp=headers['svix-timestamp']||headers['webhook-timestamp'];
-	const hasSignatureHeaders=Boolean(signature||messageId||timestamp);
-	const signed=Boolean(signature&&messageId&&timestamp);
-	if(hasSignatureHeaders&&!signed){
-		console.warn('[akedly-webhook] Signature headers are incomplete.',{
-			requestId,
-			referenceId:requestId,
-			endpoint:'/api/webhooks/akedly',
-			failureCode:'INCOMPLETE_SIGNATURE_HEADERS',
-			failureTimestamp:new Date().toISOString(),
-		});
-		return NextResponse.json({error:'Akedly signature headers are incomplete.'},{status:401});
-	}
+	const signatureHeaderGroups=[
+		{canonical:'svix-id',aliases:['svix-id','webhook-id']},
+		{canonical:'svix-timestamp',aliases:['svix-timestamp','webhook-timestamp']},
+		{canonical:'svix-signature',aliases:['svix-signature','webhook-signature']},
+	] as const;
+	const presentSignatureHeaders=signatureHeaderGroups.flatMap(({aliases})=>aliases.filter(name=>Boolean(headers[name])));
+	const missingSignatureHeaders=signatureHeaderGroups
+		.filter(({aliases})=>!aliases.some(name=>Boolean(headers[name])))
+		.map(({canonical})=>canonical);
+	const hasSignatureHeaders=presentSignatureHeaders.length>0;
+	const signed=missingSignatureHeaders.length===0;
 	let rawBody:string;
 	try{
 		rawBody=await readAkedlyWebhookBody(request);
@@ -59,17 +55,30 @@ export async function POST(request:Request){
 		return NextResponse.json({error:'Webhook body must contain valid JSON.'},{status:400});
 	}
 	if(!isRecord(payload))return NextResponse.json({error:'Invalid Akedly webhook payload.'},{status:400});
+	if(hasSignatureHeaders&&!signed){
+		console.warn('[akedly-webhook] Signature headers are incomplete.',{
+			requestId,
+			referenceId:requestId,
+			endpoint:'/api/webhooks/akedly',
+			failureCode:'INCOMPLETE_SIGNATURE_HEADERS',
+			presentHeaders:presentSignatureHeaders,
+			missingHeaders:missingSignatureHeaders,
+			failureTimestamp:new Date().toISOString(),
+		});
+	}
 	const attempt=payload.widgetAttempt;
 	const attemptId=isRecord(attempt)&&typeof attempt.attemptId==='string'?attempt.attemptId:null;
 	if(typeof payload.eventType==='string'){
 		if(!signed){
-			console.warn('[akedly-webhook] Unsigned provider event rejected.',{
-				requestId,
-				referenceId:requestId,
-				endpoint:'/api/webhooks/akedly',
-				failureCode:'UNSIGNED_PROVIDER_EVENT',
-				failureTimestamp:new Date().toISOString(),
-			});
+			if(!hasSignatureHeaders){
+				console.warn('[akedly-webhook] Unsigned provider event rejected.',{
+					requestId,
+					referenceId:requestId,
+					endpoint:'/api/webhooks/akedly',
+					failureCode:'UNSIGNED_PROVIDER_EVENT',
+					failureTimestamp:new Date().toISOString(),
+				});
+			}
 			return NextResponse.json({error:'Signed Akedly event webhooks are required.'},{status:401});
 		}
 		return NextResponse.json({received:true});

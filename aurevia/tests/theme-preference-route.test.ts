@@ -1,4 +1,5 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
+import {Prisma} from '@prisma/client';
 
 const mocks=vi.hoisted(()=>({
 	getServerSession:vi.fn(),
@@ -85,5 +86,18 @@ describe('account theme preference',()=>{
 		expect(await response.json()).toEqual({error:'Unable to save the theme preference.'});
 		expect(errorLog).toHaveBeenCalledOnce();
 		errorLog.mockRestore();
+	});
+
+	it('explains when account theme persistence needs its additive migration',async()=>{
+		mocks.userUpdateMany.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError(
+			'The column User.preferredTheme does not exist.',
+			{code:'P2022',clientVersion:'5.22.0'},
+		));
+		const response=await PATCH(request({theme:'premium-dashboard'}));
+		expect(response.status).toBe(503);
+		expect(await response.json()).toEqual({
+			code:'THEME_MIGRATION_REQUIRED',
+			error:'Account theme saving is not enabled yet. The account-theme database migration must be applied first.',
+		});
 	});
 });

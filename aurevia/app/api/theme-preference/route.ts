@@ -1,5 +1,6 @@
 import {getServerSession} from 'next-auth';
 import {NextResponse} from 'next/server';
+import {Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {requireAdmin,requireUser} from '@/lib/auth';
 import {authOptions} from '@/lib/auth-options';
@@ -28,6 +29,18 @@ function logFailure(operation:string,error:unknown){
 	console.error(`Theme preference ${operation} failed (${error instanceof Error?error.name:'UnknownError'}).`);
 }
 
+function unavailableResponse(error:unknown,operation:'read'|'save'){
+	if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2022'){
+		console.error(`Theme preference ${operation} failed (account theme migration is not applied).`);
+		return NextResponse.json({
+			code:'THEME_MIGRATION_REQUIRED',
+			error:'Account theme saving is not enabled yet. The account-theme database migration must be applied first.',
+		},{status:503});
+	}
+	logFailure(operation,error);
+	return NextResponse.json({error:operation==='read'?'Theme preference is unavailable.':'Unable to save the theme preference.'},{status:503});
+}
+
 export async function GET(){
 	try{
 		const {user,response}=await getAccount();
@@ -38,8 +51,7 @@ export async function GET(){
 		return NextResponse.json({theme:themeFromPreference(preference.preferredTheme)},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(isAuthError(error))return authErrorResponse(error);
-		logFailure('read',error);
-		return NextResponse.json({error:'Theme preference is unavailable.'},{status:503});
+		return unavailableResponse(error,'read');
 	}
 }
 
@@ -68,7 +80,6 @@ export async function PATCH(request:Request){
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Choose Forest Green or Premium Dashboard.'},{status:400});
 		if(isAuthError(error))return authErrorResponse(error);
-		logFailure('save',error);
-		return NextResponse.json({error:'Unable to save the theme preference.'},{status:503});
+		return unavailableResponse(error,'save');
 	}
 }

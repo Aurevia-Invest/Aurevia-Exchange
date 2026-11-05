@@ -158,6 +158,32 @@ html[data-theme-name] :is(.skeleton,.loading-skeleton){background:var(--theme-sk
 html[data-theme-name] :is(.admin-shell-chrome,.admin-main,.admin-content,.admin-dashboard){background:var(--theme-page)}
 html[data-theme-name] :is(.page-loading,.page-transition-loading){background:var(--theme-page);color:var(--theme-text)}
 html[data-theme-name] main[class~="bg-black"]{background-color:var(--theme-page)}
+html[data-theme-name] .user-dashboard-page{color:var(--theme-text)}
+html[data-theme-name] .user-dashboard-page .user-dashboard-welcome h1,
+html[data-theme-name] .user-dashboard-page .user-market-assets-heading h2{color:var(--theme-text)}
+html[data-theme-name] .user-dashboard-page :is(.user-dashboard-welcome p,.user-dashboard-metric-heading,.user-dashboard-metric-foot,.user-dashboard-real-note,.user-dashboard-real-overview,.user-dashboard-real-overview p+p,.user-market-assets-heading>small,.user-market-categories button,.user-chart-timeframes button,.user-market-asset>span small,.user-market-asset>em,.user-dashboard-panel-heading p,.user-dashboard-panel-heading>svg,.user-activity-disclosure-meta,.user-market-quote .user-dashboard-muted,.user-chart-empty,.user-dashboard-footnote,.user-allocation-chart>div:last-child small,.user-allocation-list>div>span,.user-allocation-list small,.user-dashboard-table th,.user-dashboard-table td,.user-dashboard-table td>small,.user-opportunity-grid article>p,.user-opportunity-grid dt,.user-wallet-panel>p,.user-wallet-panel>small,.user-wallet-demo-note,.user-quick-action,.user-quick-action>svg,.user-recent-activity li small,.user-recent-activity li time,.user-dashboard-empty,.user-dashboard-loading,.user-support-panel small,.mobile-activity-disclosure>summary>small){color:var(--theme-text-secondary)}
+html[data-theme-name] .user-dashboard-page :is(.user-dashboard-metric>strong,.user-market-asset>span b,.user-market-asset>strong,.user-dashboard-panel-heading h2,.user-activity-disclosure-heading b,.user-market-quote strong,.user-allocation-chart>div:last-child b,.user-allocation-list b,.user-dashboard-table td>b,.user-opportunity-grid h3,.user-opportunity-grid dd,.user-wallet-panel>strong,.user-quick-action>b,.user-recent-activity li>span:nth-child(2)>b,.user-support-panel b,.mobile-activity-disclosure>summary>span){color:var(--theme-text)}
+html[data-theme-name] .user-dashboard-page :is(.user-dashboard-eyebrow,.user-dashboard-active-tag,.user-dashboard-panel-link,.user-market-categories button.is-selected,.user-chart-timeframes button.is-selected,.user-opportunity-category,.user-opportunity-grid article>a,.user-wallet-actions a,.user-wallet-demo-note a,.user-dashboard-empty>a,.user-dashboard-empty>svg,.user-support-panel>span,.user-support-panel>a,.user-dashboard-disclaimer svg,.mobile-activity-disclosure>summary>svg,.mobile-activity-view-all){color:var(--theme-accent)}
+html[data-theme-name] .user-dashboard-page :is(.user-mode-pill,.user-dashboard-refresh,.user-dashboard-metric,.user-dashboard-panel,.user-market-categories button,.user-chart-timeframes button,.user-market-asset,.user-dashboard-table th,.user-dashboard-table td,.user-opportunity-grid article,.user-wallet-actions a,.user-wallet-demo-note,.user-quick-action,.user-support-panel){border-color:var(--theme-border)}
+html[data-theme-name] .user-dashboard-page :is(.user-dashboard-metric,.user-dashboard-panel,.user-market-asset,.user-opportunity-grid article,.user-quick-action,.user-support-panel){background:var(--theme-surface)}
+html[data-theme-name] .user-dashboard-page :is(.user-dashboard-metric.is-active,.user-market-asset:hover,.user-market-asset.is-selected,.user-market-categories button.is-selected,.user-chart-timeframes button.is-selected,.user-dashboard-refresh:hover,.user-quick-action:hover,.mobile-activity-disclosure>summary:hover){background:var(--theme-selected)}
+html[data-theme-name] .user-dashboard-page .user-dashboard-refresh{background:var(--theme-surface-elevated);color:var(--theme-text-secondary)}
+html[data-theme-name] .user-dashboard-page .user-dashboard-table{background:var(--theme-table);color:var(--theme-text)}
+html[data-theme-name] .user-dashboard-page .user-dashboard-table :is(th,td){border-color:var(--theme-divider)}
+html[data-theme-name] .user-dashboard-page .user-recent-activity li{border-color:var(--theme-divider)}
+html[data-theme-name] .user-dashboard-page .user-wallet-panel>strong{color:var(--theme-text)}
+html[data-theme-name] .user-dashboard-page .user-wallet-actions a{background:var(--theme-accent-soft);color:var(--theme-text)}
+html[data-theme-name] .user-dashboard-page .user-quick-action>span,
+html[data-theme-name] .user-dashboard-page .user-dashboard-metric-icon{border-color:var(--theme-border);color:var(--theme-accent)}
+html[data-theme-name] .user-dashboard-page .user-quick-action>span{border-color:var(--theme-border);color:var(--theme-accent)}
+html[data-theme-name] .user-dashboard-page .user-mode-pill{border-color:var(--theme-border);color:var(--theme-accent)}
+html[data-theme-name] .user-dashboard-page .user-dashboard-table th,
+html[data-theme-name] .user-dashboard-page .user-dashboard-table td{border-color:var(--theme-divider)}
+html[data-theme-name] .user-dashboard-page .user-order-status{border-color:var(--theme-border);color:var(--theme-accent)}
+html[data-theme-name] .user-dashboard-page .user-dashboard-error button,
+html[data-theme-name] .user-dashboard-page .user-dashboard-fatal button{color:var(--theme-accent)}
+html[data-theme-name] .user-dashboard-page .user-dashboard-error{border-color:var(--theme-negative);color:var(--theme-negative)}
+html[data-theme-name] .user-dashboard-page .user-dashboard-spinner{border-color:var(--theme-border);border-top-color:var(--theme-accent)}
 html[data-theme-name] [class*="text-white/"],
 html[data-theme-name] [class*="text-slate-"],
 html[data-theme-name] [class*="text-gray-"],

@@ -88,9 +88,9 @@ export function ThemeProvider({children,initialTheme,initialUserId}:{children:Re
 		setTheme('forest-green');
 		applyTheme('forest-green');
 		void fetch('/api/theme-preference',{cache:'no-store'}).then(async response=>{
-			const result=await response.json();
-			if(!response.ok)throw new Error(`Theme preference request failed (${response.status}).`);
-			if(!isTheme(result.theme))throw new Error('Theme preference response was invalid.');
+			const result=await response.json().catch(()=>null) as {theme?:unknown;error?:unknown}|null;
+			if(!response.ok)throw new Error(typeof result?.error==='string'?result.error:`Theme preference request failed (${response.status}).`);
+			if(!result||!isTheme(result.theme))throw new Error('Theme preference response was invalid.');
 			if(active&&requestGeneration.current===generation&&activeUserId.current===nextUserId){
 				setTheme(result.theme);
 				applyTheme(result.theme);
@@ -116,9 +116,12 @@ export function ThemeProvider({children,initialTheme,initialUserId}:{children:Re
 					headers:{'content-type':'application/json'},
 					body:JSON.stringify({theme:nextTheme}),
 				});
-				if(!response.ok)throw new Error(`Theme preference request failed (${response.status}).`);
+				if(!response.ok){
+					const result=await response.json().catch(()=>null) as {error?:unknown}|null;
+					throw new Error(typeof result?.error==='string'?result.error:`Theme preference request failed (${response.status}).`);
+				}
 			}catch(exception){
-				setError('Your theme changed for this session but could not be saved to your account.');
+				setError(exception instanceof Error?exception.message:'Your theme changed for this session but could not be saved to your account.');
 				console.error('Account theme preference could not be saved.',exception instanceof Error?exception.name:'UnknownError');
 			}finally{
 				setIsSaving(false);

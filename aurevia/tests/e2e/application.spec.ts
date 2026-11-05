@@ -1121,6 +1121,13 @@ for(const viewport of viewports){
 					await expect(page.locator('main').first(),route).toBeVisible();
 					if(await page.locator('h1:visible').count())await expect(page.locator('h1:visible').first(),route).toBeVisible();
 					if(route==='/dashboard'&&viewport.width<=640)await expect(page.locator('.mobile-home-greeting'),route).toBeVisible();
+					if(route==='/dashboard'){
+						const expectedPage=theme==='forest-green'?'rgb(7, 17, 13)':'rgb(247, 248, 245)';
+						const expectedPanel=theme==='forest-green'?'rgb(18, 32, 25)':'rgb(255, 255, 255)';
+						await expect(page.locator('html')).toHaveCSS('--theme-page',expectedPage);
+						await expect(page.locator('.user-dashboard-panel').first()).toHaveCSS('background-color',expectedPanel);
+						await expect(page.locator('.user-dashboard-panel-heading h2').first()).toHaveCSS('color',theme==='forest-green'?'rgb(243, 244, 237)':'rgb(23, 37, 29)');
+					}
 					await expectNoHorizontalOverflow(page);
 				});
 			}

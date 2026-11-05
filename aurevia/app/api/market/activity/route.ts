@@ -14,6 +14,6 @@ export async function GET(){
 	const where={order:{accountMode,userId}};
 	const executions=await db.execution.findMany({where,include:{order:{select:{side:true,status:true,accountMode:true,instrument:{select:{symbol:true}}}}},orderBy:{createdAt:'desc'},take:30});
 	const activity=executions.map(execution=>({id:execution.id,instrument:execution.order.instrument.symbol,side:execution.order.side,quantity:execution.quantity,price:execution.price,timestamp:execution.createdAt,accountMode:execution.order.accountMode,status:execution.order.status}));
-	const source=accountMode==='DEMO'?'DEMO simulated execution records':'REAL paper execution records';
+	const source=accountMode==='DEMO'?'DEMO practice activity records':'REAL Alpaca sandbox execution records';
 	return NextResponse.json(jsonSafe({activity,source}),{headers:{'Cache-Control':'private, no-store'}});
 }

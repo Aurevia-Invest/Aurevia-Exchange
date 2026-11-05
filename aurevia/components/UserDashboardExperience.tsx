@@ -332,6 +332,7 @@ export default function UserDashboardExperience(){
 				</details>
 			</section>
 			<AureviaExchangeId id={overview.profile.aureviaExchangeId} className="mb-4"/>
+			{overview.accountMode==='REAL'&&<div className="user-dashboard-real-overview"><p>Trade confidently with Aurevia. Manage your orders, monitor execution status, and track your account balance, portfolio performance, and available funds from one secure trading dashboard. Deposits and withdrawals are subject to account verification and approval.</p><p>{overview.limitations.realExecution}</p></div>}
 			<section className="user-dashboard-metrics" aria-label={`${overview.accountMode} account balance and portfolio value`}>
 				<UserMetric label={`${overview.accountMode} ${overview.accountMode==='DEMO'?'virtual cash':'account balance'}`} value={formatUsd(overview.balances[overview.accountMode]||'0')} detail={overview.accountMode==='DEMO'?`Available DEMO cash · ${formatUsd(overview.demoStartingBalance||'5000.00')} starting allocation`:'Internal USD ledger balance'} active icon={overview.accountMode==='DEMO'?WalletCards:ShieldCheck}/>
 				<UserMetric label={`${overview.accountMode} portfolio value`} value={displayUsd(overview.portfolioSummary.totalValue)} detail={overview.accountMode==='DEMO'?'Virtual cash + practice positions':'Cash + current market values + allocated principal'} active icon={ChartNoAxesCombined}/>
@@ -392,7 +393,7 @@ export default function UserDashboardExperience(){
 					<section className="user-support-panel"><span><LifeBuoy size={17}/></span><div><b>Need a hand?</b><small>Contact our support team.</small></div><Link href="/support" aria-label="Get help and support"><ArrowRight size={15}/></Link></section>
 				</aside>
 			</div>
-			<footer className="user-dashboard-footnote user-dashboard-disclaimer"><ShieldCheck size={14}/><span>Financial balances, portfolio values, positions, and orders are separated by active account mode. REAL wallet funds are not auto-credited. Values are internal records, not a statement of external custody.</span><span> · </span><span>{overview.limitations.realExecution}</span></footer>
+			<footer className="user-dashboard-footnote user-dashboard-disclaimer"><ShieldCheck size={14}/><span>Financial balances, portfolio values, positions, and orders are separated by active account mode. REAL wallet funds are not auto-credited. Values are internal records, not a statement of external custody.</span></footer>
 		</>}
 		{error&&!overview&&<div className="user-dashboard-empty user-dashboard-fatal"><p>Your account overview could not be loaded.</p><button type="button" onClick={()=>void load(true)}>Try again <RefreshCw size={14}/></button></div>}
 	</main></>;

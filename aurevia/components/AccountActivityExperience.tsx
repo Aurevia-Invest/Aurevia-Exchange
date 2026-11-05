@@ -91,7 +91,6 @@ export default function AccountActivityExperience(){
 
   return <><Nav/><main className="account-page activity-page">
     <header className="account-heading"><div><span className="account-kicker">AUDITABLE ACTIVITY · {session?.user?.accountMode||'ACCOUNT'}</span><h1>Account activity</h1><p>Orders, trades, investments, funding, positions, and account events from persisted records.</p></div><div className="flex items-center gap-2"><span className={`status-pill ${session?.user?.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{session?.user?.accountMode||'ACCOUNT'}</span><button className="icon-action" type="button" aria-label="Refresh account activity" onClick={toggleLoading} disabled={loading}><RefreshCw size={15} className={loading?'animate-spin':''}/></button></div></header>
-    {data?.accountMode==='REAL'&&<div className="account-callout mb-4"><span>REAL account orders use simulated execution, not live market transactions. Confirmed fills are recorded in your Aurevia wallet and activity.</span></div>}
     <DisplayCurrencyPanel values={displayValues}/>
     {error&&<div className="account-callout mb-4" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load(true)}>Retry</button></div>}
     <section className="account-panel card p-4">

@@ -523,6 +523,7 @@ model Notification {
   @@index([userId, archivedAt, createdAt])
   @@index([userId, accountMode, createdAt])
   @@index([userId, createdAt])
+  @@index([createdAt, id])
 }
 
 model ActivityVisibilityPreference {
@@ -1218,6 +1219,7 @@ model AuditLog {
   dashboardDismissal AdminDashboardActivityDismissal?
 
   @@index([createdAt])
+  @@index([createdAt, id])
 }
 
 model AdminDashboardActivityDismissal {

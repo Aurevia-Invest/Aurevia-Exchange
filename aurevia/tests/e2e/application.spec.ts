@@ -184,24 +184,24 @@ test('public stories publish for visitors and members with role, schedule, expir
 	}
 });
 
-test('support fallback gives correct paper-trading and funding guidance',async({page})=>{
+test('support fallback gives correct account-mode and funding guidance',async({page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await page.route('**/api/support/nova',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Support assistant unavailable.'})}));
 	await page.goto('/support');
 	await page.getByRole('textbox',{name:'Ask Nova AI'}).fill('How do REAL and DEMO account modes work?');
 	await page.getByRole('button',{name:'Send question'}).click();
-	await expect(page.getByText(/DEMO trades are simulated/)).toBeVisible();
-	await expect(page.getByText(/Alpaca Paper Trading when enabled/)).toBeVisible();
+	await expect(page.getByText(/DEMO trades are practice activity/)).toBeVisible();
+	await expect(page.getByText(/Alpaca sandbox when enabled/)).toBeVisible();
 	await expect(page.getByText(/does not send an external payment or payout/)).toBeVisible();
 });
 
-test('provider health distinguishes paper trading from disabled live services',async({page})=>{
+test('provider health distinguishes sandbox routing from disabled live services',async({page})=>{
 	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
 	await page.goto('/admin/providers');
 	await expect(page.getByRole('heading',{name:'Provider health'})).toBeVisible();
 	await expect(page.getByRole('heading',{name:'Live financial services'})).toBeVisible();
-	await expect(page.getByRole('heading',{name:'Alpaca paper account'})).toBeVisible();
-	await expect(page.getByText(/When enabled, REAL-mode orders use this shared Alpaca Paper account/)).toBeVisible();
+	await expect(page.getByRole('heading',{name:'Alpaca sandbox account'})).toBeVisible();
+	await expect(page.getByText(/When enabled, REAL-mode orders use this shared Alpaca sandbox account/)).toBeVisible();
 });
 
 test('users can submit all Tier 3 requirements before administrator KYC review',async({page})=>{
@@ -1185,10 +1185,25 @@ test('account-mode changes initialize and isolate wallet, trade, history, and su
 	await expect(page.locator('.portfolio-heading-actions .status-pill')).toContainText('DEMO ACCOUNT');
 	await selectAccountMode(page,'REAL');
 	await expect(page.locator('.portfolio-heading-actions .status-pill')).toContainText('REAL ACCOUNT');
+	await page.goto('/dashboard');
+	const dashboardRealOverview=page.locator('.user-dashboard-real-overview');
+	const realExecutionNote='When enabled, REAL account orders route through the Alpaca sandbox. Status reflects provider confirmation; confirmed fills are recorded in the Aurevia ledger.';
+	await expect(dashboardRealOverview.getByText('Trade confidently with Aurevia. Manage your orders, monitor execution status, and track your account balance, portfolio performance, and available funds from one secure trading dashboard. Deposits and withdrawals are subject to account verification and approval.',{exact:true})).toBeVisible();
+	for(const viewport of [{width:375,height:812},{width:1440,height:900}]){
+		await page.setViewportSize(viewport);
+		await expect(dashboardRealOverview).toBeVisible();
+		await expect(dashboardRealOverview.getByText(realExecutionNote,{exact:true})).toBeVisible();
+		await expectNoHorizontalOverflow(page);
+	}
 	await page.goto('/trade');
 	await selectAccountMode(page,'REAL');
 	await expect(page.locator('.account-heading .status-pill')).toContainText('REAL');
-	await expect(page.getByText('REAL-account orders are simulated, not live market transactions. Confirmed fills update your Aurevia wallet and positions.')).toBeVisible();
+	for(const viewport of [{width:375,height:812},{width:1440,height:900}]){
+		await page.setViewportSize(viewport);
+		await expect(page.getByText('Trade confidently with Aurevia. Manage your orders, monitor execution status, and track your account balance, portfolio performance, and available funds from one secure trading dashboard. Deposits and withdrawals are subject to account verification and approval.',{exact:true})).toBeVisible();
+		await expect(page.getByText(realExecutionNote,{exact:true})).toBeVisible();
+		await expectNoHorizontalOverflow(page);
+	}
 	const realOrderButton=page.getByRole('button',{name:'Place BUY order'});
 	const marketResponse=await page.request.get('/api/live-markets?symbols=AAPL');
 	expect(marketResponse.ok()).toBeTruthy();
@@ -1198,6 +1213,18 @@ test('account-mode changes initialize and isolate wallet, trade, history, and su
 	else{
 		await expect(realOrderButton).toBeDisabled();
 		await expect(page.locator('.trade-chart-note')).toContainText('Current market prices are required for REAL account orders.');
+	}
+	await page.goto('/orders');
+	for(const viewport of [{width:375,height:812},{width:1440,height:900}]){
+		await page.setViewportSize(viewport);
+		await expect(page.getByText(realExecutionNote,{exact:true})).toBeVisible();
+		await expectNoHorizontalOverflow(page);
+	}
+	await page.goto('/portfolio');
+	for(const viewport of [{width:375,height:812},{width:1440,height:900}]){
+		await page.setViewportSize(viewport);
+		await expect(page.locator('.portfolio-heading-actions .status-pill')).toContainText('REAL ACCOUNT');
+		await expectNoHorizontalOverflow(page);
 	}
 	await selectAccountMode(page,'DEMO');
 	await expect(page.locator('.account-heading .status-pill')).toContainText('DEMO');
@@ -1401,7 +1428,7 @@ test('DEMO trading supports cash-backed buy and owned-unit sell execution',async
 		expect(oversell.status()).toBe(409);
 		expect((await oversell.json()).error).toContain('sell quantity exceeds your available DEMO position');
 		const privateActivity=await tradePage.request.get('/api/market/activity').then(response=>response.json());
-		expect(privateActivity.source).toBe('DEMO simulated execution records');
+		expect(privateActivity.source).toBe('DEMO practice activity records');
 		expect(privateActivity.activity.filter((event:{instrument:string;accountMode:string})=>event.instrument===symbol&&event.accountMode==='DEMO')).toHaveLength(2);
 		const unrelatedUser=await createIsolatedDemoUser('unrelated-activity');
 		const unrelatedContext=await browser.newContext();

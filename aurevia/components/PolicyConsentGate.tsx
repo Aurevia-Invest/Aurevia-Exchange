@@ -79,7 +79,7 @@ export default function PolicyConsentGate(){
 					<li><Link href="/risk-disclosure">Risk disclosure</Link> — trading and account limitations</li>
 					<li><Link href="/about-me">Withdrawal policy and theme preferences</Link></li>
 				</ul>
-				<p className="policy-consent-summary">Important: DEMO is practice only. Eligible REAL-mode orders use paper trading, not live-market execution. REAL withdrawals require an administrator-approved request and a minimum balance remaining after reservations. A 10% commission is deducted internally only after administrator-confirmed payout. No separate advance crypto payment is required.</p>
+				<p className="policy-consent-summary">Important: DEMO is for practice. When enabled, eligible REAL orders route to the Alpaca sandbox environment. REAL withdrawals require an administrator-approved request and a minimum balance remaining after reservations. A 10% commission is deducted internally only after administrator-confirmed payout. No separate advance crypto payment is required.</p>
 				<div className="policy-consent-actions">
 					<button type="button" className="btn bg-gold text-black" onClick={acceptedChoice}>Accept terms &amp; policies</button>
 					<button type="button" className="btn bg-white/5" onClick={()=>saveChoice('rejected')}>Reject</button>

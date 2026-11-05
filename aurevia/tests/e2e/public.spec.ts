@@ -121,11 +121,11 @@ test('homepage clearly labels stock and crypto trading modes',async({page})=>{
 	const stocks=page.locator('.asset-item').filter({hasText:'Stock trading'}).first();
 	await expect(stocks).toContainText('DEMO');
 	await expect(stocks).toContainText('NVDA');
-	await expect(stocks).toContainText('Alpaca Paper Trading');
+	await expect(stocks).toContainText('Alpaca sandbox routing');
 	const crypto=page.locator('.asset-item').filter({hasText:'Crypto trading'}).first();
 	await expect(crypto).toContainText('BTC/USD');
 	await expect(crypto).toContainText('ETH/USD');
-	await expect(crypto).toContainText('Alpaca Paper Trading');
+	await expect(crypto).toContainText('Alpaca sandbox routing');
 });
 
 test('site theme preference switches globally and persists across navigation',async({page})=>{
@@ -142,12 +142,12 @@ test('site theme preference switches globally and persists across navigation',as
 	await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
 });
 
-test('public disclosures distinguish simulated activity, paper orders, and internal wallet funds',async({page})=>{
+test('public disclosures distinguish sandbox order routing and internal wallet funds',async({page})=>{
 	await page.goto('/terms');
-	await expect(page.getByText(/Alpaca Paper Trading only/)).toBeVisible();
-	await expect(page.getByText(/broker-reported paper cash or returns are not Aurevia wallet funds/)).toBeVisible();
+	await expect(page.getByText(/Alpaca sandbox environment/)).toBeVisible();
+	await expect(page.getByText(/provider sandbox balances or returns are not Aurevia wallet funds/)).toBeVisible();
 	await page.goto('/risk-disclosure');
-	await expect(page.getByText(/REAL-mode orders use simulated execution, not live-market transactions/)).toBeVisible();
+	await expect(page.getByText(/REAL-mode orders route to an Alpaca sandbox environment/)).toBeVisible();
 	await expect(page.getByText(/They do not represent money held in custody or confirmation that an external payment occurred/)).toBeVisible();
 	await page.goto('/privacy');
 	await expect(page.getByText(/private object-storage bucket/)).toBeVisible();

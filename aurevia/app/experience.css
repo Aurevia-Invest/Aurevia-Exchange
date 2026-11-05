@@ -453,10 +453,7 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,su
 .dashboard-profile-panel>div{display:grid;min-width:0;gap:5px}
 .dashboard-profile-panel span{color:#89968d;font-size:9px}
 .dashboard-profile-panel b{overflow-wrap:anywhere;color:#e2e8e0;font-size:11px;font-weight:550}
-.dashboard-real-state{display:flex;align-items:flex-start;gap:12px;margin:0 0 16px;padding:14px 16px;border:1px solid rgba(197,164,107,.28);border-radius:6px;background:rgba(16,34,25,.72);color:color-mix(in srgb,var(--color-gold) 65%,white)}
-.dashboard-real-state>div{min-width:0}
-.dashboard-real-state b{font-size:12px;color:#e2e8e0}
-.dashboard-real-state p{margin:4px 0 0;color:#9ba79d;font-size:11px;line-height:1.5}
+.dashboard-real-description{max-width:920px}
 .dashboard-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .dashboard-metric{display:flex;min-width:0;align-items:flex-start;gap:12px;padding:16px;border:1px solid var(--color-border);border-radius:5px;background:linear-gradient(145deg,rgba(19,32,24,.96),rgba(10,19,14,.98))}
 .metric-icon{display:grid;width:34px;height:34px;flex:none;place-items:center;border:1px solid currentColor;border-radius:5px;background:rgba(255,255,255,.025)}
@@ -2904,6 +2901,8 @@ body:has(.site-nav-user-shell) main.user-dashboard-page{width:100%;max-width:165
 .user-dashboard-metric-foot{display:flex;align-items:center;justify-content:space-between;gap:6px;color:#7f8c82;font-size:8px}
 .user-dashboard-active-tag{color:#d8bd64;font-size:7px;font-weight:750;letter-spacing:.1em}
 .user-dashboard-real-note{margin:8px 1px 0;color:#9caa9e;font-size:8px;line-height:1.5}
+.user-dashboard-real-overview{max-width:920px;margin:12px 0 16px;color:#aab5ac;font-size:12px;line-height:1.55}
+.user-dashboard-real-overview p+p{margin-top:5px;color:#859389;font-size:11px}
 .user-market-assets{margin-top:14px}
 .user-market-assets-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-bottom:8px}
 .user-market-assets-heading h2{margin:4px 0 0;color:#e8ede6;font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-size:17px;font-weight:400}

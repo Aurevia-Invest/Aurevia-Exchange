@@ -53,11 +53,11 @@ async function checkFinnhub(){
 
 async function checkAlpaca(){
 	const health=await getAlpacaPaperAccountHealth();
-	if(health.status==='AVAILABLE')return item('alpaca','Alpaca paper trading','CONNECTED','Paper account authentication succeeded. Live trading remains disabled.','Authorized REAL-mode paper orders');
-	if(health.status==='NOT_CONFIGURED')return item('alpaca','Alpaca paper trading','MISSING_CREDENTIALS','Set ALPACA_API_KEY and ALPACA_SECRET_KEY (or ALPACA_API_SECRET); use ALPACA_TRADING_BASE_URL (or ALPACA_BASE_URL) with the paper endpoint.','Optional REAL-mode paper orders');
-	if(health.status==='AUTHENTICATION_FAILED')return item('alpaca','Alpaca paper trading','CONNECTION_FAILED','Alpaca rejected the configured credentials.','Authorized REAL-mode paper orders');
-	if(health.status==='UNAVAILABLE')return item('alpaca','Alpaca paper trading','PROVIDER_UNAVAILABLE','The paper account endpoint did not return an active account.','Authorized REAL-mode paper orders');
-	return item('alpaca','Alpaca paper trading','CONFIGURATION_REQUIRED','Paper endpoint, provider selection, or paper-order settings require configuration.','Authorized REAL-mode paper orders');
+	if(health.status==='AVAILABLE')return item('alpaca','Alpaca sandbox execution','CONNECTED','Sandbox account authentication succeeded. Live brokerage routing remains disabled.','Authorized REAL-mode sandbox orders');
+	if(health.status==='NOT_CONFIGURED')return item('alpaca','Alpaca sandbox execution','MISSING_CREDENTIALS','Set ALPACA_API_KEY and ALPACA_SECRET_KEY (or ALPACA_API_SECRET); use ALPACA_TRADING_BASE_URL (or ALPACA_BASE_URL) with the Alpaca sandbox endpoint.','Optional REAL-mode sandbox orders');
+	if(health.status==='AUTHENTICATION_FAILED')return item('alpaca','Alpaca sandbox execution','CONNECTION_FAILED','Alpaca rejected the configured credentials.','Authorized REAL-mode sandbox orders');
+	if(health.status==='UNAVAILABLE')return item('alpaca','Alpaca sandbox execution','PROVIDER_UNAVAILABLE','The sandbox account endpoint did not return an active account.','Authorized REAL-mode sandbox orders');
+	return item('alpaca','Alpaca sandbox execution','CONFIGURATION_REQUIRED','Alpaca sandbox endpoint, provider selection, or order settings require configuration.','Authorized REAL-mode sandbox orders');
 }
 
 async function checkSupabaseAuth(){

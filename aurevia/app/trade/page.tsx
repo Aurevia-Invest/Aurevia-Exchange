@@ -371,7 +371,7 @@ export default function Trade() {
     <>
       <Nav />
       <main className="trade-terminal">
-        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>{accountMode==='LOADING'?'Loading your account.':accountMode==='REAL'?'REAL-account orders are simulated, not live market transactions. Confirmed fills update your Aurevia wallet and positions.':'DEMO orders use Aurevia’s internal practice feed.'}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':accountMode==='REAL'?'REAL ACCOUNT':'DEMO ACCOUNT'}</span></header>
+        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>{accountMode==='LOADING'?'Loading your account.':accountMode==='REAL'?translate('realAccountTradingDescription'):'DEMO orders use Aurevia’s internal practice feed.'}</p>{accountMode==='REAL'&&<p className="mt-2 text-xs leading-5 muted">{translate('realAccountExecutionNotice')}</p>}</div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':accountMode==='REAL'?'REAL ACCOUNT':'DEMO ACCOUNT'}</span></header>
         {(accountMode==='REAL'||accountMode==='DEMO')?<>
         <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
           <section className="card min-h-[650px] p-5">

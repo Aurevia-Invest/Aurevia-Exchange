@@ -5,7 +5,7 @@ import Nav from '@/components/Nav';
 
 type Section={title:string;content:ReactNode};
 
-export default function InfoPage({eyebrow,title,lead,sections,updated='September 30, 2026',importantNote='DEMO activity is simulated. REAL-mode order execution, when enabled, is limited to Alpaca Paper Trading and is not live brokerage. Wallet funding and withdrawal requests remain Aurevia ledger records; a paper-account balance or return is not Aurevia wallet cash.'}:{eyebrow:string;title:string;lead:string;sections:Section[];updated?:string;importantNote?:string}){
+export default function InfoPage({eyebrow,title,lead,sections,updated='September 30, 2026',importantNote='DEMO activity is for practice. REAL order routing, when enabled, is limited to the Alpaca sandbox. Wallet funding and withdrawal requests remain Aurevia ledger records; external provider balances are not Aurevia wallet cash.'}:{eyebrow:string;title:string;lead:string;sections:Section[];updated?:string;importantNote?:string}){
   return <><Nav/><main className="info-page">
     <Link href="/" className="info-back"><ArrowLeft size={14}/> Back to Aurevia Exchange</Link>
     <header className="info-header"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{lead}</p><span>Platform information · Updated {updated}</span></header>

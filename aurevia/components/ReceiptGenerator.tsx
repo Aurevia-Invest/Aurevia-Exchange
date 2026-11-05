@@ -101,7 +101,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 	const transactionLabel=kind==='CREDIT'?'Account credit':kind==='DEBIT'?'Account debit':kind==='WITHDRAWAL'?'Withdrawal':'Deposit';
 	const recipientName=currentReceipt.recipientName||currentReceipt.destinationName||(isWithdrawal?'Saved destination':'Aurevia internal ledger');
 	const recipientNumber=currentReceipt.recipientNumber||currentReceipt.destinationNumber||(isWithdrawal?'Sensitive destination details are masked':'Internal account entry');
-	const gateway=currentReceipt.gateway||(currentReceipt.accountMode==='REAL'?'Internal Aurevia ledger':'DEMO paper ledger');
+	const gateway=currentReceipt.gateway||(currentReceipt.accountMode==='REAL'?'Internal Aurevia ledger':'DEMO practice ledger');
 	const fileName=`aurevia-${kind.toLowerCase()}-${currentReceipt.status.toLowerCase()}-${currentReceipt.id}`;
 	const numericAmount=Number(currentReceipt.amount);
 	const numericFee=currentReceipt.fee===null||currentReceipt.fee===undefined?null:Number(currentReceipt.fee);

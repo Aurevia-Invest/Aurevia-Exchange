@@ -130,8 +130,7 @@ export default function PortfolioExperience(){
 				<button className="icon-action" type="button" aria-label={translate('portfolioRefresh')} onClick={()=>void load(true)}><RefreshCw size={15}/></button>
 			</div>
 		</header>
-		{data?.accountMode==='REAL'&&<div className="account-callout mb-4"><span>REAL account orders use simulated execution, not live market transactions. Confirmed fills update your Aurevia wallet and portfolio. BTC credits require manual verification; investment return targets are estimates, not settled funds.</span></div>}
-		{(data?.unreconciledPaperPositionCount??0)>0&&<div className="account-callout mb-4" role="status">Some earlier positions need wallet reconciliation and are excluded from account value and profit/loss. No balance or historical record has been changed.</div>}
+		{(data?.unreconciledPaperPositionCount??0)>0&&<p className="mb-4 text-xs leading-5 muted" role="status">Some recorded positions are pending wallet reconciliation and are excluded from account value and profit/loss. No balance or historical record has been changed.</p>}
 		{notice&&<p className="mb-3 text-sm text-profit" role="status">{notice}</p>}
 		{error&&<div className="account-callout mb-4" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load(true)}>{translate('portfolioRetry')}</button></div>}
 		{loading&&!data?<AureviaLoading variant="inline" label={translate('portfolioLoading')} className="account-empty"/>:data&&<>

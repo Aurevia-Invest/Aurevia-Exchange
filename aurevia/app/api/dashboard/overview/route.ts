@@ -193,7 +193,7 @@ export async function GET(){
 			limitations:{
 				balances:'Separate USD ledger balances for DEMO and REAL; never combined.',
 				portfolio:mode===AccountMode.DEMO?'DEMO cash and practice positions valued at internal reference prices.':'Cash, currently valued positions, and active investment principal.',
-				realExecution:'REAL-account orders are simulated, not live market transactions. Confirmed fills update the Aurevia wallet and positions.',
+				realExecution:'When enabled, REAL account orders route through the Alpaca sandbox. Status reflects provider confirmation; confirmed fills are recorded in the Aurevia ledger.',
 			},
 		}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){

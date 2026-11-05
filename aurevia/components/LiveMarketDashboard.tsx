@@ -323,7 +323,7 @@ function LiveMarketDashboardContent(){
           <div className="live-key-row"><span>Type</span><b>{marketTypeLabel(selectedAsset.type)}</b></div>
           <div className="live-key-row"><span>Day range</span><b>{activeQuote?.dayLow!==null&&activeQuote?.dayLow!==undefined&&activeQuote.dayHigh!==null?`${formatPrice(activeQuote.dayLow,selectedAsset.currency)} – ${formatPrice(activeQuote.dayHigh,selectedAsset.currency)}`:'—'}</b></div>
         </section>
-        <p className="live-disclaimer">Market prices are informational and may be delayed. Internal reference prices are estimates, not executable quotes. REAL account orders use simulated execution, not live market transactions.</p>
+        <p className="live-disclaimer">Market prices are informational and may be delayed. Internal reference prices are indicative, not executable quotes.</p>
       </aside>
     </div>
   </main></>;

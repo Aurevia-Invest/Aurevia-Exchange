@@ -108,7 +108,7 @@ export async function DELETE(request:Request){
 			const changed=await tx.order.updateMany({where:{id:order.id,status:'OPEN'},data:{status:'CANCELLED'}});
 			if(!changed.count)return false;
 			await tx.auditLog.create({data:{actorId:user.id,action:`${currentUser.accountMode}_SIMULATED_ORDER_CANCELLED`,entity:'ORDER',entityId:order.id,metadata:{oldState:'OPEN',newState:'CANCELLED',accountMode:currentUser.accountMode,simulated:true,instrument:order.instrument.symbol}}});
-			await createNotification(tx,{userId:user.id,type:NotificationType.TRADE,title:`${currentUser.accountMode} order cancelled`,message:currentUser.accountMode===AccountMode.REAL?`Your simulated order for ${order.instrument.symbol} was cancelled. Any confirmed fills remain recorded in your Aurevia wallet and holdings.`:`Your order for ${order.instrument.symbol} was cancelled.`,dedupeKey:`order:${order.id}:cancelled`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/trade'});
+			await createNotification(tx,{userId:user.id,type:NotificationType.TRADE,title:`${currentUser.accountMode} order cancelled`,message:currentUser.accountMode===AccountMode.REAL?`Your REAL order for ${order.instrument.symbol} was cancelled. Any fills already recorded remain in your Aurevia wallet and holdings.`:`Your order for ${order.instrument.symbol} was cancelled.`,dedupeKey:`order:${order.id}:cancelled`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/trade'});
 			return true;
 		});
 		if(!cancelled)return NextResponse.json({error:'Order not open or not found'},{status:404});

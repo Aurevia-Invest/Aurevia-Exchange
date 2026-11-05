@@ -231,7 +231,7 @@ export default function AdminUsersPanel(){
 				email:user.email,
 				amount:adjustment.amount,
 				currency:adjustment.currency,
-				method:'Administrator direct paper-ledger adjustment',
+				method:'Administrator direct internal-ledger adjustment',
 				aureviaExchangeId:user.aureviaExchangeId,
 				purpose:`${adjustment.category.replaceAll('_',' ')} · ${adjustment.reason.trim()}`,
 			}});

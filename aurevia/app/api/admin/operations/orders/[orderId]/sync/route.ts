@@ -14,6 +14,6 @@ export async function POST(_request:Request,{params}:{params:Promise<{orderId:st
 	}catch(error){
 		if(error instanceof AlpacaPaperOrderError)return NextResponse.json({error:error.code.replaceAll('_',' ').toLowerCase()},{status:error.httpStatus});
 		const status=error instanceof Error&&error.message==='UNAUTHORIZED'?401:403;
-		return NextResponse.json({error:status===401?'Unauthorized':'Unable to synchronize Alpaca Paper order.'},{status});
+		return NextResponse.json({error:status===401?'Unauthorized':'Unable to synchronize Alpaca sandbox order.'},{status});
 	}
 }

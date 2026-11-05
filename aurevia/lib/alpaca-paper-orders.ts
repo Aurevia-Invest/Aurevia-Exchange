@@ -177,7 +177,7 @@ async function persistProviderOrder(orderId:string,response:ProviderOrder,accoun
 						accountMode:AccountMode.REAL,simulated:true,provider:ALPACA_PAPER_PROVIDER,reason:'INSUFFICIENT_AVAILABLE_WALLET_BALANCE',
 						confirmedQuantity:validated.filled.toString(),postedQuantity:current.filledQuantity.toString(),fillNotional:fillNotional.toString(),
 					}}});
-					await createNotification(tx,{userId:current.userId,type:NotificationType.TRADE,title:'REAL order requires review',message:`A confirmed simulated fill for ${current.instrument.symbol} could not be posted because available wallet funds are insufficient. Funds remain reserved; contact support for review.`,dedupeKey:`paper-order:${current.id}:fill-reconciliation-required:${validated.filled.toString()}`,relatedEntity:'ORDER',relatedId:current.id,actionUrl:'/orders'});
+					await createNotification(tx,{userId:current.userId,type:NotificationType.TRADE,title:'REAL order requires review',message:`An Alpaca sandbox fill for ${current.instrument.symbol} is confirmed but could not be posted because available wallet funds are insufficient. Funds remain reserved; contact support for review.`,dedupeKey:`paper-order:${current.id}:fill-reconciliation-required:${validated.filled.toString()}`,relatedEntity:'ORDER',relatedId:current.id,actionUrl:'/orders'});
 				}
 				return updated;
 			}
@@ -212,7 +212,7 @@ async function persistProviderOrder(orderId:string,response:ProviderOrder,accoun
 			filledQuantity:validated.filled.toString(),
 			averageFillPrice:response.averageFillPrice??null,
 		}}});
-		if(changed)await createNotification(tx,{userId:current.userId,type:NotificationType.TRADE,title:`REAL simulated order ${nextStatus.replaceAll('_',' ').toLowerCase()}`,message:validated.filled.gt(current.filledQuantity)?`REAL account: your ${current.side.toLowerCase()} ${current.instrument.symbol} order has a confirmed simulated fill. Your Aurevia wallet and position were updated.`:`REAL account: your ${current.side.toLowerCase()} ${current.instrument.symbol} order status is ${nextStatus.replaceAll('_',' ').toLowerCase()}.`,dedupeKey:`paper-order:${current.id}:${validated.providerStatus}:${validated.filled.toString()}`,relatedEntity:'ORDER',relatedId:current.id,actionUrl:'/orders'});
+		if(changed)await createNotification(tx,{userId:current.userId,type:NotificationType.TRADE,title:`REAL order ${nextStatus.replaceAll('_',' ').toLowerCase()}`,message:validated.filled.gt(current.filledQuantity)?`REAL account: Alpaca sandbox confirmed your ${current.side.toLowerCase()} ${current.instrument.symbol} fill. Your Aurevia wallet and position were updated.`:`REAL account: your ${current.side.toLowerCase()} ${current.instrument.symbol} order status is ${nextStatus.replaceAll('_',' ').toLowerCase()}.`,dedupeKey:`paper-order:${current.id}:${validated.providerStatus}:${validated.filled.toString()}`,relatedEntity:'ORDER',relatedId:current.id,actionUrl:'/orders'});
 		return updated;
 	},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
 }
@@ -322,7 +322,7 @@ export async function submitAlpacaPaperOrder(userId:string,input:PlaceOrderInput
 			internalWalletReservation:providerReservedAmount?.toString()??null,currency:'USD',
 			internalLedgerChanged:false,internalPositionChanged:false,
 		}}});
-		await createNotification(tx,{userId,type:NotificationType.TRADE,title:'REAL simulated order submitted',message:`REAL account: your ${input.side.toLowerCase()} ${instrument.symbol} order is awaiting confirmation. Execution is simulated; your Aurevia wallet and position update only after a fill is confirmed.`,dedupeKey:`paper-order:${order.id}:submission-started`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/orders'});
+		await createNotification(tx,{userId,type:NotificationType.TRADE,title:'REAL order submitted',message:`REAL account: your ${input.side.toLowerCase()} ${instrument.symbol} order is being submitted to the Alpaca sandbox. Aurevia records wallet and position changes only after provider confirmation.`,dedupeKey:`paper-order:${order.id}:submission-started`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/orders'});
 		return {order,created:true};
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
 	}catch(error){

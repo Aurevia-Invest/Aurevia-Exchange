@@ -63,7 +63,7 @@ function bitcoinWithdrawalRequest(network='BITCOIN_MAINNET'){
 beforeEach(()=>{
 	vi.clearAllMocks();
 	storedRequest=null;
-	mocks.requireUser.mockResolvedValue({id:'user-1'});
+	mocks.requireUser.mockResolvedValue({id:'user-1',sessionHash:'a'.repeat(64)});
 	mocks.userFindUnique.mockResolvedValue({accountMode:AccountMode.REAL,status:'ACTIVE',depositEnabled:true,withdrawalEnabled:true,accountRestricted:false});
 	mocks.destinationFindFirst.mockResolvedValue(destination);
 	mocks.ensureUserLedger.mockResolvedValue({id:'user-ledger'});
@@ -89,12 +89,21 @@ beforeEach(()=>{
 			}),
 		},
 		withdrawalDestinationSnapshot:{create:vi.fn().mockResolvedValue({})},
+		securitySession:{updateMany:vi.fn().mockResolvedValue({count:1})},
 		auditLog:{create:vi.fn().mockResolvedValue({})},
 	};
 	mocks.transaction.mockImplementation(async(callback:(value:unknown)=>Promise<unknown>)=>callback(tx));
 });
 
 describe('wallet withdrawal destination snapshot',()=>{
+	it('rejects a withdrawal when no fresh authentication marker exists',async()=>{
+		tx.securitySession.updateMany.mockResolvedValueOnce({count:0});
+		const response=await POST(request('missing-fresh-authentication'));
+
+		expect(response.status).toBe(428);
+		expect(tx.fundingRequest.create).not.toHaveBeenCalled();
+	});
+
 	it('rate-limits REAL deposit requests before starting database work',async()=>{
 		mocks.rateLimit.mockImplementationOnce(()=>{throw new Error('RATE_LIMITED')});
 		const response=await POST(new Request('https://aurevia.test/api/wallet',{

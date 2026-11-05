@@ -1,4 +1,5 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
+import {createHash} from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import {matchesConfiguredAdminIdentity,matchesConfiguredAdminPassword,resolveCredentialLookup} from '../lib/credential-lookup';
 import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '../lib/auth-session';
@@ -7,15 +8,19 @@ const authMocks=vi.hoisted(()=>({
 	userFindFirst:vi.fn(),
 	userUpdateMany:vi.fn(),
 	auditCreate:vi.fn(),
+	securitySessionFindFirst:vi.fn(),
+	securitySessionCreate:vi.fn(),
 }));
 
 vi.mock('next-auth/providers/credentials',()=>({default:(configuration:unknown)=>configuration}));
 vi.mock('@/lib/db',()=>({db:{
 	user:{findFirst:authMocks.userFindFirst,updateMany:authMocks.userUpdateMany},
+	securitySession:{findFirst:authMocks.securitySessionFindFirst,create:authMocks.securitySessionCreate},
 	auditLog:{create:authMocks.auditCreate},
 }}));
 vi.mock('@/lib/notifications',()=>({createNotification:vi.fn()}));
-vi.mock('@/lib/rate-limit',()=>({rateLimit:vi.fn()}));
+vi.mock('@/lib/rate-limit',()=>({rateLimit:vi.fn(),clearRateLimit:vi.fn()}));
+vi.mock('@/lib/security-rate-limit',()=>({persistentRateLimit:vi.fn(),clearPersistentRateLimit:vi.fn()}));
 vi.mock('@/lib/config/env',()=>({getServerConfiguration:()=>({auth:{
 	adminUsername:'administrator',
 	adminEmail:'admin@example.invalid',
@@ -28,6 +33,8 @@ beforeEach(()=>{
 	vi.clearAllMocks();
 	authMocks.userUpdateMany.mockResolvedValue({count:1});
 	authMocks.auditCreate.mockResolvedValue({});
+	authMocks.securitySessionFindFirst.mockResolvedValue(null);
+	authMocks.securitySessionCreate.mockResolvedValue({});
 });
 
 async function authorize(credentials:Record<string,string>){
@@ -67,19 +74,40 @@ describe('credentials authorization',()=>{
 			status:'ACTIVE',
 			activeSessionId:null,
 			activeSessionUpdatedAt:null,
+			twoFactorEnabled:false,
+			totpSecretEncrypted:null,
+			lastTotpCounter:null,
 		});
 
 		const result=await authorize({
 			username:'legacy.user@example.invalid',
 			email:'legacy.user@example.invalid',
 			password,
-			replaceSession:'false',
 		});
 
 		expect(authMocks.userFindFirst).toHaveBeenCalledWith({
 			where:{email:{equals:'legacy.user@example.invalid',mode:'insensitive'}},
 		});
 		expect(result).toMatchObject({id:'legacy-user',email:'Legacy.User@Example.invalid'});
+		expect(authMocks.securitySessionCreate).toHaveBeenCalledWith({data:expect.objectContaining({
+			userId:'legacy-user',
+			sessionHash:expect.stringMatching(/^[a-f0-9]{64}$/),
+			expiresAt:expect.any(Date),
+		})});
+	});
+});
+
+describe('session callback exposure',()=>{
+	it('exposes only the session hash and a short identifier, never the raw session token',async()=>{
+		const rawSessionToken='sensitive-session-token';
+		const session={user:{}} as never;
+		const callback=authOptions.callbacks?.session;
+		if(!callback)throw new Error('Session callback is unavailable.');
+		const result=await callback({session,token:{id:'user-1',sessionId:rawSessionToken},} as never);
+		if(!result.user||!('sessionHash' in result.user))throw new Error('Session callback did not return the authenticated session.');
+		expect(result.user.sessionId).not.toBe(rawSessionToken);
+		expect(result.user.sessionId).toHaveLength(12);
+		expect(result.user.sessionHash).toBe(createHash('sha256').update(rawSessionToken).digest('hex'));
 	});
 });
 

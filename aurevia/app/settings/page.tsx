@@ -3,7 +3,7 @@
 import {FormEvent,useEffect,useState} from 'react';
 import {signOut,useSession} from 'next-auth/react';
 import Link from 'next/link';
-import {Activity,Bell,Check,ChevronRight,CreditCard,Download,HeartHandshake,KeyRound,Search,Settings2,ShieldCheck,Store,Trash2,UserRound,WalletCards} from 'lucide-react';
+import {Activity,Bell,ChevronRight,CreditCard,Download,HeartHandshake,KeyRound,Search,Settings2,ShieldCheck,Store,Trash2,UserRound,WalletCards} from 'lucide-react';
 import Nav from '@/components/Nav';
 import BrowserPushSettings from '@/components/BrowserPushSettings';
 import ThemeToggle from '@/components/ThemeToggle';
@@ -12,8 +12,9 @@ import AccountTierBadge from '@/components/AccountTierBadge';
 import AureviaExchangeId from '@/components/AureviaExchangeId';
 import {useAccountTier} from '@/components/useAccountTier';
 import {useLocale} from '@/lib/i18n-context';
+import SecurityCenter from '@/components/SecurityCenter';
 
-type Profile={id:string;aureviaExchangeId:string|null;email:string;name:string|null;firstName:string;lastName:string;label:string;phone:string|null;phoneVerified:boolean;country:string|null;address:string|null;hasAvatar:boolean;twoFactorEnabled:boolean;role:'USER'|'ADMIN';status:string;kycStatus:string;profileLocked:boolean;profileLockAt:string|null};
+type Profile={id:string;aureviaExchangeId:string|null;email:string;name:string|null;firstName:string;lastName:string;label:string;phone:string|null;phoneVerified:boolean;country:string|null;address:string|null;hasAvatar:boolean;twoFactorEnabled:boolean;twoFactorAvailable:boolean;role:'USER'|'ADMIN';status:string;kycStatus:string;profileLocked:boolean;profileLockAt:string|null};
 
 export default function Settings(){
 	const [profile,setProfile]=useState<Profile|null>(null);
@@ -88,7 +89,7 @@ export default function Settings(){
 		if(!profile||saving)return;
 		setSaving(true);setMessage('');setError('');
 		try{
-			const response=await fetch('/api/profile',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({firstName:profile.firstName,lastName:profile.lastName,phone:profile.phone||'',country:profile.country||'',address:profile.address||'',twoFactorEnabled:profile.twoFactorEnabled})});
+			const response=await fetch('/api/profile',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({firstName:profile.firstName,lastName:profile.lastName,phone:profile.phone||'',country:profile.country||'',address:profile.address||''})});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to save profile.');
 			const refreshed=await fetch('/api/profile',{cache:'no-store'});
@@ -159,19 +160,15 @@ export default function Settings(){
 					</form>}
 					{loading&&!profile&&<div className="account-empty" role="status">{translate('loadingProfile')}</div>}
 				</section>}
-				{section==='security'&&<section className="account-panel card p-5" role="tabpanel"><div className="account-panel-title"><div><h2>{translate('securityOverview')}</h2><p className="account-panel-subtitle">{translate('securitySubtitle')}</p></div><ShieldCheck size={18} className="gold" aria-hidden="true"/></div>
-					<div className="security-row"><span className="security-icon"><Check size={16}/></span><div><b>{translate('passwordSignIn')}</b><p>{translate('credentialAuthentication')}</p></div><span className="status-pill">{translate('enabled')}</span></div>
-					<div className="security-row"><span className="security-icon"><KeyRound size={16}/></span><div><b>{translate('twoFactorFlag')}</b><p>{translate('twoFactorSimulation')}</p></div><span className="status-pill">{profile?.twoFactorEnabled?translate('flagOn'):translate('notEnabled')}</span></div>
-					<div className="security-row"><span className="security-icon"><UserRound size={16}/></span><div><b>{translate('currentServerSession')}</b><p>{translate('sessionIdCopy',{sessionId:session?.user.sessionId||translate('loading')})}</p></div><span className="status-pill">{translate('oneActiveSession')}</span></div>
-					<div className="account-callout mt-4"><Bell size={16}/><span>{translate('notificationBellCopy')}</span></div>
-					<section className="mt-6 border-t border-white/10 pt-5" aria-labelledby="delete-account-heading"><div className="flex items-center gap-2"><Trash2 size={17} className="text-loss"/><h3 id="delete-account-heading" className="font-semibold">Delete My Account</h3></div><p className="mt-2 max-w-2xl text-sm muted">This permanently deletes your account and its related records and uploaded files. Deletion is blocked while you have pending or approved funding requests or a non-zero balance. Re-enter your current password and type DELETE to confirm.</p>
+				{section==='security'&&<div role="tabpanel"><SecurityCenter email={profile?.email||session?.user?.email||''} twoFactorEnabled={profile?.twoFactorEnabled||false} twoFactorAvailable={profile?.twoFactorAvailable||false}/>
+					<section className="account-panel card mt-4 p-5" aria-labelledby="delete-account-heading"><div className="flex items-center gap-2"><Trash2 size={17} className="text-loss"/><h3 id="delete-account-heading" className="font-semibold">Delete My Account</h3></div><p className="mt-2 max-w-2xl text-sm muted">This permanently deletes your account and its related records and uploaded files. Deletion is blocked while you have pending or approved funding requests or a non-zero balance. Re-enter your current password and type DELETE to confirm.</p>
 						{!showDeleteForm?<button type="button" className="btn mt-4 bg-loss text-black" onClick={()=>setShowDeleteForm(true)}>Delete My Account</button>:<form className="mt-4 grid max-w-xl gap-3" onSubmit={event=>void deleteAccount(event)}>
 							<label className="account-label">Current password<input className="input" type="password" autoComplete="current-password" required maxLength={128} value={deletePassword} onChange={event=>setDeletePassword(event.target.value)}/></label>
 							<label className="account-label">Type DELETE to confirm<input className="input" autoComplete="off" required value={deleteConfirmation} onChange={event=>setDeleteConfirmation(event.target.value)}/></label>
 							<div className="flex flex-wrap gap-2"><button type="submit" className="btn bg-loss text-black" disabled={deleting||deleteConfirmation!=='DELETE'} aria-busy={deleting}>{deleting?'Deleting account…':'Confirm account deletion'}</button><button type="button" className="btn bg-white/5" disabled={deleting} onClick={()=>{setShowDeleteForm(false);setDeletePassword('');setDeleteConfirmation('')}}>Cancel</button></div>
 						</form>}
 					</section>
-				</section>}
+				</div>}
 				{section==='preferences'&&<div className="settings-preferences">
 					<section className="account-panel card settings-appearance-panel" aria-labelledby="settings-appearance-title">
 						<div className="account-panel-title"><div><h2 id="settings-appearance-title">Appearance</h2><p className="account-panel-subtitle">Choose the theme used across Aurevia.</p></div><Settings2 size={18} className="gold" aria-hidden="true"/></div>

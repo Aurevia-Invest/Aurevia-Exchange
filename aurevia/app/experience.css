@@ -775,6 +775,64 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,su
 .security-icon{display:grid;width:30px;height:30px;place-items:center;border:1px solid var(--color-border);border-radius:4px;color:var(--color-gold)}
 .security-row b{color:#e0e7de;font-size:11px;font-weight:600}
 .security-row p{margin:5px 0 0;color:#8e9b91;font-size:9px;line-height:1.65}
+.security-center{display:grid;gap:14px;background:linear-gradient(145deg,rgba(8,29,25,.98),rgba(4,16,19,.98));border-color:rgba(195,153,66,.2)}
+.security-center-card{min-width:0;padding:16px;border:1px solid rgba(195,153,66,.16);border-radius:14px;background:linear-gradient(145deg,rgba(18,34,32,.88),rgba(8,21,24,.92));box-shadow:inset 0 1px rgba(255,255,255,.025)}
+.security-center-row{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:12px}
+.security-center-icon,.security-center-session-icon{display:grid;width:38px;height:38px;place-items:center;border:1px solid rgba(212,171,83,.19);border-radius:12px;background:linear-gradient(145deg,rgba(190,144,52,.12),rgba(10,30,26,.76));box-shadow:inset 0 1px rgba(255,255,255,.04)}
+.security-center-3d-icon{width:32px;height:32px;overflow:visible;filter:drop-shadow(0 3px 3px rgba(0,0,0,.4));transition:transform .18s ease,filter .18s ease}
+.security-center-card:hover .security-center-3d-icon{transform:translateY(-1px);filter:drop-shadow(0 4px 4px rgba(0,0,0,.48))}
+.security-center-copy{min-width:0}
+.security-center-copy>b{color:#f1eee5;font-size:13px;font-weight:650;letter-spacing:.01em}
+.security-center-copy>p{margin:5px 0 0;color:#a6b0a7;font-size:11px;line-height:1.6}
+.security-center-action{margin:14px 0 0 54px;padding:8px 11px;border:1px solid rgba(218,180,99,.29);border-radius:9px;color:#e3c677;font-size:11px;font-weight:650;transition:background .16s ease,border-color .16s ease}
+.security-center-action:hover{border-color:rgba(218,180,99,.55);background:rgba(195,153,66,.08)}
+.security-center-action:disabled{opacity:.5;cursor:not-allowed}
+.security-center-form{display:grid;gap:12px;margin:16px 0 0 54px;max-width:560px}
+.security-center-password-wrap{position:relative;display:block;margin-top:6px}
+.security-center-password-wrap>.input{width:100%;padding-right:46px}
+.security-center-visibility{position:absolute;top:50%;right:10px;display:grid;min-width:32px;min-height:32px;place-items:center;transform:translateY(-50%);color:#acb5ae}
+.security-password-strength{display:flex;align-items:center;gap:10px;margin-top:-5px;color:#c7cfca;font-size:10px}
+.security-password-strength>span{display:block;width:110px;height:4px;overflow:hidden;border-radius:4px;background:rgba(255,255,255,.09)}
+.security-password-strength>span>i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#bd8530,#f0d47a);transition:width .15s ease}
+.security-center-qr{display:grid;justify-items:start;gap:9px;padding:14px;border:1px solid rgba(218,180,99,.17);border-radius:12px;background:rgba(0,0,0,.18)}
+.security-center-qr img{width:176px;height:176px;padding:8px;border-radius:8px;background:#fff}
+.security-center-qr p,.security-center-qr small{max-width:440px;color:#aeb8af;font-size:11px;line-height:1.6}
+.security-center-qr code{max-width:100%;overflow-wrap:anywhere;color:#f1d989;font-size:14px;font-weight:700;letter-spacing:.12em}
+.security-center-unavailable{margin:13px 0 0 54px;color:#d4b768;font-size:11px;line-height:1.6}
+.security-recovery-codes{margin:14px 0 0 54px;padding:14px;border:1px solid rgba(218,180,99,.38);border-radius:12px;background:rgba(119,82,19,.12)}
+.security-recovery-codes>b{color:#f0d47a;font-size:12px}
+.security-recovery-codes>p{margin:5px 0 10px;color:#c4c9bd;font-size:11px}
+.security-recovery-codes ul{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:0 0 13px;padding:0;list-style:none}
+.security-recovery-codes li{padding:7px;border:1px solid rgba(255,255,255,.08);border-radius:7px;background:rgba(0,0,0,.19);text-align:center}
+.security-recovery-codes code{color:#fff2c0;font-size:12px;font-weight:650;letter-spacing:.06em}
+.security-current-badge{display:inline-flex;margin-left:8px;padding:2px 6px;border:1px solid rgba(218,180,99,.26);border-radius:20px;color:#e8cf84;font-size:8px;letter-spacing:.06em;vertical-align:1px}
+.security-session-list{display:grid;gap:0;margin:13px 0 0;padding:0;list-style:none}
+.security-session-list>li{display:flex;min-width:0;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid rgba(255,255,255,.07)}
+.security-session-list>li>div:first-child{display:grid;min-width:0;gap:4px}
+.security-session-list b{overflow-wrap:anywhere;color:#e7ece5;font-size:11px;font-weight:600}
+.security-session-list small{color:#98a39a;font-size:10px}
+.security-session-actions{flex:none}
+.security-center-session-buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.security-center-session-buttons .btn{display:inline-flex;min-height:38px;align-items:center;gap:7px;font-size:10px}
+.security-center-empty{margin:13px 0 0;color:#a3afa5;font-size:11px}
+.security-session-reauth{padding-top:13px;border-top:1px solid rgba(255,255,255,.08)}
+.security-center-notice{margin:0;color:#c4cbbf;font-size:11px}
+.security-center-account{margin:0;color:#829187;font-size:10px;overflow-wrap:anywhere}
+.security-center-alert,.security-center-success{margin:0;font-size:11px}
+.security-center-success{border-color:rgba(81,172,123,.25);color:#a7e1bc}
+.security-status-enabled{border-color:rgba(81,172,123,.32);color:#9de0b4}
+@media(max-width:639px){
+	.security-center-card{padding:13px}
+	.security-center-row{grid-template-columns:36px minmax(0,1fr);gap:9px}
+	.security-center-icon,.security-center-session-icon{width:34px;height:34px}
+	.security-center-row>.status-pill,.security-center-row>.icon-action{grid-column:2;justify-self:start}
+	.security-center-form,.security-center-action,.security-center-unavailable,.security-recovery-codes{margin-left:0}
+	.security-center-session-buttons{display:grid;grid-template-columns:1fr}
+	.security-recovery-codes ul{grid-template-columns:1fr 1fr}
+}
+@media(prefers-reduced-motion:reduce){
+	.security-center-3d-icon,.security-password-strength>span>i{transition:none}
+}
 .wallet-balance-panel{position:relative;overflow:hidden;padding:24px;border:1px solid rgba(197,164,107,.25);border-radius:6px;background:radial-gradient(ellipse at 85% 20%,rgba(47,86,59,.3),transparent 45%),linear-gradient(120deg,#12241a,#0c1911)}
 .wallet-balance-panel:after{position:absolute;right:-26px;bottom:-90px;width:220px;height:220px;border:1px solid rgba(197,164,107,.16);border-radius:50%;content:"";box-shadow:0 0 0 25px rgba(197,164,107,.025),0 0 0 50px rgba(197,164,107,.018)}
 .wallet-balance-value{position:relative;z-index:1;margin-top:10px;color:#f1f2eb;font-size:38px;font-weight:500;font-variant-numeric:tabular-nums}

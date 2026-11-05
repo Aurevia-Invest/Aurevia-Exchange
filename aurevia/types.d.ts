@@ -1,2 +1,2 @@
-import 'next-auth';declare module 'next-auth'{interface User{id:string;role:'USER'|'ADMIN';accountMode:'DEMO'|'REAL';sessionId:string}interface Session{user:{id:string;role:'USER'|'ADMIN';accountMode:'DEMO'|'REAL';sessionId:string;name:string|null;email:string|null}}}
+import 'next-auth';declare module 'next-auth'{interface User{id:string;role:'USER'|'ADMIN';accountMode:'DEMO'|'REAL';sessionId:string}interface Session{user:{id:string;role:'USER'|'ADMIN';accountMode:'DEMO'|'REAL';sessionId:string;sessionHash:string;name:string|null;email:string|null}}}
 declare module 'next-auth/jwt'{interface JWT{id?:string;role?:'USER'|'ADMIN';accountMode?:'DEMO'|'REAL';sessionId?:string}}

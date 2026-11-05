@@ -111,6 +111,8 @@ export async function deleteAccountData(tx:Prisma.TransactionClient,input:{
 			preferredDisplayCurrency:'USD',
 			status:'CLOSED',
 			twoFactorEnabled:false,
+			totpSecretEncrypted:null,
+			lastTotpCounter:null,
 			emailVerifiedAt:null,
 			requiresRegistrationVerification:true,
 			depositEnabled:false,
@@ -121,6 +123,9 @@ export async function deleteAccountData(tx:Prisma.TransactionClient,input:{
 			avatarKey:null,
 		},
 	});
+	await tx.securitySession.updateMany({where:{userId:current.id,revokedAt:null},data:{revokedAt:now}});
+	await tx.twoFactorEnrollment.deleteMany({where:{userId:current.id}});
+	await tx.securityRecoveryCode.deleteMany({where:{userId:current.id}});
 
 	await Promise.all([
 		tx.passwordResetToken.deleteMany({where:{userId:current.id}}),

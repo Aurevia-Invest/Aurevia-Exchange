@@ -28,6 +28,7 @@ export async function POST(request:Request){
 			const claim=await tx.passwordResetToken.updateMany({where:{id:candidate.id,tokenHash,consumedAt:null,expiresAt:{gt:now}},data:{consumedAt:now}});
 			if(claim.count!==1)throw new Error('RESET_TOKEN_USED');
 			const user=await tx.user.update({where:{id:candidate.userId},data:{passwordHash,activeSessionId:null,activeSessionUpdatedAt:null},select:{id:true}});
+			await tx.securitySession.updateMany({where:{userId:user.id,revokedAt:null},data:{revokedAt:new Date()}});
 			await tx.passwordResetToken.updateMany({where:{userId:user.id,id:{not:candidate.id},consumedAt:null},data:{consumedAt:now}});
 			await tx.auditLog.create({data:{actorId:user.id,action:'PASSWORD_RESET_COMPLETED',entity:'SECURITY',entityId:user.id,metadata:{method:'email-token'}}});
 			await createNotification(tx,{userId:user.id,type:NotificationType.SECURITY,title:'Password changed',message:'Your password was changed. Other active sessions were signed out.',dedupeKey:`security:${user.id}:password-reset:${candidate.id}`,actionUrl:'/settings'});

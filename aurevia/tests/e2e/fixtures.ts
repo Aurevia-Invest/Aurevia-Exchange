@@ -47,9 +47,11 @@ export async function loginAs(page:Page,email:string,password:string){
 		const passwordInput=page.getByLabel(administrator?'Admin password':'Password',{exact:true});
 		await passwordInput.fill(password);
 		const replaceSession=page.getByRole('checkbox',{name:administrator?/Replace another active Aurevia session/:/Replace the active Aurevia session/});
-		await replaceSession.focus();
-		await page.keyboard.press('Space');
-		await expect(replaceSession).toBeChecked();
+		if(await replaceSession.count()){
+			await replaceSession.focus();
+			await page.keyboard.press('Space');
+			await expect(replaceSession).toBeChecked();
+		}
 		await passwordInput.press('Enter');
 		await page.waitForURL(administrator?/\/admin(?:$|\/)/:/dashboard/);
 		await expect.poll(async()=>{

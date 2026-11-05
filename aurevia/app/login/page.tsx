@@ -17,7 +17,7 @@ export default function Login(){
 	const [passwordVisible,setPasswordVisible]=useState(false);
 	const [error,setError]=useState('');
 	const [registered,setRegistered]=useState(false);
-	const [replaceSession,setReplaceSession]=useState(false);
+	const [secondFactorCode,setSecondFactorCode]=useState('');
 	const [callbackUrl,setCallbackUrl]=useState('/dashboard');
 	const [busy,setBusy]=useState(false);
 	const router=useRouter();
@@ -43,7 +43,7 @@ export default function Login(){
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();if(busy)return;setBusy(true);setError('');
 		try{
-			const result=await signIn('credentials',{username:identifier,email:identifier,password,replaceSession:String(replaceSession),redirect:false});
+			const result=await signIn('credentials',{username:identifier,email:identifier,password,secondFactorCode,redirect:false});
 			if(result?.ok){await update();router.replace(callbackUrl);router.refresh();}
 			else setError(translate('signInFailed'));
 		}catch{setError(translate('unableAuth'))}
@@ -60,8 +60,9 @@ export default function Login(){
 		<form onSubmit={submit} className="mt-5 space-y-4">
 			<label className="auth-field-label">{translate('emailOrUsername')}<input className="auth-input" name="username" type="text" autoComplete="username" value={identifier} onChange={event=>{setIdentifier(event.target.value);setError('')}} required/></label>
 			<div><label className="auth-field-label" htmlFor="login-password">{translate('password')}</label><div className="auth-password-wrap"><input id="login-password" className="auth-input" name="password" type={passwordVisible?'text':'password'} autoComplete="current-password" value={password} onChange={event=>{setPassword(event.target.value);setError('')}} required/><button type="button" className="auth-password-toggle" aria-label={passwordVisible?translate('hidePassword'):translate('showPassword')} aria-pressed={passwordVisible} onClick={()=>setPasswordVisible(value=>!value)}>{passwordVisible?<EyeOff size={18}/>:<Eye size={18}/>}</button></div></div>
+			<label className="auth-field-label" htmlFor="login-second-factor">Authenticator or recovery code <input id="login-second-factor" className="auth-input mt-2" name="secondFactorCode" autoComplete="one-time-code" inputMode="text" maxLength={64} value={secondFactorCode} onChange={event=>{setSecondFactorCode(event.target.value);setError('')}} aria-describedby="login-second-factor-hint"/></label>
+			<p id="login-second-factor-hint" className="text-xs muted">Enter this only if two-factor authentication is enabled for your account.</p>
 			<div className="auth-inline-links"><span>{translate('protected')}</span><Link className="auth-link" href="/forgot-password">{translate('forgotPassword')}</Link></div>
-			<label className="auth-session-option"><input type="checkbox" checked={replaceSession} onChange={event=>setReplaceSession(event.target.checked)}/><span>{translate('replaceSession')}</span></label>
 			{error&&<p className="auth-error" role="alert">{error}</p>}
 			<button type="submit" disabled={busy} className="auth-submit flex w-full items-center justify-center gap-2" aria-busy={busy}>{busy?<><LoaderCircle size={16} className="animate-spin" aria-hidden="true"/>{translate('loading')}</> : translate('signIn')}</button>
 		</form>

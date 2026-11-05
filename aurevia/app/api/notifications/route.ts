@@ -17,7 +17,7 @@ export async function GET(req:Request){
 	try{
 		const user=await requireUser();
 		const account=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
-		if(!account||account.status!=='ACTIVE')return NextResponse.json({error:'Active account not found.'},{status:403});
+		if(!account||account.status!=='ACTIVE')return NextResponse.json({error:'Unauthorized'},{status:401});
 		const params=new URL(req.url).searchParams;
 		const limit=Math.min(Math.max(Number(params.get('limit')||30),1),100);
 		const archived=params.get('state')==='archived';
@@ -40,7 +40,7 @@ export async function PATCH(req:Request){
 	try{
 		const user=await requireUser();
 		const account=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
-		if(!account||account.status!=='ACTIVE')return NextResponse.json({error:'Active account not found.'},{status:403});
+		if(!account||account.status!=='ACTIVE')return NextResponse.json({error:'Unauthorized'},{status:401});
 		const input=updateSchema.parse(await req.json());
 		const modeWhere={userId:user.id,OR:[{accountMode:account.accountMode},{accountMode:null}]};
 		if(input.action==='read'){
@@ -69,7 +69,7 @@ export async function DELETE(req:Request){
 	try{
 		const user=await requireUser();
 		const account=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
-		if(!account||account.status!=='ACTIVE')return NextResponse.json({error:'Active account not found.'},{status:403});
+		if(!account||account.status!=='ACTIVE')return NextResponse.json({error:'Unauthorized'},{status:401});
 		const {ids}=deleteSchema.parse(await req.json());
 		const unique=[...new Set(ids)];
 		const modeWhere={userId:user.id,OR:[{accountMode:account.accountMode},{accountMode:null}]};

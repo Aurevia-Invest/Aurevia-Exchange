@@ -1,17 +1,17 @@
 import {NextResponse} from 'next/server';
-import {AccountMode,InvestmentStatus,NotificationType,Prisma} from '@prisma/client';
+import {AccountMode,InvestmentStatus,Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {createNotification} from '@/lib/notifications';
 import {getAccountTier} from '@/lib/production-policy';
 import {getTierProfileRequirements} from '@/lib/production-policy';
 import {synchronizeCompletedProfileTier} from '@/lib/tier-progression';
 import {isProfileLocked,profileEditDeadline} from '@/lib/profile-lock';
 import {isValidE164} from '@/lib/registration-validation';
+import {isTotpEncryptionAvailable} from '@/lib/security';
 
 const profileSelect={
-	id:true,aureviaExchangeId:true,email:true,name:true,phone:true,phoneVerified:true,country:true,avatarKey:true,twoFactorEnabled:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,verifiedAt:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,updatedAt:true,
+	id:true,aureviaExchangeId:true,email:true,name:true,phone:true,phoneVerified:true,country:true,avatarKey:true,twoFactorEnabled:true,totpSecretEncrypted:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,verifiedAt:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,updatedAt:true,
 	kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}},
 	kyc:{select:{address:true,submittedAt:true}},
 } satisfies Prisma.UserSelect;
@@ -25,7 +25,6 @@ const schema=z.object({
 	phone:z.string().trim().max(40,'Phone number must be 40 characters or fewer.').refine(value=>!value||isValidE164(value),'Enter a valid phone number with its country code.').optional(),
 	country:z.string().trim().max(80,'Country must be 80 characters or fewer.').optional(),
 	address:z.string().trim().max(500,'Address must be 500 characters or fewer.').optional(),
-	twoFactorEnabled:z.boolean().optional(),
 }).refine(input=>input.name!==undefined||input.firstName!==undefined||input.lastName!==undefined,{message:'Enter your first name and last name.'});
 
 function nameParts(name:string|null){
@@ -34,12 +33,12 @@ function nameParts(name:string|null){
 }
 
 function profileResponse(profile:ProfileRecord){
-	const {avatarKey,kyc,kycDocuments,...safeProfile}=profile;
+	const {avatarKey,kyc,kycDocuments,totpSecretEncrypted,...safeProfile}=profile;
 	const {firstName,lastName}=nameParts(profile.name);
 	const realAccount=profile.accountMode===AccountMode.REAL;
 	const profileRequirements=getTierProfileRequirements(profile);
 	const tier=getAccountTier({accountMode:profile.accountMode as AccountMode,kycStatus:realAccount?profile.kycStatus:'PENDING',verificationDocuments:realAccount?kycDocuments.length:0,verificationSubmitted:realAccount&&!!kyc?.submittedAt,phoneVerified:realAccount&&profile.phoneVerified,profileComplete:profileRequirements.profileComplete,approvedTier:profile.approvedTier});
-	return {...safeProfile,firstName,lastName,address:realAccount?kyc?.address||null:null,hasAvatar:!!avatarKey,profileLocked:realAccount&&profile.kycStatus==='APPROVED'&&isProfileLocked(profile.verifiedAt),profileLockAt:realAccount&&profile.kycStatus==='APPROVED'?profileEditDeadline(profile.verifiedAt):null,twoFactorEnabled:false,twoFactorAvailable:false,documents:realAccount?kycDocuments.length:0,verificationProfileSubmitted:realAccount&&!!kyc?.submittedAt,profileRequirements,...(realAccount?{}:{approvedTier:null,kycStatus:'NOT_AVAILABLE',verifiedAt:null,phoneVerified:false}),...tier};
+	return {...safeProfile,firstName,lastName,address:realAccount?kyc?.address||null:null,hasAvatar:!!avatarKey,profileLocked:realAccount&&profile.kycStatus==='APPROVED'&&isProfileLocked(profile.verifiedAt),profileLockAt:realAccount&&profile.kycStatus==='APPROVED'?profileEditDeadline(profile.verifiedAt):null,twoFactorEnabled:profile.twoFactorEnabled&&!!totpSecretEncrypted,twoFactorAvailable:isTotpEncryptionAvailable(),documents:realAccount?kycDocuments.length:0,verificationProfileSubmitted:realAccount&&!!kyc?.submittedAt,profileRequirements,...(realAccount?{}:{approvedTier:null,kycStatus:'NOT_AVAILABLE',verifiedAt:null,phoneVerified:false}),...tier};
 }
 
 function safeErrorDetails(error:unknown){
@@ -76,9 +75,8 @@ export async function PATCH(request:Request){
 		const parsed=schema.safeParse(await request.json());
 		if(!parsed.success)return NextResponse.json({error:parsed.error.issues[0]?.message||'Check the profile fields and try again.'},{status:400});
 		const input=parsed.data;
-		if(input.twoFactorEnabled)return NextResponse.json({error:'Two-factor authentication is unavailable and cannot be enabled.'},{status:409});
 		const updated=await db.$transaction(async tx=>{
-			const current=await tx.user.findUnique({where:{id:user.id},select:{name:true,phone:true,country:true,twoFactorEnabled:true,kycStatus:true,verifiedAt:true,kyc:{select:{address:true}}}});
+			const current=await tx.user.findUnique({where:{id:user.id},select:{name:true,phone:true,country:true,kycStatus:true,verifiedAt:true,kyc:{select:{address:true}}}});
 			if(!current)return null;
 			const existingName=nameParts(current.name);
 			const name=input.name!==undefined?input.name.replace(/\s+/g,' ').trim():[input.firstName??existingName.firstName,input.lastName??existingName.lastName].filter(Boolean).join(' ');
@@ -93,14 +91,12 @@ export async function PATCH(request:Request){
 				phone,
 				...(phone!==current.phone?{phoneVerified:false,phoneVerifiedAt:null}:{}),
 				country,
-				twoFactorEnabled:input.twoFactorEnabled===false?false:current.twoFactorEnabled,
 			}});
 			if(phone!==current.phone)await tx.verificationCode.deleteMany({where:{userId:user.id,channel:'SMS'}});
 			if(input.address!==undefined)await tx.kycProfile.upsert({where:{userId:user.id},update:{address},create:{userId:user.id,address}});
 			await synchronizeCompletedProfileTier(tx,user.id);
 			const fresh=await tx.user.findUnique({where:{id:user.id},select:profileSelect});
 			if(!fresh)return null;
-			if(current.twoFactorEnabled&&input.twoFactorEnabled===false)await createNotification(tx,{userId:user.id,type:NotificationType.SECURITY,title:'Two-factor setting cleared',message:'Two-factor authentication is unavailable and is not protecting this account. No enrollment or login challenge is configured.',dedupeKey:`security:${user.id}:two-factor-disabled:${fresh.updatedAt.toISOString()}`,actionUrl:'/settings#security'});
 			return fresh;
 		});
 		if(!updated)return NextResponse.json({error:'Profile not found.'},{status:404});

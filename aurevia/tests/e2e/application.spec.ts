@@ -3,6 +3,7 @@ import type {Page} from '@playwright/test';
 import bcrypt from 'bcryptjs';
 import {FundingStatus,FundingType,Prisma} from '@prisma/client';
 import {PNG} from 'pngjs';
+import {generate,generateSecret} from 'otplib';
 import {test,expect,loginAs,logout,waitForStartup,expectNoHorizontalOverflow} from './fixtures';
 import {db} from '../../lib/db';
 import {balance as ledgerBalance,initializeDemoAccount,initializePaperAccount,postDoubleEntry} from '../../lib/ledger';
@@ -60,6 +61,16 @@ async function createIsolatedDemoUser(label:string){
 	}});
 	await db.$transaction(tx=>initializeDemoAccount(tx,user.id));
 	return {email:user.email,password};
+}
+
+async function loginWithSecondFactor(page:Page,email:string,password:string,code:string){
+	await page.addInitScript(()=>localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()})));
+	await page.goto('/login');
+	await waitForStartup(page);
+	await page.getByLabel('Email address').fill(email);
+	await page.getByLabel('Password',{exact:true}).fill(password);
+	await page.getByLabel('Authenticator or recovery code').fill(code);
+	await page.getByRole('button',{name:'Sign in'}).click();
 }
 
 function depositPostOptions(idempotencyKey:string,payload:Record<string,unknown>){
@@ -1071,14 +1082,13 @@ test('existing account can sign in without signup verification',async({page})=>{
 	await expect(page.getByRole('button',{name:/Notifications/})).toBeVisible();
 });
 
-test('session replacement is explicit and refresh-safe',async({page,browser})=>{
-	const email=fixture('USER_EMAIL');
-	const password=fixture('USER_PASSWORD');
+test('multiple sessions can be reviewed and other sessions revoked server-side',async({page,browser})=>{
+	const user=await createIsolatedDemoUser('multiple-sessions');
+	const {email,password}=user;
 	await page.goto('/login');
 	await waitForStartup(page);
 	await page.getByLabel('Email address').fill(email);
 	await page.getByLabel('Password',{exact:true}).fill(password);
-	await page.getByRole('checkbox',{name:/Replace the active Aurevia session/}).check();
 	await page.getByRole('button',{name:'Sign in'}).click();
 	await page.waitForURL(/dashboard/);
 	await page.reload();
@@ -1091,11 +1101,15 @@ test('session replacement is explicit and refresh-safe',async({page,browser})=>{
 		await waitForStartup(otherDevice);
 		await otherDevice.getByLabel('Email address').fill(email);
 		await otherDevice.getByLabel('Password',{exact:true}).fill(password);
-		await otherDevice.getByRole('checkbox',{name:/Replace the active Aurevia session/}).check();
 		await otherDevice.getByRole('button',{name:'Sign in'}).click();
 		await otherDevice.waitForURL(/dashboard/);
+		expect((await page.request.get('/api/security/sessions').then(response=>response.json())).sessions).toHaveLength(2);
+		expect((await otherDevice.request.get('/api/dashboard')).status()).toBe(200);
+		const revoke=await page.request.post('/api/security/sessions',{data:{action:'logout-others',password}});
+		expect(revoke.status()).toBe(200);
 		const response=await page.request.get('/api/dashboard');
-		expect(response.status()).toBe(401);
+		expect(response.status()).toBe(200);
+		await expect.poll(async()=> (await otherDevice.request.get('/api/dashboard')).status()).toBe(401);
 	}finally{await otherContext.close();}
 });
 
@@ -2375,9 +2389,18 @@ test('REAL withdrawal requests reserve balance until an attested payout debits o
 
 		await loginAs(page,isolated.email,isolated.password);
 		await selectAccountMode(page,'REAL');
+		const withdrawalKey=randomUUID();
+		const withdrawalPayload={type:'WITHDRAWAL',amount:30000,currency:'USD',withdrawalDestinationId:destination.id,destinationConfirmed:true};
+		const unauthorizedSubmission=await page.request.post('/api/wallet',{
+			headers:{'Idempotency-Key':withdrawalKey},
+			data:withdrawalPayload,
+		});
+		expect(unauthorizedSubmission.status()).toBe(428);
+		const reauthentication=await page.request.post('/api/security/reauth',{data:{password:isolated.password}});
+		expect(reauthentication.status()).toBe(200);
 		const submission=await page.request.post('/api/wallet',{
-			headers:{'Idempotency-Key':randomUUID()},
-			data:{type:'WITHDRAWAL',amount:30000,currency:'USD',withdrawalDestinationId:destination.id,destinationConfirmed:true},
+			headers:{'Idempotency-Key':withdrawalKey},
+			data:withdrawalPayload,
 		});
 		expect(submission.status()).toBe(201);
 		const request=await submission.json();
@@ -2740,22 +2763,137 @@ test('profile settings persist for the owner and remain inaccessible to signed-o
 	const settingsUser=await createIsolatedDemoUser('profile-settings');
 	await loginAs(page,settingsUser.email,settingsUser.password);
 	const initialProfile=await page.request.get('/api/profile').then(response=>response.json());
-	expect(initialProfile).toMatchObject({twoFactorEnabled:false,twoFactorAvailable:false});
-	const enableTwoFactor=await page.request.patch('/api/profile',{data:{name:'Temporary E2E User',country:'Test',twoFactorEnabled:true}});
-	expect(enableTwoFactor.status()).toBe(409);
-	expect((await enableTwoFactor.json()).error).toContain('Two-factor authentication is unavailable');
-	const updated=await page.request.patch('/api/profile',{data:{name:'Temporary Settings Update',country:'Test Country',address:'Isolated test address',twoFactorEnabled:false}});
+	expect(initialProfile).toMatchObject({twoFactorEnabled:false,twoFactorAvailable:true});
+	const updated=await page.request.patch('/api/profile',{data:{name:'Temporary Settings Update',country:'Test Country',address:'Isolated test address',twoFactorEnabled:true}});
 	expect(updated.ok()).toBeTruthy();
-	expect(await page.request.get('/api/profile').then(response=>response.json())).toMatchObject({name:'Temporary Settings Update',twoFactorEnabled:false,twoFactorAvailable:false});
+	expect(await page.request.get('/api/profile').then(response=>response.json())).toMatchObject({name:'Temporary Settings Update',twoFactorEnabled:false,twoFactorAvailable:true});
 	await page.goto('/settings');
 	await page.getByRole('tab',{name:'Security'}).click();
-	await expect(page.getByText('Unavailable — this account is not protected by two-factor authentication. Enrollment and login challenges are not configured.')).toBeVisible();
-	await expect(page.getByText('Not enabled',{exact:true})).toBeVisible();
+	await expect(page.getByRole('heading',{name:'Financial Account Security Center'})).toBeVisible();
+	await expect(page.getByRole('button',{name:'Enable two-factor authentication'})).toBeVisible();
 	const signedOutContext=await browser.newContext();
 	try{
 		const signedOutPage=await signedOutContext.newPage();
 		expect((await signedOutPage.request.get('/api/profile')).status()).toBe(401);
 	}finally{await signedOutContext.close();}
+});
+
+test('password changes require fresh credentials and revoke other sessions',async({browser,page})=>{
+	const user=await createIsolatedDemoUser('security-password');
+	await loginAs(page,user.email,user.password);
+	const otherContext=await browser.newContext();
+	const nextContext=await browser.newContext();
+	try{
+		const otherDevice=await otherContext.newPage();
+		await loginAs(otherDevice,user.email,user.password);
+		const sessions=await page.request.get('/api/security/sessions').then(response=>response.json());
+		expect(sessions.sessions).toHaveLength(2);
+		const otherSession=sessions.sessions.find((item:{current:boolean})=>!item.current);
+		expect(otherSession).toBeTruthy();
+		const revoke=await page.request.post('/api/security/sessions',{data:{action:'revoke-session',sessionId:otherSession.id,password:user.password}});
+		expect(revoke.status()).toBe(200);
+		await expect.poll(async()=> (await otherDevice.request.get('/api/dashboard')).status()).toBe(401);
+
+		const nextDevice=await nextContext.newPage();
+		await loginAs(nextDevice,user.email,user.password);
+		const weak=await page.request.post('/api/security/password',{data:{currentPassword:user.password,newPassword:'weak',confirmPassword:'weak'}});
+		expect(weak.status()).toBe(400);
+		const mismatch=await page.request.post('/api/security/password',{data:{currentPassword:user.password,newPassword:'NewStrongPassword42',confirmPassword:'DifferentPassword42'}});
+		expect(mismatch.status()).toBe(400);
+		const incorrect=await page.request.post('/api/security/password',{data:{currentPassword:'IncorrectPassword1',newPassword:'NewStrongPassword42',confirmPassword:'NewStrongPassword42'}});
+		expect(incorrect.status()).toBe(401);
+
+		await page.goto('/settings#security');
+		await page.getByRole('button',{name:'Change password'}).click();
+		const changeForm=page.locator('.security-center-form').first();
+		await changeForm.getByLabel('Current password').fill(user.password);
+		await changeForm.getByLabel('New password',{exact:true}).fill('NewStrongPassword42');
+		await changeForm.getByLabel('Confirm new password',{exact:true}).fill('NewStrongPassword42');
+		await changeForm.getByRole('button',{name:'Update password'}).click();
+		await expect(page.getByRole('status').filter({hasText:'Password changed'})).toBeVisible();
+		expect((await page.request.get('/api/dashboard')).status()).toBe(200);
+		await expect.poll(async()=> (await nextDevice.request.get('/api/dashboard')).status()).toBe(401);
+
+		await loginAs(nextDevice,user.email,'NewStrongPassword42');
+		expect((await nextDevice.request.get('/api/dashboard')).status()).toBe(200);
+	}finally{
+		await otherContext.close();
+		await nextContext.close();
+	}
+});
+
+test('TOTP enrollment, login challenge, recovery codes, replay protection, and disable flow',async({browser,page})=>{
+	test.setTimeout(120_000);
+	const user=await createIsolatedDemoUser('security-totp');
+	await loginAs(page,user.email,user.password);
+	const start=await page.request.post('/api/security/totp',{data:{action:'start',password:user.password}});
+	expect(start.status()).toBe(200);
+	const enrollment=await start.json();
+	expect(enrollment.qrCode).toMatch(/^data:image\/png;base64,/);
+	expect(enrollment.manualKey).toBeTruthy();
+	expect((await page.request.get('/api/profile').then(response=>response.json())).twoFactorEnabled).toBe(false);
+	expect(JSON.stringify(await page.request.get('/api/profile').then(response=>response.json()))).not.toContain(enrollment.manualKey);
+
+	const validEnrollmentCode=await generate({secret:enrollment.manualKey});
+	let invalidEnrollmentCode=await generate({secret:generateSecret()});
+	if(invalidEnrollmentCode===validEnrollmentCode)invalidEnrollmentCode=`${(Number(invalidEnrollmentCode)+1)%1_000_000}`.padStart(6,'0');
+	const invalidConfirmation=await page.request.post('/api/security/totp',{data:{action:'confirm',password:user.password,secondFactorCode:invalidEnrollmentCode}});
+	expect(invalidConfirmation.status()).toBe(400);
+	expect((await page.request.get('/api/profile').then(response=>response.json())).twoFactorEnabled).toBe(false);
+
+	const confirmation=await page.request.post('/api/security/totp',{data:{action:'confirm',password:user.password,secondFactorCode:validEnrollmentCode}});
+	expect(confirmation.status()).toBe(200);
+	const recoveryCodes=(await confirmation.json()).recoveryCodes as string[];
+	expect(recoveryCodes).toHaveLength(10);
+	expect(new Set(recoveryCodes).size).toBe(10);
+	expect((await page.request.get('/api/profile').then(response=>response.json())).twoFactorEnabled).toBe(true);
+
+	const missingCodeContext=await browser.newContext();
+	const wrongCodeContext=await browser.newContext();
+	const totpContext=await browser.newContext();
+	const recoveryContext=await browser.newContext();
+	const reuseContext=await browser.newContext();
+	try{
+		const missingCodePage=await missingCodeContext.newPage();
+		await loginWithSecondFactor(missingCodePage,user.email,user.password,'');
+		await expect(missingCodePage).toHaveURL(/\/login/);
+		await expect(missingCodePage.getByRole('alert')).toBeVisible();
+
+		const wrongCodePage=await wrongCodeContext.newPage();
+		let wrongLoginCode=await generate({secret:generateSecret()});
+		if(wrongLoginCode===validEnrollmentCode)wrongLoginCode=`${(Number(wrongLoginCode)+1)%1_000_000}`.padStart(6,'0');
+		await loginWithSecondFactor(wrongCodePage,user.email,user.password,wrongLoginCode);
+		await expect(wrongCodePage).toHaveURL(/\/login/);
+		await expect(wrongCodePage.getByRole('alert')).toBeVisible();
+
+		await page.waitForTimeout(31_100);
+		const loginCode=await generate({secret:enrollment.manualKey});
+		const totpPage=await totpContext.newPage();
+		await loginWithSecondFactor(totpPage,user.email,user.password,loginCode);
+		await totpPage.waitForURL(/dashboard/);
+
+		const recoveryPage=await recoveryContext.newPage();
+		await loginWithSecondFactor(recoveryPage,user.email,user.password,recoveryCodes[0]);
+		await recoveryPage.waitForURL(/dashboard/);
+		const recoveryNotification=await db.notification.findFirst({where:{userId:(await db.user.findUniqueOrThrow({where:{email:user.email}})).id,title:'Two-factor recovery code used'}});
+		expect(recoveryNotification).toBeTruthy();
+
+		const reusePage=await reuseContext.newPage();
+		await loginWithSecondFactor(reusePage,user.email,user.password,recoveryCodes[0]);
+		await expect(reusePage).toHaveURL(/\/login/);
+		await expect(reusePage.getByRole('alert')).toBeVisible();
+
+		const disable=await page.request.post('/api/security/totp',{data:{action:'disable',password:user.password,secondFactorCode:recoveryCodes[1]}});
+		expect(disable.status()).toBe(200);
+		expect(await page.request.get('/api/profile').then(response=>response.json())).toMatchObject({twoFactorEnabled:false});
+		await expect.poll(async()=> (await totpPage.request.get('/api/dashboard')).status()).toBe(401);
+	}finally{
+		await missingCodeContext.close();
+		await wrongCodeContext.close();
+		await totpContext.close();
+		await recoveryContext.close();
+		await reuseContext.close();
+	}
 });
 
 test('browser notification settings explain denied permission without prompting again',async({page})=>{

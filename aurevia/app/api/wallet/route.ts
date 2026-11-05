@@ -192,6 +192,13 @@ export async function POST(req:Request){
 				if(duplicate.userId!==user.id||duplicate.accountMode!==currentUser.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==null||duplicate.transactionReference!==transactionReference||(duplicate.referenceInfo??null)!==referenceInfo||(duplicate.senderInfo??null)!==senderInfo||(duplicate.destinationInfo??null)!==destinationInfo||(duplicate.network??null)!==(destination?.network||submittedNetwork)||(duplicate.note??null)!==(parsed.note||null)||duplicate.withdrawalDestinationId!==(destination?.id||null))throw new Error('IDEMPOTENCY_KEY_REUSED');
 				return {request:duplicate,replay:true};
 			}
+			if(parsed.type===FundingType.WITHDRAWAL){
+				const freshAuthentication=await tx.securitySession.updateMany({
+					where:{userId:user.id,sessionHash:user.sessionHash,revokedAt:null,expiresAt:{gt:new Date()},reauthenticatedAt:{gt:new Date(Date.now()-5*60_000)}},
+					data:{reauthenticatedAt:null},
+				});
+				if(freshAuthentication.count!==1)throw new Error('FRESH_AUTH_REQUIRED');
+			}
 			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true}});
 			if(parsed.type==='DEPOSIT'&&!fundingUser.depositEnabled)throw new Error('DEPOSITS_DISABLED');
 			if(parsed.type==='WITHDRAWAL'&&!fundingUser.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
@@ -260,6 +267,7 @@ export async function POST(req:Request){
 		if(error instanceof Error&&error.message==='ACCOUNT_MODE_CHANGED')return NextResponse.json({error:'Your active account mode changed. Refresh and submit the request again.'},{status:409});
 		if(error instanceof Error&&error.message==='WALLET_ACCOUNT_UNAVAILABLE')return NextResponse.json({error:'Wallet account is unavailable.'},{status:403});
 		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many funding requests. Try again later.'},{status:429});
+		if(error instanceof Error&&error.message==='FRESH_AUTH_REQUIRED')return NextResponse.json({error:'Verify your current password and authenticator code before requesting a withdrawal.',code:'REAUTH_REQUIRED'},{status:428});
 		if(error instanceof Error&&error.message==='WITHDRAWAL_DESTINATION_ENCRYPTION_KEY_REQUIRED')return NextResponse.json({error:'Secure destination storage is not configured. Contact Aurevia support.'},{status:503});
 		if(error instanceof Error&&error.message==='WITHDRAWAL_DESTINATION_DECRYPTION_FAILED')return NextResponse.json({error:'The saved destination could not be verified. Contact Aurevia support.'},{status:503});
 		if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2034')return NextResponse.json({error:'The account changed while submitting this request. Refresh and try again.'},{status:409});

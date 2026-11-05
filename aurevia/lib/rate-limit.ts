@@ -22,3 +22,7 @@ export function rateLimit(key:string,max=30,windowMs=60_000){
 	bucket.count++;
 	if(bucket.count>max)throw new RateLimitError(Math.max(1,Math.ceil((bucket.reset-now)/1000)));
 }
+
+export function clearRateLimit(key:string){
+	buckets.delete(key);
+}

@@ -35,8 +35,8 @@ function utcDateLabel(date:string|null){
 	return new Intl.DateTimeFormat(undefined,{timeZone:'UTC',dateStyle:'full'}).format(new Date(`${date}T00:00:00.000Z`));
 }
 
-function utcTimestamp(value:string){
-	return new Intl.DateTimeFormat(undefined,{timeZone:'UTC',dateStyle:'medium',timeStyle:'medium',timeZoneName:'short'}).format(new Date(value));
+export function utcTimestamp(value:string){
+	return new Intl.DateTimeFormat(undefined,{timeZone:'UTC',dateStyle:'medium',timeStyle:'medium'}).format(new Date(value));
 }
 
 export default function AdminAuditLogPanel(){

@@ -3,7 +3,8 @@ import {AccountMode,InvestmentOpportunityStatus,InvestmentStatus,NotificationTyp
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,reservedWithdrawalAmount,roundUsdAmount} from '@/lib/ledger';
+import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,roundUsdAmount} from '@/lib/ledger';
+import {getRealWithdrawableBalance} from '@/lib/real-withdrawals';
 import {createNotification,notifyActiveAdmins} from '@/lib/notifications';
 import {jsonSafe} from '@/lib/serializers';
 import {configuredTierBoost} from '@/lib/tier-boosts';
@@ -33,8 +34,8 @@ export async function GET(){
    db.investmentRequest.findMany({where:{userId:user.id,accountMode},include:{opportunity:{select:{title:true,category:true,assetSymbol:true,riskLevel:true,targetReturnPercent:true,durationDays:true}}},orderBy:{requestedAt:'desc'}}),
    db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${accountMode}:USD`},select:{id:true,startingBalance:true}}),
   ]);
-    const [ledgerBalance,reserved]=await Promise.all([account?balance(db,account.id):new Prisma.Decimal(0),reservedWithdrawalAmount(db,user.id,accountMode,'USD')]);
-    const availableBalance=Prisma.Decimal.max(new Prisma.Decimal(0),ledgerBalance.minus(reserved));
+    const ledgerBalance=account?await balance(db,account.id):new Prisma.Decimal(0);
+    const availableBalance=account?await getRealWithdrawableBalance(db,user.id,ledgerBalance):new Prisma.Decimal(0);
     const requestsWithDisplayTerms=requests.map(item=>({
      ...item,
      displayTargetPayout:item.status===InvestmentStatus.ACTIVE
@@ -88,8 +89,8 @@ export async function POST(request:Request){
     const investment=await tx.investmentRequest.create({data:{userId:user.id,opportunityId:opportunity.id,accountMode:AccountMode.REAL,amount,status,idempotencyKey,targetReturnPercent:opportunity.targetReturnPercent,tierBoostPercent,durationDays:opportunity.durationDays,...(opportunity.requiresApproval?{}:{approvedAt:now,activatedAt,maturesAt})}});
    const userAccount=await ensureUserLedger(tx,user.id,AccountMode.REAL,'USD');
    const available=await balance(tx,userAccount.id);
-    const reserved=await reservedWithdrawalAmount(tx,user.id,user.accountMode,'USD');
-    if(available.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_SIMULATED_BALANCE');
+    const withdrawable=await getRealWithdrawableBalance(tx,user.id,available);
+    if(withdrawable.lt(amount))throw new Error('INSUFFICIENT_SIMULATED_BALANCE');
    const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${AccountMode.REAL}:USD`,`${AccountMode.REAL} investment escrow`,'USD',AccountMode.REAL);
    await postDoubleEntry(tx,{reference:`INVESTMENT:${investment.id}:RESERVE`,description:`Reserve ${AccountMode.REAL} investment funds for ${opportunity.title}`,debitAccountId:userAccount.id,creditAccountId:escrow.id,amount});
    await tx.auditLog.create({data:{actorId:user.id,action:'INVESTMENT_SUBMITTED',entity:'INVESTMENT',entityId:investment.id,metadata:{opportunityId:opportunity.id,accountMode:AccountMode.REAL,amount:amount.toString(),tierBoostPercent:tierBoostPercent.toString(),status,simulated:true}}});

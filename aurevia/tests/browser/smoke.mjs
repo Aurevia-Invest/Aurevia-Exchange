@@ -20,11 +20,11 @@ try{
 const browser=await chromium.launch({headless:true});
 try{
 	const page=await browser.newPage();
-	const homepage=await page.goto(new URL('/',baseUrl),{waitUntil:'domcontentloaded',timeout:45_000});
+	const homepage=await page.goto(new URL('/',baseUrl).toString(),{waitUntil:'domcontentloaded',timeout:45_000});
 	if(homepage?.status()!==200)throw new Error(`Homepage returned HTTP ${homepage?.status()??'no response'}.`);
 	await page.locator('.home-hero h1').first().waitFor({state:'visible',timeout:20_000});
 
-	const health=await page.request.get(new URL('/api/health',baseUrl),{timeout:15_000});
+	const health=await page.request.get(new URL('/api/health',baseUrl).toString(),{timeout:15_000});
 	if(!health.ok())throw new Error(`Aurevia health check returned HTTP ${health.status()}.`);
 	const payload=await health.json();
 	if(payload.ok!==true)throw new Error('Aurevia health endpoint did not report a healthy application.');

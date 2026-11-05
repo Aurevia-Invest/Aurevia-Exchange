@@ -1,6 +1,9 @@
 {
   "name": "Aurevia Exchange",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
   "postCreateCommand": "cd aurevia && npm run tools:install -- --with-deps",
   "forwardPorts": [3000]
 }

@@ -7,6 +7,7 @@ if(supabaseUrl){
 }
 const nextConfig={
 	reactStrictMode:true,
+	turbopack:{root:process.cwd()},
 	distDir:process.env.AUREVIA_NEXT_DIST_DIR||'.next',
 	experimental:{agentUpgrade:'security'},
 	...(remotePatterns.length?{images:{remotePatterns}}:{}),

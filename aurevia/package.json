@@ -54,7 +54,7 @@
     "sharp": "0.35.5",
     "socket.io": "4.8.1",
     "socket.io-client": "^4.8.1",
-    "svix": "^1.66.0",
+    "svix": "^1.99.1",
     "tailwind-merge": "2.5.5",
     "three": "^0.172.0",
     "tsx": "4.23.15",

@@ -16,7 +16,7 @@ const mocks=vi.hoisted(()=>({
 	ensureUserLedger:vi.fn(),
 	initializeDemoAccount:vi.fn(),
 	postDoubleEntry:vi.fn(),
-	reservedWithdrawalAmount:vi.fn(),
+	getRealWithdrawableBalance:vi.fn(),
 	createNotification:vi.fn(),
 	notifyActiveAdmins:vi.fn(),
 	configuredTierBoost:vi.fn(),
@@ -38,9 +38,9 @@ vi.mock('@/lib/ledger',()=>({
 	ensureUserLedger:mocks.ensureUserLedger,
 	initializeDemoAccount:mocks.initializeDemoAccount,
 	postDoubleEntry:mocks.postDoubleEntry,
-	reservedWithdrawalAmount:mocks.reservedWithdrawalAmount,
 	roundUsdAmount:(value:Prisma.Decimal|string|number)=>new Prisma.Decimal(value).toDecimalPlaces(2,Prisma.Decimal.ROUND_HALF_UP),
 }));
+vi.mock('@/lib/real-withdrawals',()=>({getRealWithdrawableBalance:mocks.getRealWithdrawableBalance}));
 vi.mock('@/lib/notifications',()=>({createNotification:mocks.createNotification,notifyActiveAdmins:mocks.notifyActiveAdmins}));
 vi.mock('@/lib/tier-boosts',()=>({configuredTierBoost:mocks.configuredTierBoost}));
 vi.mock('@/lib/production-policy',()=>({
@@ -97,7 +97,7 @@ beforeEach(()=>{
 	mocks.ensureUserLedger.mockResolvedValue({id:'demo-ledger'});
 	mocks.initializeDemoAccount.mockResolvedValue(undefined);
 	mocks.postDoubleEntry.mockResolvedValue(undefined);
-	mocks.reservedWithdrawalAmount.mockResolvedValue(new Prisma.Decimal(0));
+	mocks.getRealWithdrawableBalance.mockImplementation(async(_tx:unknown,_userId:string,available:Prisma.Decimal)=>available);
 	mocks.createNotification.mockResolvedValue(undefined);
 	mocks.notifyActiveAdmins.mockResolvedValue(undefined);
 	mocks.configuredTierBoost.mockResolvedValue(new Prisma.Decimal(0));
@@ -154,6 +154,33 @@ describe('REAL-only investment allocations',()=>{
 		expect(result.opportunities).toHaveLength(1);
 		expect(mocks.opportunityFindMany).toHaveBeenCalledWith(expect.objectContaining({where:{status:'AVAILABLE',realEligible:true}}));
 		expect(mocks.accountFindUnique).toHaveBeenCalledWith({where:{code:'USER:real-user:REAL:USD'},select:{id:true,startingBalance:true}});
+	});
+
+	it('excludes pending order and withdrawal reservations from the displayed investment balance',async()=>{
+		mocks.balance.mockResolvedValue(new Prisma.Decimal(500));
+		mocks.getRealWithdrawableBalance.mockResolvedValue(new Prisma.Decimal(100));
+
+		const response=await GET();
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({availableBalance:'100'});
+		expect(mocks.getRealWithdrawableBalance).toHaveBeenCalledWith(expect.anything(),'real-user',new Prisma.Decimal(500));
+	});
+
+	it('rejects allocations exceeding the balance after paper-order collateral reservations',async()=>{
+		mocks.balance.mockResolvedValue(new Prisma.Decimal(500));
+		mocks.getRealWithdrawableBalance.mockResolvedValue(new Prisma.Decimal(100));
+
+		const response=await POST(new Request('https://aurevia.test/api/investments',{
+			method:'POST',
+			headers:{'content-type':'application/json','Idempotency-Key':crypto.randomUUID()},
+			body:JSON.stringify({opportunityId:opportunity.id,amount:200}),
+		}));
+
+		expect(response.status).toBe(400);
+		expect((await response.json()).error).toContain('Insufficient available REAL account cash');
+		expect(mocks.getRealWithdrawableBalance).toHaveBeenCalledWith(tx,'real-user',new Prisma.Decimal(500));
+		expect(mocks.postDoubleEntry).not.toHaveBeenCalled();
 	});
 
 	it('allows repeat allocations and reserves funds only from the REAL ledger',async()=>{

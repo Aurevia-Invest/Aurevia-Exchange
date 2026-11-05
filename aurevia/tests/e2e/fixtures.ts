@@ -18,8 +18,6 @@ export {expect};
 
 export async function waitForStartup(page:Page){
 	const startupScreen=page.locator('.startup-screen');
-	const skipIntroduction=page.getByRole('button',{name:'Skip introduction'});
-	const availableContent=page.locator('.scene-content > div[aria-hidden="false"]');
 	const policyConsent=page.locator('.policy-consent-dialog');
 	await page.waitForFunction(()=>{
 		const consentDialog=document.querySelector<HTMLDialogElement>('.policy-consent-dialog');

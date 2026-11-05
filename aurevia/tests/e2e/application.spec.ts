@@ -1,4 +1,4 @@
-import {createHash,randomUUID} from 'node:crypto';
+import {createHash,randomInt,randomUUID} from 'node:crypto';
 import type {Page} from '@playwright/test';
 import bcrypt from 'bcryptjs';
 import {FundingStatus,FundingType,Prisma} from '@prisma/client';
@@ -229,7 +229,7 @@ test('market view labels internal reference prices when no live provider is conf
 	expect(historyResponse.ok()).toBe(true);
 	expect((await historyResponse.json()).source).toBe('Aurevia Internal');
 	await page.goto('/markets');
-	await expect(page.locator('.live-market-heading')).toContainText('INDICATIVE PRICES');
+	await expect(page.locator('.live-market-heading').first()).toContainText('INDICATIVE PRICES');
 	await expect(page.locator('.live-source-status')).toContainText('Price status: Indicative');
 	await expect(page.locator('.live-disclaimer')).toContainText('Internal reference prices are estimates, not executable quotes.');
 });
@@ -430,7 +430,7 @@ test('login and registration fields receive real pointer and keyboard input',asy
 	await expect(password).toHaveValue('NotARealPassword123!');
 	await page.getByRole('button',{name:'Hide password'}).click();
 	await page.getByRole('button',{name:'Sign in'}).click();
-	await expect(page.locator('.auth-error[role="alert"]')).toContainText(/sign-in failed/i);
+	await expect(page.locator('.auth-error[role="alert"]')).toContainText(/email address or password is incorrect/i);
 	await expect(identifier).toHaveValue('invalid-user@example.test');
 
 	await page.goto('/register');
@@ -916,6 +916,7 @@ test('sign-in password visibility, recovery link, and account link are accessibl
 
 test('signup submits without a security widget and creates an account without phone OTP',async({page})=>{
 	const email=`aurevia-e2e-immediate-signup-${randomUUID()}@example.invalid`;
+	const phoneSuffix=randomInt(100000,1_000_000);
 	let registrationRequests=0;
 	const registrationPayloads:Record<string,unknown>[]=[];
 	page.on('request',request=>{
@@ -944,7 +945,7 @@ test('signup submits without a security widget and creates an account without ph
 	await phoneDialog.getByRole('searchbox').fill('United Kingdom');
 	await phoneDialog.getByRole('option',{name:/United Kingdom.*GB.*\+44/}).click();
 	await registrationForm.getByLabel('Email address').fill(email);
-	await registrationForm.getByLabel(/Phone number/).fill('07400 123456');
+	await registrationForm.getByLabel(/Phone number/).fill(`07400 ${phoneSuffix}`);
 	await registrationForm.getByLabel('Password',{exact:true}).fill('SecureTestPassword1');
 	await registrationForm.getByLabel('Confirm password').fill('SecureTestPassword1');
 	await registrationForm.getByRole('checkbox').check();
@@ -961,7 +962,7 @@ test('signup submits without a security widget and creates an account without ph
 	expect(signedIn.user.email).toBe(email);
 	const registeredUser=await db.user.findUniqueOrThrow({where:{email},select:{id:true,status:true,phone:true,phoneVerified:true,phoneVerifiedAt:true,gender:true}});
 	expect(registeredUser).toMatchObject({
-		status:'ACTIVE',phone:'+447400123456',phoneVerified:false,phoneVerifiedAt:null,gender:'FEMALE',
+		status:'ACTIVE',phone:`+447400${phoneSuffix}`,phoneVerified:false,phoneVerifiedAt:null,gender:'FEMALE',
 	});
 	expect(await db.kycProfile.findUnique({where:{userId:registeredUser.id},select:{dob:true}})).toEqual({dob:new Date('2000-02-29T00:00:00.000Z')});
 	expect(await db.ledgerAccount.findMany({where:{userId:registeredUser.id},select:{accountMode:true},orderBy:{accountMode:'asc'}})).toEqual([
@@ -977,6 +978,7 @@ test('signup submits without a security widget and creates an account without ph
 });
 
 test('ten concurrent signups with phone numbers complete without transaction timeouts',async({page})=>{
+	const phonePrefix=randomInt(10000,100000);
 	const registrations=Array.from({length:10},(_,index)=>({
 		email:`aurevia-e2e-concurrent-signup-${randomUUID()}@example.invalid`,
 		password:'SecureTestPassword1',
@@ -984,7 +986,7 @@ test('ten concurrent signups with phone numbers complete without transaction tim
 		country:'United Kingdom',
 		gender:'PREFER_NOT_TO_SAY',
 		dateOfBirth:'1990-01-01',
-		phone:`+4474001234${String(index+57)}`,
+		phone:`+447400${phonePrefix}${index}`,
 		accountMode:'DEMO',
 		termsAccepted:true,
 		website:'',

@@ -7,7 +7,6 @@ import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {verifyAccountCredentials} from '@/lib/security-auth';
 import {sendSecurityEmail} from '@/lib/security-notifications';
-import {readTrustedDeviceToken,trustedDeviceTokenHash} from '@/lib/trusted-device';
 
 const schema=z.object({
 	currentPassword:z.string().min(1).max(128),
@@ -26,16 +25,11 @@ export async function POST(request:Request){
 		if(!await verifyAccountCredentials({userId:user.id,password:currentPassword,sessionHash:user.sessionHash}))return NextResponse.json({error:'Current password is incorrect.'},{status:401});
 		const passwordHash=await bcrypt.hash(newPassword,12);
 		const currentSessionHash=user.sessionHash;
-		const trustedToken=readTrustedDeviceToken(request.headers.get('cookie'));
 		await db.$transaction(async tx=>{
 			const now=new Date();
 			await tx.user.update({where:{id:user.id},data:{passwordHash,activeSessionId:null,activeSessionUpdatedAt:null}});
 			await tx.securitySession.updateMany({where:{userId:user.id,revokedAt:null,sessionHash:{not:currentSessionHash}},data:{revokedAt:now}});
 			await tx.securitySession.updateMany({where:{userId:user.id,sessionHash:currentSessionHash,revokedAt:null},data:{rotationRequired:true,reauthenticatedAt:null,lastActivityAt:now}});
-			await tx.trustedDevice.updateMany({
-				where:{userId:user.id,revokedAt:null,...(trustedToken?{tokenHash:{not:trustedDeviceTokenHash(trustedToken)}}:{})},
-				data:{revokedAt:now},
-			});
 			await createNotification(tx,{
 				userId:user.id,
 				type:NotificationType.SECURITY,

@@ -70,13 +70,13 @@ export async function POST(request:Request){
 				await tx.securitySession.updateMany({where:{userId:user.id,sessionHash:currentHash,revokedAt:null},data:{rotationRequired:true,reauthenticatedAt:null,lastActivityAt:now}});
 				await createNotification(tx,{
 					userId:user.id,type:NotificationType.SECURITY,title:'Two-factor authentication enabled',
-					message:'Two-factor sign-in protection was enabled for your Aurevia account. If you did not make this change, secure your account immediately.',
+					message:'Authenticator settings were enabled for your Aurevia account. If you did not make this change, secure your account immediately.',
 					dedupeKey:`security:${user.id}:two-factor-enabled:${randomUUID()}`,actionUrl:'/settings#security',
 				});
 				await tx.auditLog.create({data:{actorId:user.id,action:'TWO_FACTOR_ENABLED',entity:'USER',entityId:user.id,metadata:{recoveryCodeCount:recoveryCodes.length}}});
 			},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
 			await clearPersistentRateLimit(enrollmentAttemptKey);
-			await sendSecurityEmail(user.id,{subject:'Two-factor authentication enabled',text:'Two-factor sign-in protection was enabled for your Aurevia Exchange account. Recovery codes were displayed once in the application and are not included in this email. If you did not enable this protection, secure your account immediately.'});
+			await sendSecurityEmail(user.id,{subject:'Two-factor authentication enabled',text:'Authenticator settings were enabled for your Aurevia Exchange account. Recovery codes were displayed once in the application and are not included in this email. If you did not enable this setting, secure your account immediately.'});
 			return NextResponse.json({enabled:true,recoveryCodes},{headers:{'Cache-Control':'no-store'}});
 		}
 
@@ -90,12 +90,12 @@ export async function POST(request:Request){
 			await tx.securitySession.updateMany({where:{userId:user.id,sessionHash:currentHash,revokedAt:null},data:{rotationRequired:true,reauthenticatedAt:null,lastActivityAt:now}});
 			await createNotification(tx,{
 				userId:user.id,type:NotificationType.SECURITY,title:'Two-factor authentication disabled',
-				message:'Two-factor sign-in protection was disabled for your Aurevia account. If you did not make this change, secure your account immediately.',
+				message:'Authenticator settings were disabled for your Aurevia account. If you did not make this change, secure your account immediately.',
 				dedupeKey:`security:${user.id}:two-factor-disabled:${randomUUID()}`,actionUrl:'/settings#security',
 			});
 			await tx.auditLog.create({data:{actorId:user.id,action:'TWO_FACTOR_DISABLED',entity:'USER',entityId:user.id,metadata:{activeSessionsRevoked:true}}});
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
-		await sendSecurityEmail(user.id,{subject:'Two-factor authentication disabled',text:'Two-factor sign-in protection was disabled for your Aurevia Exchange account. If you did not make this change, secure your account immediately.'});
+		await sendSecurityEmail(user.id,{subject:'Two-factor authentication disabled',text:'Authenticator settings were disabled for your Aurevia Exchange account. If you did not make this change, secure your account immediately.'});
 		return NextResponse.json({enabled:false});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Two-factor security request is invalid.'},{status:400});

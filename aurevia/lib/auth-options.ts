@@ -11,13 +11,16 @@ import {RateLimitError,rateLimit} from '@/lib/rate-limit';
 import {matchesConfiguredAdminIdentity,matchesConfiguredAdminPassword,resolveCredentialLookup} from '@/lib/credential-lookup';
 import {getServerConfiguration} from '@/lib/config/env';
 import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '@/lib/auth-session';
-import {consumeSecondFactor} from '@/lib/security-auth';
 import {hashSessionId} from '@/lib/security';
 import {clearPersistentRateLimit,persistentRateLimit} from '@/lib/security-rate-limit';
-import {consumeNewDeviceVerificationCode,sendNewDeviceVerificationCode} from '@/lib/device-verification';
-import {deviceFingerprint,readTrustedDeviceToken,trustedDeviceLabel,trustedDeviceTokenHash} from '@/lib/trusted-device';
 
 function headerValue(value:string|string[]|undefined){return Array.isArray(value)?value[0]||'':value||''}
+function sessionDeviceLabel(userAgent:string|null){
+  if(!userAgent)return 'Unknown device';
+  const browser=/Edg\//.test(userAgent)?'Edge':/Firefox\//.test(userAgent)?'Firefox':/Chrome\//.test(userAgent)?'Chrome':/Safari\//.test(userAgent)?'Safari':'Browser';
+  const platform=/iPhone|iPad/.test(userAgent)?'iOS':/Android/.test(userAgent)?'Android':/Windows/.test(userAgent)?'Windows':/Mac OS/.test(userAgent)?'macOS':/Linux/.test(userAgent)?'Linux':'Device';
+  return `${browser} on ${platform}`;
+}
 function auditClientIp(headers:IncomingHttpHeaders){
   const forwarded=headerValue(headers['x-forwarded-for']).split(',').at(-1)?.trim();
   const real=headerValue(headers['x-real-ip']).trim();
@@ -39,7 +42,6 @@ export const authOptions:NextAuthOptions={
       username:{label:'Username',type:'text'},
       password:{label:'Password',type:'password'},
       adminLogin:{label:'Administrator sign-in',type:'text'},
-      secondFactorCode:{label:'Authenticator or recovery code',type:'text'}
     },
     async authorize(c,request){
       const password=c?.password;
@@ -102,45 +104,10 @@ export const authOptions:NextAuthOptions={
       if(!ok){await writeLoginAudit('FAILED',u.id,undefined,'INVALID_CREDENTIALS');return null;}
       if(isAdminUsername&&u.role!=='ADMIN'){await writeLoginAudit('FAILED',u.id,undefined,'ADMIN_ROLE_REQUIRED');return null;}
       const now=new Date();
-      const fingerprint=deviceFingerprint(userAgent);
-      const deviceToken=readTrustedDeviceToken(headers?headerValue(headers.cookie):'');
-      const knownDevice=deviceToken?await db.trustedDevice.findFirst({
-        where:{userId:u.id,tokenHash:trustedDeviceTokenHash(deviceToken),revokedAt:null,expiresAt:{gt:now}},
-        select:{id:true},
-      }):null;
-      if(knownDevice)await db.trustedDevice.update({where:{id:knownDevice.id},data:{lastUsedAt:now}});
-
-      let deviceVerificationAt:Date|null=null;
-      if(!knownDevice){
-        const secondFactorCode=typeof c?.secondFactorCode==='string'?c.secondFactorCode.trim():'';
-        let validAuthenticator=false;
-        if(u.twoFactorEnabled&&u.totpSecretEncrypted&&secondFactorCode){
-          try{validAuthenticator=await db.$transaction(tx=>consumeSecondFactor(tx,{userId:u.id,secretEncrypted:u.totpSecretEncrypted,lastTotpCounter:u.lastTotpCounter,code:secondFactorCode}),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});}
-          catch{await writeLoginAudit('FAILED',u.id,undefined,'SECOND_FACTOR_UNAVAILABLE');return null;}
-        }
-        let emailChallenge:'VERIFIED'|'INVALID'|'MISSING'='MISSING';
-        if(!validAuthenticator&&secondFactorCode){
-          emailChallenge=await consumeNewDeviceVerificationCode({userId:u.id,fingerprint,code:secondFactorCode});
-        }
-        if(!validAuthenticator&&emailChallenge!=='VERIFIED'){
-          if(!secondFactorCode||emailChallenge==='MISSING'){
-            const sent=await sendNewDeviceVerificationCode({userId:u.id,email:u.email,fingerprint});
-            if(!sent)await writeLoginAudit('FAILED',u.id,undefined,'DEVICE_VERIFICATION_EMAIL_UNAVAILABLE');
-          }
-          await writeLoginAudit('FAILED',u.id,undefined,secondFactorCode?'INVALID_DEVICE_VERIFICATION':'DEVICE_VERIFICATION_REQUIRED');
-          return null;
-        }
-        deviceVerificationAt=now;
-        await db.deviceVerificationChallenge.deleteMany({where:{userId:u.id,deviceFingerprint:fingerprint}});
-      }
       await clearPersistentRateLimit(accountAttemptKey);
       const sessionId=randomUUID();
-      const label=trustedDeviceLabel(userAgent);
-      await db.securitySession.create({data:{userId:u.id,sessionHash:hashSessionId(sessionId),deviceLabel:label,userAgent,deviceVerificationAt,expiresAt:new Date(now.getTime()+AUTH_SESSION_MAX_AGE_SECONDS*1000)}});
-      if(userAgent&&!knownDevice){
-        try{await createNotification(db,{userId:u.id,type:NotificationType.SECURITY,title:'New-device sign-in',message:'Your Aurevia account was accessed from a device or browser not previously recorded for this account. If this was not you, change your password and revoke active sessions.',dedupeKey:`security:${u.id}:new-device:${sessionId}`,actionUrl:'/settings#security'});}
-        catch{console.warn('Unable to persist new-device sign-in notification.');}
-      }
+      const label=sessionDeviceLabel(userAgent);
+      await db.securitySession.create({data:{userId:u.id,sessionHash:hashSessionId(sessionId),deviceLabel:label,userAgent,expiresAt:new Date(now.getTime()+AUTH_SESSION_MAX_AGE_SECONDS*1000)}});
       await writeLoginAudit('SUCCESS',u.id,sessionId);
       return {id:u.id,email:u.email,name:u.name,role:u.role,accountMode:u.accountMode,sessionId};
     }

@@ -63,20 +63,6 @@ async function createIsolatedDemoUser(label:string){
 	return {email:user.email,password};
 }
 
-async function loginWithSecondFactor(page:Page,email:string,password:string,code:string){
-	await page.addInitScript(()=>localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()})));
-	await page.goto('/login');
-	await waitForStartup(page);
-	await page.getByLabel('Email address').fill(email);
-	await page.getByLabel('Password',{exact:true}).fill(password);
-	await page.getByRole('button',{name:'Sign in'}).click();
-	await expect(page.getByRole('alert')).toBeVisible();
-	if(code){
-		await page.getByLabel('New-device verification code (email or authenticator)').fill(code);
-		await page.getByRole('button',{name:'Sign in'}).click();
-	}
-}
-
 function depositPostOptions(idempotencyKey:string,payload:Record<string,unknown>){
 	return {headers:{'Idempotency-Key':idempotencyKey},multipart:{payload:JSON.stringify(payload),evidence:{name:'payment.png',mimeType:'image/png',buffer:PNG.sync.write(new PNG({width:1,height:1}))}}};
 }
@@ -2847,7 +2833,7 @@ test('password changes require fresh credentials and revoke other sessions',asyn
 	}
 });
 
-test('TOTP enrollment, login challenge, recovery codes, replay protection, and disable flow',async({browser,page})=>{
+test('TOTP enrollment, new-device password-only sign-in, and disable flow',async({browser,page})=>{
 	test.setTimeout(120_000);
 	const user=await createIsolatedDemoUser('security-totp');
 	await loginAs(page,user.email,user.password);
@@ -2898,51 +2884,19 @@ test('TOTP enrollment, login challenge, recovery codes, replay protection, and d
 	expect((await page.request.get('/api/profile').then(response=>response.json())).twoFactorEnabled).toBe(true);
 	await page.getByRole('button',{name:'I’ve saved my recovery codes'}).click();
 
-	const missingCodeContext=await browser.newContext();
-	const wrongCodeContext=await browser.newContext();
-	const totpContext=await browser.newContext();
-	const recoveryContext=await browser.newContext();
-	const reuseContext=await browser.newContext();
+	const newDeviceContext=await browser.newContext();
 	try{
-		const missingCodePage=await missingCodeContext.newPage();
-		await loginWithSecondFactor(missingCodePage,user.email,user.password,'');
-		await expect(missingCodePage).toHaveURL(/\/login/);
-		await expect(missingCodePage.getByRole('alert')).toBeVisible();
+		const newDevicePage=await newDeviceContext.newPage();
+		await loginAs(newDevicePage,user.email,user.password);
+		await expect(newDevicePage).toHaveURL(/dashboard/);
+		await expect(newDevicePage.getByLabel('New-device verification code (email or authenticator)')).toHaveCount(0);
 
-		const wrongCodePage=await wrongCodeContext.newPage();
-		let wrongLoginCode=await generate({secret:generateSecret()});
-		if(wrongLoginCode===validEnrollmentCode)wrongLoginCode=`${(Number(wrongLoginCode)+1)%1_000_000}`.padStart(6,'0');
-		await loginWithSecondFactor(wrongCodePage,user.email,user.password,wrongLoginCode);
-		await expect(wrongCodePage).toHaveURL(/\/login/);
-		await expect(wrongCodePage.getByRole('alert')).toBeVisible();
-
-		await page.waitForTimeout(31_100);
-		const loginCode=await generate({secret:enrollment.manualKey});
-		const totpPage=await totpContext.newPage();
-		await loginWithSecondFactor(totpPage,user.email,user.password,loginCode);
-		await totpPage.waitForURL(/dashboard/);
-
-		const recoveryPage=await recoveryContext.newPage();
-		await loginWithSecondFactor(recoveryPage,user.email,user.password,recoveryCodes[0]);
-		await recoveryPage.waitForURL(/dashboard/);
-		const recoveryNotification=await db.notification.findFirst({where:{userId:(await db.user.findUniqueOrThrow({where:{email:user.email}})).id,title:'Two-factor recovery code used'}});
-		expect(recoveryNotification).toBeTruthy();
-
-		const reusePage=await reuseContext.newPage();
-		await loginWithSecondFactor(reusePage,user.email,user.password,recoveryCodes[0]);
-		await expect(reusePage).toHaveURL(/\/login/);
-		await expect(reusePage.getByRole('alert')).toBeVisible();
-
-		const disable=await page.request.post('/api/security/totp',{data:{action:'disable',password:user.password}});
+		const disable=await newDevicePage.request.post('/api/security/totp',{data:{action:'disable',password:user.password}});
 		expect(disable.status()).toBe(200);
-		expect(await page.request.get('/api/profile').then(response=>response.json())).toMatchObject({twoFactorEnabled:false});
-		await expect.poll(async()=> (await totpPage.request.get('/api/dashboard')).status()).toBe(401);
+		expect(await newDevicePage.request.get('/api/profile').then(response=>response.json())).toMatchObject({twoFactorEnabled:false});
+		await expect.poll(async()=> (await page.request.get('/api/dashboard')).status()).toBe(401);
 	}finally{
-		await missingCodeContext.close();
-		await wrongCodeContext.close();
-		await totpContext.close();
-		await recoveryContext.close();
-		await reuseContext.close();
+		await newDeviceContext.close();
 	}
 });
 

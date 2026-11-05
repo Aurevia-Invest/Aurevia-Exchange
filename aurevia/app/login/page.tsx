@@ -17,8 +17,6 @@ export default function Login(){
 	const [passwordVisible,setPasswordVisible]=useState(false);
 	const [error,setError]=useState('');
 	const [registered,setRegistered]=useState(false);
-	const [secondFactorCode,setSecondFactorCode]=useState('');
-	const [deviceVerificationPending,setDeviceVerificationPending]=useState(false);
 	const [callbackUrl,setCallbackUrl]=useState('/dashboard');
 	const [busy,setBusy]=useState(false);
 	const router=useRouter();
@@ -44,14 +42,11 @@ export default function Login(){
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();if(busy)return;setBusy(true);setError('');
 		try{
-			const result=await signIn('credentials',{username:identifier,email:identifier,password,secondFactorCode,redirect:false});
+			const result=await signIn('credentials',{username:identifier,email:identifier,password,redirect:false});
 			if(result?.ok){
-				const trustedDevice=await fetch('/api/auth/trusted-device',{method:'POST'});
-				if(!trustedDevice.ok)console.warn('This device could not be remembered for future sign-ins.');
 				await update();router.replace(callbackUrl);router.refresh();
 			}else{
-				setDeviceVerificationPending(true);
-				setError('Sign-in failed. If your password is correct and this is a new device, check your email for a verification code. You can also use your authenticator code.');
+				setError('Email/username or password is incorrect.');
 			}
 		}catch{setError(translate('unableAuth'))}
 		finally{setBusy(false);}
@@ -67,8 +62,6 @@ export default function Login(){
 		<form onSubmit={submit} className="mt-5 space-y-4">
 			<label className="auth-field-label">{translate('emailOrUsername')}<input className="auth-input" name="username" type="text" autoComplete="username" value={identifier} onChange={event=>{setIdentifier(event.target.value);setError('')}} required/></label>
 			<div><label className="auth-field-label" htmlFor="login-password">{translate('password')}</label><div className="auth-password-wrap"><input id="login-password" className="auth-input" name="password" type={passwordVisible?'text':'password'} autoComplete="current-password" value={password} onChange={event=>{setPassword(event.target.value);setError('')}} required/><button type="button" className="auth-password-toggle" aria-label={passwordVisible?translate('hidePassword'):translate('showPassword')} aria-pressed={passwordVisible} onClick={()=>setPasswordVisible(value=>!value)}>{passwordVisible?<EyeOff size={18}/>:<Eye size={18}/>}</button></div></div>
-			{deviceVerificationPending&&<><label className="auth-field-label" htmlFor="login-second-factor">New-device verification code (email or authenticator) <input id="login-second-factor" className="auth-input mt-2" name="secondFactorCode" autoComplete="one-time-code" inputMode="text" maxLength={64} value={secondFactorCode} onChange={event=>{setSecondFactorCode(event.target.value);setError('')}} aria-describedby="login-second-factor-hint"/></label>
-			<p id="login-second-factor-hint" className="text-xs muted">If your credentials are correct, a code is sent to your email. You can also use an authenticator code. This device is remembered after verification.</p></>}
 			<div className="auth-inline-links"><span>{translate('protected')}</span><Link className="auth-link" href="/forgot-password">{translate('forgotPassword')}</Link></div>
 			{error&&<p className="auth-error" role="alert">{error}</p>}
 			<button type="submit" disabled={busy} className="auth-submit flex w-full items-center justify-center gap-2" aria-busy={busy}>{busy?<><LoaderCircle size={16} className="animate-spin" aria-hidden="true"/>{translate('loading')}</> : translate('signIn')}</button>

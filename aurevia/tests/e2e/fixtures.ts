@@ -1,7 +1,6 @@
 import {expect,test as base,Page} from '@playwright/test';
 import {PrismaClient} from '@prisma/client';
-import {randomBytes,randomInt} from 'node:crypto';
-import {TRUSTED_DEVICE_COOKIE,TRUSTED_DEVICE_MAX_AGE_SECONDS,trustedDeviceTokenHash} from '@/lib/trusted-device';
+import {randomInt} from 'node:crypto';
 
 type RuntimeCapture={consoleErrors:string[];pageErrors:string[];failedRequests:string[];failedResponses:Array<{url:string;status:number}>};
 const marketProviderConfigured=!process.env.AUREVIA_E2E_DATABASE_URL&&Boolean(
@@ -38,34 +37,7 @@ export async function waitForStartup(page:Page){
 	await expect(page.locator('.scene-content > div[inert]')).toHaveCount(0);
 }
 
-async function seedTrustedDevice(page:Page,email:string){
-	if(!e2eDb||!e2eDatabaseUrl)throw new Error('Refusing to seed a trusted device without the isolated E2E database.');
-	const target=new URL(e2eDatabaseUrl);
-	const databaseName=decodeURIComponent(target.pathname.replace(/^\/+/,''));
-	if(!['localhost','127.0.0.1','::1'].includes(target.hostname)||!['postgresql:','postgres:'].includes(target.protocol)||!/_e2e$/i.test(databaseName))throw new Error('Refusing to seed a trusted device outside the isolated E2E database.');
-	const user=await e2eDb.user.findFirst({where:{email:{equals:email,mode:'insensitive'}},select:{id:true}});
-	if(!user)throw new Error('Unable to find the isolated E2E login user.');
-	const token=randomBytes(32).toString('base64url');
-	await e2eDb.trustedDevice.create({data:{
-		userId:user.id,
-		tokenHash:trustedDeviceTokenHash(token),
-		deviceLabel:'Playwright test device',
-		userAgent:'Playwright E2E',
-		expiresAt:new Date(Date.now()+TRUSTED_DEVICE_MAX_AGE_SECONDS*1000),
-	}});
-	await page.context().addCookies([{
-		name:TRUSTED_DEVICE_COOKIE,
-		value:token,
-		url:appOrigin,
-		httpOnly:true,
-		secure:true,
-		sameSite:'Lax',
-		expires:Math.floor(Date.now()/1000)+TRUSTED_DEVICE_MAX_AGE_SECONDS,
-	}]);
-}
-
-export async function loginAs(page:Page,email:string,password:string,options:{trustedDevice?:boolean}={}){
-	if(options.trustedDevice!==false)await seedTrustedDevice(page,email);
+export async function loginAs(page:Page,email:string,password:string){
 	const loginIp=isolatedLoginIp();
 	const addIsolatedLoginIp=(route:import('@playwright/test').Route)=>route.continue({headers:{...route.request().headers(),'x-forwarded-for':loginIp}});
 	const administrator=email.toLowerCase()===process.env.AUREVIA_E2E_ADMIN_EMAIL?.toLowerCase();
@@ -166,7 +138,7 @@ test.afterEach(async({page},testInfo)=>{
 	const capture=(page as Page & {__runtimeCapture?:RuntimeCapture}).__runtimeCapture;
 	if(!capture)return;
 	await testInfo.attach('browser-runtime.json',{body:Buffer.from(JSON.stringify(capture,null,2)),contentType:'application/json'});
-	const expectedClientErrors=capture.failedResponses.filter(response=>(testInfo.title.includes('duplicate signup offers sign-in')&&response.url.endsWith('/api/register')&&response.status===409)||(testInfo.title.includes('registration fails closed when Akedly credentials are unavailable')&&response.url.endsWith('/api/register')&&response.status===503)||(response.url.endsWith('/api/auth/callback/credentials')&&response.status===401)||(testInfo.title.includes('TOTP enrollment, login challenge')&&response.url.endsWith('/api/security/totp')&&response.status===400)||((testInfo.title.includes('watchlists persist')||testInfo.title.includes('session replacement is explicit')||testInfo.title.includes('Nova escalation reaches admin')||testInfo.title.includes('tier requests require')||testInfo.title.includes('account deletion'))&&response.url.endsWith('/api/notifications?limit=8')&&response.status===401)||(testInfo.title.includes('account deletion')&&((['/api/currency-preference','/api/positions','/api/tax-services/access','/api/profile','/api/profile/avatar'].some(path=>response.url.endsWith(path))&&response.status===401)||(response.url.endsWith('/api/dashboard/overview')&&response.status===403)))|| (testInfo.title.includes('Nova escalation reaches admin')&&response.url.endsWith('/api/support')&&response.status===409)||((testInfo.title.includes('Account Funding')||testInfo.title.includes('Wallet shows the internal funding workflow'))&&(response.url.endsWith('/api/payment-methods')||response.url.endsWith('/api/wallet'))&&response.status===503)||(response.url.includes('/api/live-markets/')&&response.status===503&&!marketProviderConfigured)||(testInfo.title.includes('KYC access is owner-scoped')&&response.url.endsWith('/api/kyc/documents')&&response.status===409));
+	const expectedClientErrors=capture.failedResponses.filter(response=>(testInfo.title.includes('duplicate signup offers sign-in')&&response.url.endsWith('/api/register')&&response.status===409)||(testInfo.title.includes('registration fails closed when Akedly credentials are unavailable')&&response.url.endsWith('/api/register')&&response.status===503)||(response.url.endsWith('/api/auth/callback/credentials')&&response.status===401)||(testInfo.title.includes('TOTP enrollment')&&response.url.endsWith('/api/security/totp')&&response.status===400)||((testInfo.title.includes('watchlists persist')||testInfo.title.includes('session replacement is explicit')||testInfo.title.includes('Nova escalation reaches admin')||testInfo.title.includes('tier requests require')||testInfo.title.includes('account deletion'))&&response.url.endsWith('/api/notifications?limit=8')&&response.status===401)||(testInfo.title.includes('account deletion')&&((['/api/currency-preference','/api/positions','/api/tax-services/access','/api/profile','/api/profile/avatar'].some(path=>response.url.endsWith(path))&&response.status===401)||(response.url.endsWith('/api/dashboard/overview')&&response.status===403)))|| (testInfo.title.includes('Nova escalation reaches admin')&&response.url.endsWith('/api/support')&&response.status===409)||((testInfo.title.includes('Account Funding')||testInfo.title.includes('Wallet shows the internal funding workflow'))&&(response.url.endsWith('/api/payment-methods')||response.url.endsWith('/api/wallet'))&&response.status===503)||(response.url.includes('/api/live-markets/')&&response.status===503&&!marketProviderConfigured)||(testInfo.title.includes('KYC access is owner-scoped')&&response.url.endsWith('/api/kyc/documents')&&response.status===409));
 	if(testInfo.title.includes('support fallback'))expectedClientErrors.push(...capture.failedResponses.filter(response=>response.url.endsWith('/api/support/nova')&&response.status===503));
 	if(testInfo.title.includes('account deletion'))expectedClientErrors.push(...capture.failedResponses.filter(response=>(response.url.endsWith('/api/profile')&&response.status===403)||(response.url.endsWith('/api/dashboard/overview')&&[401,403].includes(response.status))));
 	const unexpectedResponses=capture.failedResponses.filter(response=>!expectedClientErrors.includes(response));

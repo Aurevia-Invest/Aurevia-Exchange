@@ -10,15 +10,12 @@ const authMocks=vi.hoisted(()=>({
 	auditCreate:vi.fn(),
 	securitySessionFindFirst:vi.fn(),
 	securitySessionCreate:vi.fn(),
-	trustedDeviceFindFirst:vi.fn(),
-	trustedDeviceUpdate:vi.fn(),
 }));
 
 vi.mock('next-auth/providers/credentials',()=>({default:(configuration:unknown)=>configuration}));
 vi.mock('@/lib/db',()=>({db:{
 	user:{findFirst:authMocks.userFindFirst,updateMany:authMocks.userUpdateMany},
 	securitySession:{findFirst:authMocks.securitySessionFindFirst,create:authMocks.securitySessionCreate},
-	trustedDevice:{findFirst:authMocks.trustedDeviceFindFirst,update:authMocks.trustedDeviceUpdate},
 	auditLog:{create:authMocks.auditCreate},
 }}));
 vi.mock('@/lib/notifications',()=>({createNotification:vi.fn()}));
@@ -38,14 +35,12 @@ beforeEach(()=>{
 	authMocks.auditCreate.mockResolvedValue({});
 	authMocks.securitySessionFindFirst.mockResolvedValue(null);
 	authMocks.securitySessionCreate.mockResolvedValue({});
-	authMocks.trustedDeviceFindFirst.mockResolvedValue({id:'trusted-device-1'});
-	authMocks.trustedDeviceUpdate.mockResolvedValue({});
 });
 
 async function authorize(credentials:Record<string,string>){
 	const provider=authOptions.providers[0];
 	if(typeof provider==='string'||!('authorize' in provider))throw new Error('Credentials provider is unavailable.');
-	return provider.authorize(credentials,{headers:{cookie:`aurevia_trusted_device=${'A'.repeat(43)}`,'user-agent':'Unit Test Browser'},query:{},body:{},method:'POST'});
+	return provider.authorize(credentials,{headers:{'user-agent':'Unit Test Browser'},query:{},body:{},method:'POST'});
 }
 
 describe('auth session expiration',()=>{
@@ -94,19 +89,15 @@ describe('credentials authorization',()=>{
 			where:{email:{equals:'legacy.user@example.invalid',mode:'insensitive'}},
 		});
 		expect(result).toMatchObject({id:'legacy-user',email:'Legacy.User@Example.invalid'});
-		expect(authMocks.trustedDeviceFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-			where:expect.objectContaining({userId:'legacy-user',tokenHash:expect.stringMatching(/^[a-f0-9]{64}$/)}),
-		}));
-		expect(authMocks.trustedDeviceUpdate).toHaveBeenCalledWith({where:{id:'trusted-device-1'},data:{lastUsedAt:expect.any(Date)}});
 		expect(authMocks.securitySessionCreate).toHaveBeenCalledWith({data:expect.objectContaining({
 			userId:'legacy-user',
 			sessionHash:expect.stringMatching(/^[a-f0-9]{64}$/),
-			deviceVerificationAt:null,
+			deviceLabel:'Browser on Device',
 			expiresAt:expect.any(Date),
 		})});
 	});
 
-	it('does not request a factor again for a recognized device even when 2FA is enabled',async()=>{
+	it('allows a new-device sign-in using only the password when 2FA is enabled',async()=>{
 		const password='LegacyPassword1';
 		authMocks.userFindFirst.mockResolvedValue({
 			id:'mfa-user',email:'mfa@example.invalid',name:'MFA User',
@@ -115,8 +106,15 @@ describe('credentials authorization',()=>{
 			totpSecretEncrypted:'encrypted-totp',lastTotpCounter:1n,
 		});
 		const result=await authorize({username:'mfa@example.invalid',email:'mfa@example.invalid',password});
+
 		expect(result).toMatchObject({id:'mfa-user'});
-		expect(authMocks.securitySessionCreate).toHaveBeenCalledWith({data:expect.objectContaining({deviceVerificationAt:null})});
+		expect(authMocks.securitySessionCreate).toHaveBeenCalledWith({data:expect.objectContaining({
+			userId:'mfa-user',
+			expiresAt:expect.any(Date),
+		})});
+		expect(authOptions.providers[0]).toMatchObject({
+			credentials:expect.not.objectContaining({secondFactorCode:expect.anything()}),
+		});
 	});
 });
 

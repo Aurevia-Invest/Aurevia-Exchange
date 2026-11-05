@@ -9,7 +9,6 @@ import {trustedProxyClientIp} from '@/lib/request-ip';
 import {isValidE164,parseDateOfBirth} from '@/lib/registration-validation';
 import {createImmediateRegistration} from '@/lib/registration-attempt';
 import {createNotification,notifyActiveAdmins} from '@/lib/notifications';
-import {createTrustedDeviceToken,TRUSTED_DEVICE_COOKIE,TRUSTED_DEVICE_MAX_AGE_SECONDS,trustedDeviceLabel,trustedDeviceTokenHash} from '@/lib/trusted-device';
 
 const schema=z.object({
 	email:z.string().trim().email().max(254),
@@ -121,7 +120,6 @@ export async function POST(request:Request){
 	const requestStartedAt=Date.now();
 	let parsedInput:z.infer<typeof schema>|null=null;
 	let passwordHashForRedaction='';
-	let registrationDeviceToken:string|null=null;
 	let transactionDurationMs:number|null=null;
 	let transactionOutcome:'not_started'|'succeeded'|'failed'='not_started';
 	try{
@@ -163,14 +161,6 @@ export async function POST(request:Request){
 				transactionDurationMs=Date.now()-transactionStartedAt;
 			}
 			await writePostRegistrationEffects(user.id,email,requestId,input,passwordHash);
-			registrationDeviceToken=createTrustedDeviceToken();
-			await db.trustedDevice.create({data:{
-				userId:user.id,
-				tokenHash:trustedDeviceTokenHash(registrationDeviceToken),
-				deviceLabel:trustedDeviceLabel(request.headers.get('user-agent')),
-				userAgent:request.headers.get('user-agent')?.replace(/[\u0000-\u001f\u007f]/g,'').slice(0,500)||null,
-				expiresAt:new Date(Date.now()+TRUSTED_DEVICE_MAX_AGE_SECONDS*1000),
-			}});
 		}catch(error){
 			const recoveredAccount=await matchExistingAccount(email,input.password,requestId);
 			if(recoveredAccount)return recoveredAccount;
@@ -182,13 +172,6 @@ export async function POST(request:Request){
 			message:'Your account has been created. Signing you in…',
 			requestId,
 		},{status:201,headers:{'Cache-Control':'no-store'}});
-		if(registrationDeviceToken)response.cookies.set(TRUSTED_DEVICE_COOKIE,registrationDeviceToken,{
-			httpOnly:true,
-			secure:process.env.NODE_ENV==='production',
-			sameSite:'lax',
-			path:'/',
-			maxAge:TRUSTED_DEVICE_MAX_AGE_SECONDS,
-		});
 		return response;
 	}catch(error){
 		if(error instanceof ZodError){

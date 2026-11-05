@@ -112,7 +112,7 @@ test('first-visit policy consent handles choices and unlocks the platform',async
 test('homepage labels internal reference prices as non-live market data',async({page})=>{
 	await page.goto('/');
 	await expect(page.locator('.market-time .live-pill')).toHaveText('REFERENCE');
-	await expect(page.locator('.market-feed-status')).toContainText('Internal reference feed');
+	await expect(page.locator('.market-feed-status')).toContainText('Indicative prices');
 });
 
 test('homepage clearly labels stock and crypto trading modes',async({page})=>{
@@ -147,8 +147,8 @@ test('public disclosures distinguish simulated activity, paper orders, and inter
 	await expect(page.getByText(/Alpaca Paper Trading only/)).toBeVisible();
 	await expect(page.getByText(/broker-reported paper cash or returns are not Aurevia wallet funds/)).toBeVisible();
 	await page.goto('/risk-disclosure');
-	await expect(page.getByText(/not live-market executions/)).toBeVisible();
-	await expect(page.getByText(/are not withdrawable through the Aurevia wallet/)).toBeVisible();
+	await expect(page.getByText(/REAL-mode orders use simulated execution, not live-market transactions/)).toBeVisible();
+	await expect(page.getByText(/They do not represent money held in custody or confirmation that an external payment occurred/)).toBeVisible();
 	await page.goto('/privacy');
 	await expect(page.getByText(/private object-storage bucket/)).toBeVisible();
 	await expect(page.locator('.info-note')).toContainText('short-lived links');

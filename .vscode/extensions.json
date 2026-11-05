@@ -3,6 +3,7 @@
         "openai.chatgpt",
         "openai.codex-audio",
         "inandi.renderflow",
-        "spylogsster.app-debug-helper"
+        "spylogsster.app-debug-helper",
+        "sumanthtps.playwright-test-code-snippets"
     ]
 }

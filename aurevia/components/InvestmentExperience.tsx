@@ -64,6 +64,7 @@ export default function InvestmentExperience(){
  const activeMarketSymbol=marketSymbols.includes(marketSymbol)?marketSymbol:marketSymbols[0]||'';
 
  useEffect(()=>{
+  if(session?.user?.accountMode!=='REAL')return;
   setData(null);setAmounts({});setConfirmOpportunityId('');setError('');setNotice('');
   void load(true);
   const refreshWhenActive=()=>{if(document.visibilityState==='visible')void load();};

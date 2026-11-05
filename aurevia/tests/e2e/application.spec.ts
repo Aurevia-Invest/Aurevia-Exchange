@@ -228,8 +228,9 @@ test('market view labels internal reference prices when no live provider is conf
 	expect(historyResponse.ok()).toBe(true);
 	expect((await historyResponse.json()).source).toBe('Aurevia Internal');
 	await page.goto('/markets');
-	await expect(page.getByText('Market data: Internal reference').first()).toBeVisible();
-	await expect(page.getByText('AUREVIA INTERNAL REFERENCE DATA')).toBeVisible();
+	await expect(page.locator('.live-market-heading')).toContainText('INDICATIVE PRICES');
+	await expect(page.locator('.live-source-status')).toContainText('Price status: Indicative');
+	await expect(page.locator('.live-disclaimer')).toContainText('Internal reference prices are estimates, not executable quotes.');
 });
 
 test('signed-in users can ask AI to explain unavailable quote and history sources without substituting data',async({page})=>{
@@ -278,7 +279,8 @@ test('portfolio timeframe controls filter authenticated snapshot history accessi
 	expect(portfolio.allocations.reduce((sum:number,item:{percentage:string})=>sum+Number(item.percentage),0)).toBeCloseTo(100,2);
 	await page.goto('/portfolio');
 	await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
-	await expect(page.getByRole('status',{name:'Market data source: DEMO prices'})).toBeVisible();
+	await expect(page.locator('.portfolio-page > .account-callout[role="status"]')).toHaveText('This is a virtual practice account. Its balance and trading records are separate from REAL account records.');
+	await expect(page.locator('.portfolio-content-grid .account-panel-title .muted')).toHaveText('Practice prices');
 	const controls=page.getByRole('group',{name:'Performance timeframe'});
 	await controls.getByRole('button',{name:'1W'}).click();
 	await expect(controls.getByRole('button',{name:'1W'})).toHaveAttribute('aria-pressed','true');
@@ -295,7 +297,7 @@ test('portfolio timeframe controls filter authenticated snapshot history accessi
 
 test('desktop 3D emblem renders with a mobile static fallback',async({browser})=>{
 	const desktopContext=await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'no-preference'});
-	await desktopContext.addInitScript(()=>{sessionStorage.setItem('aurevia-startup-complete','1');localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()}));});
+	await desktopContext.addInitScript(()=>{sessionStorage.setItem('aurevia-startup-complete','1');sessionStorage.setItem('aurevia-introduction-complete','1');localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()}));});
 	try{
 		const desktopPage=await desktopContext.newPage();
 		await desktopPage.goto('/');
@@ -317,12 +319,12 @@ test('desktop 3D emblem renders with a mobile static fallback',async({browser})=
 		await desktopContext.close();
 	}
 
-	const mobileContext=await browser.newContext({viewport:{width:320,height:800},reducedMotion:'no-preference'});
-	await mobileContext.addInitScript(()=>{sessionStorage.setItem('aurevia-startup-complete','1');localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()}));});
+	const mobileContext=await browser.newContext({viewport:{width:320,height:800},reducedMotion:'reduce'});
+	await mobileContext.addInitScript(()=>{sessionStorage.setItem('aurevia-startup-complete','1');sessionStorage.setItem('aurevia-introduction-complete','1');localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()}));});
 	try{
 		const mobilePage=await mobileContext.newPage();
 		await mobilePage.goto('/');
-		await waitForStartup(mobilePage);
+		await expect(mobilePage.locator('.startup-screen')).toHaveCount(0);
 		await expect(mobilePage.locator('.home-market-depth .market-depth-fallback')).toBeVisible();
 		await expect(mobilePage.locator('.home-market-depth .market-depth-canvas')).toHaveCount(0);
 		await expectNoHorizontalOverflow(mobilePage);
@@ -333,7 +335,12 @@ test('desktop 3D emblem renders with a mobile static fallback',async({browser})=
 
 test('floating support launcher can be dragged horizontally and vertically',async({page})=>{
 	await page.setViewportSize({width:1440,height:900});
-	await page.addInitScript(()=>localStorage.setItem('aurevia-support-chat-position',JSON.stringify({left:1100,top:650})));
+	await page.addInitScript(()=>{
+		sessionStorage.setItem('aurevia-startup-complete','1');
+		sessionStorage.setItem('aurevia-introduction-complete','1');
+		localStorage.setItem('aurevia-policy-consent-v1',JSON.stringify({version:1,choice:'accepted',updatedAt:new Date().toISOString()}));
+		localStorage.setItem('aurevia-support-chat-position',JSON.stringify({left:1100,top:650}));
+	});
 	await page.goto('/');
 	await waitForStartup(page);
 	const launcher=await revealSupportChat(page);
@@ -368,6 +375,8 @@ test('waitlist form submits and shows a truthful success state',async({page})=>{
 	await page.goto('/waitlist');
 	await expect(page.locator('.waitlist-page')).toHaveAttribute('data-waitlist-ready', 'true');
 	await waitForStartup(page);
+	const policyConsent=page.getByRole('dialog',{name:'Review before continuing'});
+	if(await policyConsent.isVisible())await policyConsent.getByRole('button',{name:/^Accept terms/}).click();
 	const waitlistName = page.locator('.waitlist-form input[autocomplete="name"]');
 	const waitlistEmail = page.locator('.waitlist-form input[autocomplete="email"]');
 	await waitlistName.fill('Temporary E2E Waitlist');
@@ -472,6 +481,7 @@ test('password recovery stays private and usable across mobile and desktop width
 
 	await page.setViewportSize({width:320,height:800});
 	await page.goto('/forgot-password');
+	await waitForStartup(page);
 	await page.getByLabel('Email address').fill('person@example.invalid');
 	await page.getByRole('button',{name:'Send recovery link'}).click();
 	await expect(page.getByRole('status')).toContainText('If an eligible account matches');
@@ -880,10 +890,11 @@ test('mobile date entry is calendar-backed and future dates are blocked',async({
 	await expect(date).toHaveAttribute('max',new Date().toISOString().slice(0,10));
 	const future=new Date();future.setUTCDate(future.getUTCDate()+1);
 	const futureDate=future.toISOString().slice(0,10);
-	await date.fill(futureDate);
-	await expect(date).toHaveValue(futureDate);
-	const rejectsFuture=await date.evaluate((input:HTMLInputElement)=>input.validity.rangeOverflow);
-	expect(rejectsFuture).toBe(true);
+	const futureConstraint=await date.evaluate((input:HTMLInputElement,value)=>{
+		input.value=value;
+		return {value:input.value,rangeOverflow:input.validity.rangeOverflow};
+	},futureDate);
+	expect(futureConstraint).toEqual({value:futureDate,rangeOverflow:true});
 	await expectNoHorizontalOverflow(page);
 });
 
@@ -1016,6 +1027,7 @@ test('duplicate signup offers sign-in with the typed email prefilled',async({pag
 	const residenceDialog=page.getByRole('dialog',{name:'Select country of residence'});
 	await residenceDialog.getByRole('searchbox').fill('United States');
 	await residenceDialog.getByRole('option',{name:/United States.*US.*\+1/}).click();
+	await registrationForm.getByLabel('Gender').selectOption('PREFER_NOT_TO_SAY');
 	await registrationForm.getByLabel('Email address').fill(email);
 	await registrationForm.getByLabel('Password',{exact:true}).fill('SecureTestPassword1');
 	await registrationForm.getByLabel('Confirm password').fill('SecureTestPassword1');
@@ -1118,16 +1130,16 @@ test('notifications bell, unread state, mark one/all, and history persist',async
 		const target=document.elementFromPoint(bounds.left+bounds.width/2,bounds.top+bounds.height/2);
 		return target===element||element.contains(target);
 	})).toBe(true);
-	const rows=page.locator('.notification-row');
+	const rows=page.locator('.notification-row.is-unread');
 	await expect.poll(()=>rows.count()).toBeGreaterThan(0);
 	const first=rows.first();
 	await expect(first).toBeVisible();
+	const firstTitle=await first.locator('.notification-copy b').innerText();
 	await first.click();
-	const markAll=page.getByRole('button',{name:'Mark all notifications as read'});
-	if(await markAll.isVisible()&&await markAll.isEnabled())await markAll.click();
-	await expect.poll(()=>page.locator('.notification-count').count()).toBe(0);
 	await page.goto('/notifications');
 	await expect(page.getByRole('heading',{name:'Notifications'})).toBeVisible();
+	await expect(page.locator('.notification-history-item').filter({hasText:firstTitle}).first()).toHaveClass(/is-read/);
+	await page.getByRole('button',{name:'Mark all read'}).click();
 	await expect(page.getByText('All caught up')).toBeVisible();
 	await page.reload();
 	await expect(page.getByText('All caught up')).toBeVisible();
@@ -1170,7 +1182,7 @@ test('account-mode changes initialize and isolate wallet, trade, history, and su
 	await page.goto('/trade');
 	await selectAccountMode(page,'REAL');
 	await expect(page.locator('.account-heading .status-pill')).toContainText('REAL');
-	await expect(page.getByText(/Orders go to the shared Alpaca Paper account/)).toBeVisible();
+	await expect(page.getByText('REAL-account orders are simulated, not live market transactions. Confirmed fills update your Aurevia wallet and positions.')).toBeVisible();
 	const realOrderButton=page.getByRole('button',{name:'Place BUY order'});
 	const marketResponse=await page.request.get('/api/live-markets?symbols=AAPL');
 	expect(marketResponse.ok()).toBeTruthy();
@@ -1179,7 +1191,7 @@ test('account-mode changes initialize and isolate wallet, trade, history, and su
 	if(hasFreshProviderQuote)await expect(realOrderButton).toBeEnabled();
 	else{
 		await expect(realOrderButton).toBeDisabled();
-		await expect(page.locator('.trade-chart-note')).toContainText('Internal reference prices are not used for REAL orders.');
+		await expect(page.locator('.trade-chart-note')).toContainText('Current market prices are required for REAL account orders.');
 	}
 	await selectAccountMode(page,'DEMO');
 	await expect(page.locator('.account-heading .status-pill')).toContainText('DEMO');
@@ -1225,7 +1237,7 @@ test('REAL funding remains available while trading stays disabled without broker
 	const instruments=await page.request.get('/api/market').then(response=>response.json());
 	const isolatedOrder=await page.request.post('/api/orders',{headers:{'Idempotency-Key':randomUUID()},data:{instrumentId:instruments[0].id,side:'BUY',type:'LIMIT',quantity:1,price:0.01,expectedPrice:Number(instruments[0].price),observedAt:instruments[0].lastUpdatedAt||instruments[0].updatedAt}});
 	expect(isolatedOrder.status()).toBe(403);
-	expect((await isolatedOrder.json()).error).toContain('Alpaca Paper orders are disabled');
+	expect((await isolatedOrder.json()).error).toBe('This order could not be submitted right now. Try again later.');
 	expect(await page.request.get('/api/orders').then(response=>response.json())).toHaveLength(0);
 
 	const adminContext=await browser.newContext();
@@ -1268,7 +1280,7 @@ test('REAL funding remains available while trading stays disabled without broker
 	if(!fundedInstrument)throw new Error('No affordable instrument is available after the simulated REAL deposits.');
 	const fundedBuy=await page.request.post('/api/orders',{headers:{'Idempotency-Key':randomUUID()},data:{instrumentId:fundedInstrument.id,side:'BUY',type:'MARKET',quantity:1,expectedPrice:Number(fundedInstrument.price),observedAt:fundedInstrument.lastUpdatedAt||fundedInstrument.updatedAt}});
 	expect(fundedBuy.status()).toBe(403);
-	expect((await fundedBuy.json()).error).toContain('Alpaca Paper orders are disabled');
+	expect((await fundedBuy.json()).error).toBe('This order could not be submitted right now. Try again later.');
 	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(180);
 	expect(await page.request.get('/api/positions').then(response=>response.json())).toHaveLength(0);
 	expect(await page.request.get('/api/orders').then(response=>response.json())).toHaveLength(0);
@@ -1613,7 +1625,7 @@ test('DEMO accounts cannot access investments while REAL investment lifecycle re
 		const positionsBeforePaperOrder=await page.request.get('/api/positions').then(response=>response.json());
 		const realOrder=await page.request.post('/api/orders',{headers:{'Idempotency-Key':randomUUID()},data:{instrumentId:tradeableInstrument.id,side:'BUY',type:'MARKET',quantity:1,expectedPrice:Number(tradeableInstrument.price),observedAt:tradeableInstrument.lastUpdatedAt||tradeableInstrument.updatedAt}});
 		expect([403,503]).toContain(realOrder.status());
-		expect((await realOrder.json()).error).toMatch(/Alpaca Paper/);
+		expect((await realOrder.json()).error).toBe('This order could not be submitted right now. Try again later.');
 		expect(await page.request.get('/api/positions').then(response=>response.json())).toHaveLength(positionsBeforePaperOrder.length);
 		const realPortfolio=await page.request.get('/api/portfolio').then(response=>response.json());
 		expect(realPortfolio.positions.length).toBe(positionsBeforePaperOrder.length);
@@ -1624,6 +1636,8 @@ test('DEMO accounts cannot access investments while REAL investment lifecycle re
 		await selectAccountMode(page,'DEMO');
 			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialDemoBalance);
 			expect((await page.request.get('/api/investments')).status()).toBe(403);
+			await expect(page).toHaveURL(/\/dashboard/);
+			await expect(page.getByRole('button',{name:'More account navigation'})).toBeVisible();
 			await logout(page);
 		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 		const persistedDemoWallet=await page.request.get('/api/wallet').then(response=>response.json());
@@ -1941,7 +1955,7 @@ test('admin ledger adjustments update isolated DEMO and REAL accounts with audit
 	const realBalance=Number(realWallet.balance);
 	expect(realBalance).toBeCloseTo(beforeRealBalance+2525.5,2);
 	const realActivity=await page.request.get('/api/activity?category=account&limit=100').then(response=>response.json());
-	expect(realActivity.data.items.some((item:{sourceLabel:string;adminInitiated:boolean})=>item.sourceLabel.startsWith('ADMIN:REAL:')&&item.adminInitiated)).toBe(true);
+	expect(realActivity.data.items.some((item:{source:string;amount:string;adminInitiated:boolean})=>item.source==='ledger'&&item.amount==='2500.00'&&item.adminInitiated)).toBe(true);
 	await selectAccountMode(page,'DEMO');
 	const after=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
 	expect(after).toBeCloseTo(before+25.5,2);
@@ -2023,9 +2037,9 @@ test('administrator user and KYC actions persist and report protected actions',a
 	await page.goto('/admin/users');
 	await expect(page.getByRole('heading',{name:'User accounts'})).toBeVisible();
 	const userRow=page.locator('article').filter({hasText:fixture('USER_EMAIL')}).first();
-	await expect(userRow.getByRole('button',{name:'Unfreeze'})).toBeVisible();
-	await userRow.getByRole('button',{name:'Unfreeze'}).click();
-	await expect(userRow.getByRole('button',{name:'Freeze'})).toBeVisible();
+	await expect(userRow.getByRole('button',{name:'Reactivate Account'})).toBeVisible();
+	await userRow.getByRole('button',{name:'Reactivate Account'}).click();
+	await expect(userRow.getByRole('button',{name:'Suspend Account'})).toBeVisible();
 	await expect(userRow.getByRole('button',{name:/Make (?:admin|user)/})).toHaveCount(0);
 	const userRoleChange=await page.request.patch('/api/admin/users',{data:{userId:user.id,role:'ADMIN'}});
 	expect(userRoleChange.status()).toBe(409);
@@ -2166,6 +2180,8 @@ for(const viewport of viewports){
 			expect(response?.status(),route).toBe(200);
 			await expect(page.locator('main').first(),route).toBeVisible();
 			if(await page.locator('h1:visible').count())await expect(page.locator('h1:visible').first(),route).toBeVisible();
+			await expect(page.getByRole('navigation',{name:'Administrator navigation'}).getByRole('link',{name:'CRM Dashboard',exact:true}),route).toBeVisible();
+			await expect(page.locator('.admin-nav-loading'),route).toHaveCount(0);
 			await expect(page.locator('.admin-scope'),route).toBeVisible();
 			expect(await page.locator('.admin-scope').evaluate(element=>getComputedStyle(element).minWidth),route).toBe('1280px');
 			await expect(page.getByRole('button',{name:'Open admin menu'}),route).toBeHidden();
@@ -2795,11 +2811,13 @@ test('account deletion preserves ledger history and permits fresh registration w
 	const deleted=await page.request.post('/api/account/delete',{data:{password,confirmation:'DELETE'}});
 	expect(deleted.status()).toBe(200);
 	await page.goto('/login');
-	expect(await db.user.findUnique({where:{id:userId}})).toBeNull();
-	expect(await db.kycProfile.findUnique({where:{userId}})).toBeNull();
+	const closedUser=await db.user.findUniqueOrThrow({where:{id:userId},select:{status:true,email:true}});
+	expect(closedUser.status).toBe('CLOSED');
+	expect(closedUser.email).not.toBe(email);
+	expect(await db.kycProfile.findUnique({where:{userId}})).not.toBeNull();
 	const retainedAccounts=await db.ledgerAccount.findMany({where:{id:{in:ledgerAccountIds}},select:{userId:true,code:true}});
 	expect(retainedAccounts).toHaveLength(ledgerAccountIds.length);
-	expect(retainedAccounts.every(account=>account.userId===null&&!account.code.includes(userId))).toBe(true);
+	expect(retainedAccounts.every(account=>account.userId===userId&&account.code.includes(userId))).toBe(true);
 	expect(await page.request.get('/api/profile').then(response=>response.status())).toBe(401);
 	const ledgerAfter=await db.ledgerEntry.findMany({where:{accountId:{in:ledgerAccountIds}},select:{type:true,amount:true}});
 	expect(ledgerAfter).toHaveLength(ledgerBefore.length);
@@ -2915,7 +2933,8 @@ test('admin investment initiation is idempotent and reconciles against reserved 
 		const before=Number((await userPage.request.get('/api/wallet').then(response=>response.json())).balance);
 		expect(before).toBe(2000);
 		const initialEligible=await userPage.request.get('/api/investments').then(response=>response.json());
-		expect(initialEligible).toMatchObject({accountMode:'REAL',availableBalance:'2000',opportunities:[],requests:[]});
+		expect(initialEligible).toMatchObject({accountMode:'REAL',availableBalance:'2000',requests:[]});
+		expect(initialEligible.opportunities).toEqual(expect.arrayContaining([expect.objectContaining({id:opportunity.id})]));
 		await db.fundingRequest.create({data:{userId,type:'WITHDRAWAL',method:'E2E reserved withdrawal',amount:500,currency:'USD',accountMode:'REAL',status:'PENDING_REVIEW'}});
 		const expectedAvailable=Prisma.Decimal.max(0,new Prisma.Decimal(before).minus(500)).toString();
 		expect((await userPage.request.get('/api/investments').then(response=>response.json())).availableBalance).toBe(expectedAvailable);

@@ -16,6 +16,7 @@ type QuotesResponse={quotes:Array<MarketQuote|QuoteError>;source:string};
 type HistoryResponse={quote:MarketQuote|null;candles:MarketCandle[];timeframe:TimeframeId;interval:string;source?:string};
 type ReturnMetric={label:string;days:number;value:number|null};
 type MarketAnalysis={summary:string;observations:Array<{symbol:string;observation:string}>;caveat:string};
+type MarketDataExplanation={symbol:string;dataType:'quote'|'history';status:'current_provider'|'stale_provider'|'internal_reference'|'unavailable';explanation:{explanation:string;recommendedAction:'refresh'|'configure_market_provider'|'try_later'|'contact_support';caveat:string}};
 type MarketCategory='Favorites'|'Forex'|'Crypto'|'Stocks'|'Indices';
 
 const TICKER_SYMBOLS=['BTC','DJI','MERV','DAX','IBEX','NIKKEI','EURGBP','SPX','NASDAQ'];
@@ -54,6 +55,9 @@ function LiveMarketDashboardContent(){
   const [marketAnalysis,setMarketAnalysis]=useState<MarketAnalysis|null>(null);
   const [marketAnalysisError,setMarketAnalysisError]=useState('');
   const [marketAnalysisBusy,setMarketAnalysisBusy]=useState(false);
+  const [marketDataExplanation,setMarketDataExplanation]=useState<MarketDataExplanation|null>(null);
+  const [marketDataExplanationError,setMarketDataExplanationError]=useState('');
+  const [marketDataExplanationBusy,setMarketDataExplanationBusy]=useState<'quote'|'history'|null>(null);
   const activeList=watchlists.find(list=>list.id===activeWatchlistId)||watchlists[0];
   const selectedAsset=getMarketAsset(selectedSymbol)||getMarketAsset('DJI')!;
   const quoteIds=Array.from(new Set([...activeList.symbols,...DEFAULT_WATCHLIST,...COMPARISON_SYMBOLS,selectedAsset.id]));
@@ -154,6 +158,22 @@ function LiveMarketDashboardContent(){
     }
   }
 
+  async function explainDataAvailability(dataType:'quote'|'history'){
+    setMarketDataExplanationBusy(dataType);
+    setMarketDataExplanation(null);
+    setMarketDataExplanationError('');
+    try{
+      const response=await fetch('/api/market/data-explanation',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({symbol:selectedAsset.id,dataType,...(dataType==='history'?{timeframe}:{})})});
+      const result=await response.json() as MarketDataExplanation&{error?:string};
+      if(!response.ok)throw new Error(result.error||'Market data availability explanation is unavailable.');
+      setMarketDataExplanation(result);
+    }catch(exception){
+      setMarketDataExplanationError(exception instanceof Error?exception.message:'Market data availability explanation is unavailable.');
+    }finally{
+      setMarketDataExplanationBusy(null);
+    }
+  }
+
   const filteredAssets=MARKET_ASSETS.filter(asset=>!activeList.symbols.includes(asset.id)&&`${asset.id} ${asset.name} ${asset.ticker}`.toLowerCase().includes(symbolSearch.toLowerCase())).slice(0,7);
   const performance=returnMetrics(annualQuery.data?.candles||historyQuery.data?.candles||[],activeQuote||undefined);
   const todayRange=activeQuote?.dayLow!==null&&activeQuote?.dayLow!==undefined&&activeQuote?.dayHigh!==null&&activeQuote?.dayHigh!==undefined?activeQuote.dayHigh-activeQuote.dayLow:null;
@@ -248,16 +268,32 @@ function LiveMarketDashboardContent(){
           </div>
           <div className="live-chart-metadata"><span>{activeQuote?.isStale?'Last quote · STALE':'Last quote'} {activeQuote?formatTime(activeQuote.updatedAt):'—'}</span><button type="button" className="live-refresh-button" aria-label="Refresh quotes" onClick={()=>{void selectedQuery.refetch();void batchQuery.refetch();void historyQuery.refetch()}}><RefreshCw size={13} className={selectedQuery.isFetching?'is-spinning':''}/> Refresh</button></div>
           {session?.user?.id&&<section className="live-market-ai" aria-label="AI market context">
-            <button type="button" className="btn bg-white/5" onClick={()=>void analyzeMarket()} disabled={marketAnalysisBusy}>
-              {marketAnalysisBusy?<RefreshCw size={14} className="is-spinning"/>:<Sparkles size={14}/>}
-              {marketAnalysisBusy?'Analyzing market data…':'Explain market movement'}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn bg-white/5" onClick={()=>void analyzeMarket()} disabled={marketAnalysisBusy}>
+                {marketAnalysisBusy?<RefreshCw size={14} className="is-spinning"/>:<Sparkles size={14}/>}
+                {marketAnalysisBusy?'Analyzing market data…':'Explain market movement'}
+              </button>
+              <button type="button" className="btn bg-white/5" onClick={()=>void explainDataAvailability('quote')} disabled={marketDataExplanationBusy!==null}>
+                {marketDataExplanationBusy==='quote'?<RefreshCw size={14} className="is-spinning"/>:<Sparkles size={14}/>}
+                Explain quote availability
+              </button>
+              <button type="button" className="btn bg-white/5" onClick={()=>void explainDataAvailability('history')} disabled={marketDataExplanationBusy!==null}>
+                {marketDataExplanationBusy==='history'?<RefreshCw size={14} className="is-spinning"/>:<Sparkles size={14}/>}
+                Explain chart history
+              </button>
+            </div>
             {marketAnalysisError&&<p className="live-data-alert" role="alert">{marketAnalysisError}</p>}
             {marketAnalysis&&<div className="live-data-alert" aria-live="polite">
               <strong>Generated market context</strong>
               <p>{marketAnalysis.summary}</p>
               {marketAnalysis.observations.length>0&&<ul>{marketAnalysis.observations.map(item=><li key={item.symbol}><b>{item.symbol}:</b> {item.observation}</li>)}</ul>}
               <p>{marketAnalysis.caveat}</p>
+            </div>}
+            {marketDataExplanationError&&<p className="live-data-alert" role="alert">{marketDataExplanationError}</p>}
+            {marketDataExplanation&&<div className="live-data-alert" aria-live="polite">
+              <strong>{marketDataExplanation.symbol} {marketDataExplanation.dataType==='quote'?'quote':'chart history'} availability</strong>
+              <p>{marketDataExplanation.explanation.explanation}</p>
+              <p>{marketDataExplanation.explanation.caveat}</p>
             </div>}
           </section>}
           <div className="live-timeframes" role="group" aria-label="Chart interval">{TIMEFRAMES.map(item=><button type="button" key={item.id} className={timeframe===item.id?'is-active':''} aria-pressed={timeframe===item.id} onClick={()=>setTimeframe(item.id)}>{item.label}</button>)}</div>

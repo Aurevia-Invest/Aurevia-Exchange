@@ -2905,8 +2905,8 @@ body:has(.site-nav-user-shell) main.user-dashboard-page{width:100%;max-width:165
 .user-dashboard-welcome-actions{display:flex;align-items:center;gap:8px}
 .user-dashboard-shortcuts a{width:32px;height:32px}
 .user-mode-pill{display:inline-flex;min-height:27px;align-items:center;gap:6px;padding:0 9px;border:1px solid rgba(212,167,44,.2);border-radius:20px;color:#d5bd72;font-size:8px;letter-spacing:.06em}
-.user-mode-pill i{width:6px;height:6px;border-radius:50%;background:#d4a72c}
-.user-mode-pill.real i{background:#59bc83;box-shadow:0 0 8px rgba(89,188,131,.55)}
+.user-mode-pill i{width:6px;height:6px;border-radius:50%;background:var(--theme-accent)}
+.user-mode-pill.real i{background:var(--theme-positive);box-shadow:0 0 8px color-mix(in srgb,var(--theme-positive) 55%,transparent)}
 .user-dashboard-refresh{display:grid;width:33px;height:33px;place-items:center;border:1px solid rgba(255,255,255,.09);border-radius:4px;background:rgba(255,255,255,.025);color:#adb8ad;cursor:pointer}
 .user-dashboard-refresh:hover{border-color:rgba(212,167,44,.3);color:#e0c36b}
 .user-dashboard-refresh:disabled{opacity:.55;cursor:wait}

@@ -2868,6 +2868,7 @@ body:has(.site-nav-user-shell) main{width:100%;margin:0;padding-top:96px}
 body:has(.site-nav-user-shell) main.account-page{width:100%;max-width:none;min-height:100vh;margin:0;padding:112px clamp(18px,3vw,42px) 55px}
 
 .user-bottom-navigation{position:fixed;right:auto;bottom:calc(max(8px,env(safe-area-inset-bottom)) + var(--user-keyboard-inset,0px));left:50%;z-index:380;display:grid;width:min(540px,calc(100vw - 24px));grid-template-columns:repeat(5,minmax(0,1fr));align-items:stretch;gap:3px;padding:6px;border:1px solid rgba(221,224,215,.12);border-radius:20px;background:rgba(7,12,10,.97);box-shadow:0 14px 42px rgba(0,0,0,.42),inset 0 1px rgba(255,255,255,.035);transform:translateX(-50%);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.user-bottom-navigation,.user-more-menu,.user-more-backdrop{touch-action:manipulation}
 .user-bottom-navigation>a,.user-bottom-navigation>button{display:flex;min-width:0;min-height:58px;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:4px 2px;border:1px solid transparent;border-radius:14px;background:transparent;color:#858c87;text-decoration:none;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:color .16s ease,background-color .16s ease,border-color .16s ease}
 .user-bottom-navigation>a>svg,.user-bottom-navigation>button>svg{flex:none}
 .user-bottom-navigation>a>span,.user-bottom-navigation>button>span{max-width:100%;overflow:hidden;font-size:10px;font-weight:550;line-height:1.2;text-overflow:ellipsis;white-space:nowrap}

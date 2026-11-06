@@ -87,33 +87,34 @@ export default function AccountActivityExperience(){
   }
   const displayValues=(data?.data.items||[]).filter(item=>item.source!=='notification'&&(item.source!=='ledger'||item.asset==='USD')&&(item.source!=='order'||Number(item.details.filledQuantity)>0)).slice(0,5).map(item=>({label:item.action,amount:item.amount}));
   const groupedActivity=groupByLocalDate(data?.data.items||[]);
-  const activityRows=groupedActivity.map(group=><div key={group.key}><h3 className="px-4 py-2 text-xs font-semibold muted">{group.label}</h3>{group.items.map(item=><ActivityRow key={`${item.source}:${item.id}`} item={item} selected={selected.has(recordKey(item))} onSelect={()=>toggleSelected(item)}/>)}</div>);
+  const activityRows=groupedActivity.map(group=><div className="activity-date-group" key={group.key}><h3>{group.label}</h3><span>{group.items.length} {group.items.length===1?'entry':'entries'}</span>{group.items.map(item=><ActivityRow key={`${item.source}:${item.id}`} item={item} selected={selected.has(recordKey(item))} onSelect={()=>toggleSelected(item)}/>)}</div>);
 
   return <><Nav/><main className="account-page activity-page">
     <header className="account-heading"><div><span className="account-kicker">AUDITABLE ACTIVITY · {session?.user?.accountMode||'ACCOUNT'}</span><h1>Account activity</h1><p>Orders, trades, investments, funding, positions, and account events from persisted records.</p></div><div className="flex items-center gap-2"><span className={`status-pill ${session?.user?.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{session?.user?.accountMode||'ACCOUNT'}</span><button className="icon-action" type="button" aria-label="Refresh account activity" onClick={toggleLoading} disabled={loading}><RefreshCw size={15} className={loading?'animate-spin':''}/></button></div></header>
     <DisplayCurrencyPanel values={displayValues}/>
     {error&&<div className="account-callout mb-4" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load(true)}>Retry</button></div>}
-    <section className="account-panel card p-4">
+    <section className="account-panel card p-4 activity-controls">
       <div className="activity-filter" role="group" aria-label="Activity categories">{categories.map(item=>{const Icon=categoryIcons[item];return <button key={item} type="button" aria-pressed={category===item} className={category===item?'is-active':''} onClick={()=>changeCategory(item)}><Icon size={14} aria-hidden="true"/><span>{categoryLabels[item]}</span></button>})}</div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-        <label className="relative sm:col-span-2 lg:col-span-1"><Search size={14} className="absolute left-3 top-3.5 muted"/><input className="input pl-9" value={search} onChange={event=>setSearch(event.target.value)} placeholder="Search activity" aria-label="Search activity" maxLength={120}/></label>
-        <input className="input" value={statusFilter} onChange={event=>setStatusFilter(event.target.value)} placeholder="Filter by status" aria-label="Filter by status" maxLength={40}/>
-        <label className="sr-only" htmlFor="activity-date-from">From date</label><input id="activity-date-from" className="input" type="date" value={dateFrom} onChange={event=>setDateFrom(event.target.value)}/>
-        <label className="sr-only" htmlFor="activity-date-to">To date</label><input id="activity-date-to" className="input" type="date" value={dateTo} onChange={event=>setDateTo(event.target.value)}/>
-        <select className="input" value={state} onChange={event=>setState(event.target.value as ActivityState)} aria-label="Filter activity visibility"><option value="active">Visible activity</option><option value="archived">Archived</option><option value="hidden">Removed from feed</option><option value="all">All activity</option></select>
+      <div className="activity-filter-fields">
+        <label className="activity-field activity-search-field"><span>Search activity</span><span className="activity-search-input"><Search size={15} aria-hidden="true"/><input className="input" value={search} onChange={event=>setSearch(event.target.value)} placeholder="Name, asset, or event" maxLength={120}/></span></label>
+        <label className="activity-field"><span>Status</span><input className="input" value={statusFilter} onChange={event=>setStatusFilter(event.target.value)} placeholder="Any status" aria-label="Filter by status" maxLength={40}/></label>
+        <label className="activity-field" htmlFor="activity-date-from"><span>From</span><input id="activity-date-from" className="input" type="date" value={dateFrom} onChange={event=>setDateFrom(event.target.value)}/></label>
+        <label className="activity-field" htmlFor="activity-date-to"><span>To</span><input id="activity-date-to" className="input" type="date" value={dateTo} onChange={event=>setDateTo(event.target.value)}/></label>
+        <label className="activity-field"><span>Show</span><select className="input" value={state} onChange={event=>setState(event.target.value as ActivityState)} aria-label="Filter activity visibility"><option value="active">Visible activity</option><option value="archived">Archived</option><option value="hidden">Removed from feed</option><option value="all">All activity</option></select></label>
       </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="activity-action-bar">
         <button type="button" className="button-secondary" disabled={!selectedItems.length||busy} onClick={()=>void manage(state==='archived'?'restore':'archive')}><Archive size={14}/>{state==='archived'?'Restore selected':'Archive selected'}</button>
         <button type="button" className="button-secondary" disabled={!selectedItems.length||busy} onClick={()=>void manage(state==='hidden'?'restore':'hide')}><Trash2 size={14}/>{state==='hidden'?'Restore to feed':'Remove from feed'}</button>
         {selectedItems.length>0&&selectedItems.every(item=>item.source==='notification'&&item.permanentDeletionAllowed)&&<button type="button" className="button-secondary" disabled={busy} onClick={()=>void manage('permanently-delete')}><Trash2 size={14}/>Delete selected notifications</button>}
-        <button type="button" className="button-secondary" disabled={busy} onClick={()=>void clearHistory()}>Clear eligible history</button>
-        {selectedItems.length>0&&<span className="text-xs muted">{selectedItems.length} selected · financial and security records are retained</span>}
+        <span className="activity-action-spacer"/>
+        {selectedItems.length>0&&<span className="activity-selection-count">{selectedItems.length} selected · protected records are retained</span>}
+        <button type="button" className="button-secondary activity-clear-button" disabled={busy} onClick={()=>void clearHistory()}><Trash2 size={14}/>Clear eligible history</button>
       </div>
       {notice&&<p className="mt-3 text-sm text-profit" role="status">{notice}</p>}
     </section>
-    <section className="account-panel card mt-4 overflow-hidden">
-      <div className="account-panel-title px-4 pt-4"><div><h2>{data?.categoryLabel||activityCategoryLabel(category)}</h2><p className="account-panel-subtitle">{data?`${data.data.total} recorded entries`:'Loading persisted activity'}</p></div><span className={`status-pill ${data?.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{data?.accountMode||'ACCOUNT'}</span></div>
-      {loading&&!data?<div className="account-empty" role="status">Loading account activity…</div>:data?.data.items.length?<div className="activity-feed">{activityRows}</div>:<div className="account-empty"><Activity size={22} className="mx-auto mb-3 gold"/><p>No activity matches this filter.</p><small>Financial and security records remain protected even when hidden from this feed.</small></div>}
+    <section className="account-panel card mt-4 overflow-hidden activity-records">
+      <div className="account-panel-title px-4 pt-4 activity-records-heading"><div><span className="activity-records-kicker">ACCOUNT LEDGER</span><h2>{data?.categoryLabel||activityCategoryLabel(category)}</h2><p className="account-panel-subtitle">{data?`${data.data.total} recorded entries`:'Loading persisted activity'}</p></div><span className={`status-pill ${data?.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{data?.accountMode||'ACCOUNT'}</span></div>
+      {loading&&!data?<div className="account-empty" role="status">Loading account activity…</div>:data?.data.items.length?<div className="activity-feed">{activityRows}</div>:<div className="account-empty activity-empty"><Activity size={22} aria-hidden="true"/><p>No activity matches this filter.</p><small>Financial and security records remain protected even when hidden from this feed.</small></div>}
       {data&&<div className="activity-pagination"><span>Showing {data.data.items.length} of {data.data.total} loaded matches</span>{data.data.hasMore&&<button type="button" className="button-secondary" onClick={()=>void load(false,data.data.items.length,true)} disabled={loading}>Load more <ArrowUpRight size={13}/></button>}</div>}
     </section>
   </main></>;
